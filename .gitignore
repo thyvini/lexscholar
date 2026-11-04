@@ -1,0 +1,46 @@
+# Secrets and local environment configuration
+.env
+.env.*
+!.env.example
+*.secret
+*credentials*
+*token*
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+.aws/
+.ssh/
+.gnupg/
+
+# Temporary files, logs, caches, and editor/OS state
+*.tmp
+*.temp
+*.log
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+.cache/
+tmp/
+temp/
+*.bak
+*.orig
+*.rej
+
+# Local AI agent state; keep shared instructions and skills tracked
+.codex/
+.claude/
+.cursor/
+.opencode/
+.aider*
+AGENTS.local.md
+
+# Machine-specific OS and editor state
+.idea/
+.vscode/
+
+# Spec Kit project configuration, specifications, templates, workflows,
+# and shared .agents/skills are intentionally kept under version control.
