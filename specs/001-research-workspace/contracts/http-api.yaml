@@ -1,0 +1,311 @@
+openapi: 3.1.0
+info:
+  title: LexScholar F001 Local Workspace API
+  version: 1.0.0
+  description: >-
+    Same-origin local API contract for projects, shared PDF documents, and
+    project-specific associations. This contract does not add authentication,
+    cloud services, document deletion, or capabilities outside approved F001.
+    Feature reference: Codecks card $12s.
+    Full-library export/deletion is deferred under Constitution v2.0.0 to
+    F002, Codecks card $12y; full Principle II compliance remains outstanding.
+    All entity IDs are UUID strings end-to-end. The content endpoint guarantees
+    original bytes and HTTP delivery semantics; native PDF viewer controls and
+    navigation behavior belong to the browser. Official initial support is
+    Linux with Firefox and Chromium. The active project is restored between sessions.
+servers:
+  - url: http://localhost:{port}/api
+    variables:
+      port:
+        default: "5000"
+tags:
+  - name: Projects
+  - name: Documents
+paths:
+  /projects:
+    get:
+      tags: [Projects]
+      summary: List workspace projects and active project
+      responses:
+        "200":
+          description: Current project list and active selection
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [activeProjectId, projects]
+                properties:
+                  activeProjectId:
+                    type: [string, "null"]
+                    format: uuid
+                  projects:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Project"
+    post:
+      tags: [Projects]
+      summary: Create a project
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+      responses:
+        "201":
+          description: Created project
+          headers:
+            Location:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Project" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /projects/{projectId}/active:
+    put:
+      tags: [Projects]
+      summary: Select the active project
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "204": { description: Active project updated }
+        "404": { $ref: "#/components/responses/Problem" }
+  /projects/{projectId}/documents:
+    get:
+      tags: [Projects]
+      summary: List documents associated with a project
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: Project associations and each association's role
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ProjectDocument" }
+        "404": { $ref: "#/components/responses/Problem" }
+    post:
+      tags: [Projects]
+      summary: Associate a shared document with a project
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [documentId, role]
+              properties:
+                documentId: { type: string, format: uuid }
+                role: { $ref: "#/components/schemas/Role" }
+      responses:
+        "201":
+          description: Association created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectDocument" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /projects/{projectId}/documents/{documentId}:
+    patch:
+      tags: [Projects]
+      summary: Change role for this project's document association only
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - $ref: "#/components/parameters/DocumentId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role: { $ref: "#/components/schemas/Role" }
+      responses:
+        "200":
+          description: Updated association
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectDocument" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+    delete:
+      tags: [Projects]
+      summary: Remove only this project-document association
+      description: The shared library document and all other associations remain.
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - $ref: "#/components/parameters/DocumentId"
+      responses:
+        "204": { description: Association removed; document remains in shared library }
+        "404": { $ref: "#/components/responses/Problem" }
+  /documents:
+    get:
+      tags: [Documents]
+      summary: List shared library documents, including unassociated documents
+      responses:
+        "200":
+          description: Shared library contents
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Document" }
+    post:
+      tags: [Documents]
+      summary: Import or reuse a PDF by exact byte identity
+      description: >-
+        Accepts one multipart PDF stream. Filename and content-type are hints;
+        server validates bytes and parser readability. Encrypted PDFs are
+        rejected without changing existing library data. Configurable defaults
+        are 100,000,000 bytes and 2,000 pages; exceeding either returns an
+        actionable error and does not add or alter library data. Limits apply
+        to each import request including re-imports; lowering limits does not
+        affect reading existing documents. A valid identical upload returns
+        the existing document. All valid simultaneous
+        identical uploads succeed and return the same document; safe internal
+        contention retries are allowed.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: Existing exact-byte document reused
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Document" }
+        "201":
+          description: New document imported
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Document" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "413":
+          description: Upload exceeds the configured byte limit (`upload_too_large`).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "422":
+          description: PDF is invalid, encrypted, or exceeds configured page limit (`page_limit_exceeded`).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+  /documents/{documentId}/content:
+    get:
+      tags: [Documents]
+      summary: Stream original PDF bytes for native browser viewing
+      description: >-
+        Supports HTTP Range requests. This route resolves an opaque document ID;
+        it never accepts or reveals a storage path. The file is served inline.
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+        - name: Range
+          in: header
+          required: false
+          schema: { type: string, example: "bytes=0-1023" }
+      responses:
+        "200":
+          description: Entire PDF (or full response when no range is honored)
+          headers:
+            Accept-Ranges: { schema: { type: string, example: bytes } }
+            Content-Disposition: { schema: { type: string, example: inline } }
+            X-Content-Type-Options: { schema: { type: string, example: nosniff } }
+          content:
+            application/pdf:
+              schema: { type: string, format: binary }
+        "206":
+          description: Requested byte range
+          headers:
+            Content-Range: { schema: { type: string, example: "bytes 0-1023/4096" } }
+            Accept-Ranges: { schema: { type: string, example: bytes } }
+          content:
+            application/pdf:
+              schema: { type: string, format: binary }
+        "404":
+          description: No library record has this UUID (`document_not_found`).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "503":
+          description: The UUID exists but its backing file is missing, inaccessible, unreadable, or fails the original SHA-256 integrity check. Metadata and associations remain unchanged.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "416": { description: Range is not satisfiable }
+components:
+  parameters:
+    ProjectId:
+      name: projectId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    DocumentId:
+      name: documentId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  schemas:
+    Project:
+      type: object
+      required: [id, name, createdUtc]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        createdUtc: { type: string, format: date-time }
+    Document:
+      type: object
+      required: [id, originalFileName, byteLength, pageCount, importedUtc, contentUrl]
+      properties:
+        id: { type: string, format: uuid }
+        originalFileName: { type: string }
+        byteLength: { type: integer, format: int64, minimum: 1 }
+        pageCount: { type: integer, minimum: 1 }
+        importedUtc: { type: string, format: date-time }
+        contentUrl: { type: string, format: uri-reference }
+    Role:
+      type: string
+      enum: [FocusedSource, ReferenceSource]
+    ProjectDocument:
+      type: object
+      required: [projectId, document, role, addedUtc]
+      properties:
+        projectId: { type: string, format: uuid }
+        document: { $ref: "#/components/schemas/Document" }
+        role: { $ref: "#/components/schemas/Role" }
+        addedUtc: { type: string, format: date-time }
+    Problem:
+      type: object
+      description: Actionable error without filesystem path disclosure
+      required: [title, status, code]
+      properties:
+        type: { type: string, format: uri-reference }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        code:
+          type: string
+          enum: [invalid_name, duplicate_project_name, not_a_pdf, corrupt_pdf, encrypted_pdf, invalid_role, duplicate_association, document_unavailable, document_not_found, not_found, upload_too_large, page_limit_exceeded]
+  responses:
+    Problem:
+      description: Request failed with an actionable, safe explanation
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }

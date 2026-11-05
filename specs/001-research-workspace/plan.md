@@ -1,0 +1,120 @@
+# Implementation Plan: Research Workspace and PDF Library
+
+**Branch**: `001-research-workspace` | **Date**: 2026-11-04 | **Spec**: [spec.md](spec.md)
+
+**Feature ID**: F001 | **Codecks**: [$12s — F001 Research Workspace and PDF Library](https://thyago-cunha-dev.codecks.io/card/12s)
+
+**Input**: Approved specification from `specs/001-research-workspace/spec.md`
+
+## Summary
+
+Deliver the approved single-researcher workspace for projects, a shared PDF library, project-specific document roles and associations, and page reading. Implement as one locally hosted Linux ASP.NET Core deployment with a Bolero WebAssembly UI, SQLite metadata, and original PDF bytes in a private local filesystem directory. Official initial support is Linux with Firefox and Chromium. Use UUID identifiers consistently in F# domain types, SQLite TEXT columns, and HTTP paths/bodies. Keep document lookup and byte streaming behind a storage abstraction so the native browser PDF viewer is only a consumer of the document content endpoint. Identify duplicate imports using SHA-256 as an efficient index, then compare bytes before reusing a record to satisfy the spec's byte-for-byte identity rule. Validate uploads with signature checks and PdfPig parsing before publishing them to the library. Enforce configurable limits defaulting to 100,000,000 bytes and 2,000 pages, and acquire an exclusive process lock per data directory; multiple tabs share the same process and data.
+
+## Technical Context
+
+**Language/Version**: F# 10 on .NET 10 LTS (latest servicing SDK pinned at implementation start)
+
+**Primary Dependencies**: Bolero 0.25.x with Elmish; ASP.NET Core 10 minimal endpoints and static asset hosting; EF Core 10 SQLite provider; PdfPig 0.1.16 stable for structural parsing and encryption detection; xUnit.net v3 for automated tests. Exact patch versions should be pinned centrally and updated with security patches.
+
+**Storage**: SQLite for workspace, projects, documents, associations, import recovery journal, and persisted active project; local filesystem for immutable original PDF bytes and request-owned staging files. Verify SHA-256 on every new document open without reparsing and bind verification and delivery to the same opened file. Storage root is configurable, outside the public web root, and private to the current user.
+
+**Testing**: xUnit v3 unit, SQLite-backed repository/integration tests, ASP.NET Core in-memory HTTP contract tests, and browser-level end-to-end tests against temporary filesystem/database roots. Tests start with the first increment.
+
+**Target Platform**: Linux with officially supported Firefox and Chromium; ASP.NET Core binds to loopback by default. Linux data-directory resolution is configurable.
+
+**Project Type**: Single-deployment full-stack web application (Bolero WebAssembly frontend and integrated ASP.NET Core backend).
+
+**Performance Goals**: No latency SLO is stated in the spec. Avoid buffering entire PDFs in memory for viewing; stream filesystem content and support HTTP byte ranges. Hash and validate uploads incrementally, enforcing configurable defaults of 100,000,000 bytes and 2,000 pages. Verify integrity on every new document open without reparsing; reuse verification for range requests only when unchanged bytes can be proven, otherwise rehash.
+
+**Constraints**: Single researcher; Linux with Firefox and Chromium; local processing only; no required cloud services; one application process per data directory, with multiple browser tabs supported; no user-controlled filesystem paths; no public static exposure of originals; PDF import rejects encrypted/password-protected input; exact byte identity and original bytes preserved; configurable defaults of 100,000,000 bytes and 2,000 pages; malformed, zero, or negative limit configuration fails startup; no project deletion, rename, collaboration, OCR, search, bibliography, or AI scope. Full library export/deletion and unavailable-document recovery UI are deferred.
+
+**Scale/Scope**: One workspace, multiple projects, shared PDF library, per-project roles, import/reuse, association removal, PDF page reading, and persistence. File size/page limits are configurable; defaults are 100,000,000 bytes and 2,000 pages.
+
+Import limits apply to each import request, including re-imports, using the current configuration. Lowering either limit does not invalidate existing library records or restrict reading a previously accepted PDF, including after restart.
+
+## Constitution Check
+
+| Principle | Gate | Plan response |
+|---|---|---|
+| I. Academic Integrity and Verifiable Evidence | Pass | F001 only provides source management and reading; it makes no generated evidence claims. Page display remains the original PDF content. |
+| II. Privacy and User Control | Incremental delivery; obligation outstanding | Constitution v2.0.0 permits tracked, disclosed deferral. F001 preserves unassociated documents and defers full-library export/deletion to F002 ([Codecks $12y](https://thyago-cunha-dev.codecks.io/card/12y)); user-facing documentation must identify unavailable controls and design must not unnecessarily block them. Full compliance is not claimed. |
+| III. Human Oversight of Generated Content | Pass | No generated content is in scope. |
+| IV. Testability and Reproducibility | Pass | Acceptance criteria are mapped to automated tests below and in `quickstart.md`; test fixtures include readable, corrupt, encrypted, identical, and distinct PDFs. |
+| V. Simplicity and Incremental Development | Pass | One deployable app, one relational metadata store, one filesystem document store, and no external services. Interfaces are introduced only at the document storage/view boundary and persistence boundary. |
+| VI. Requirements and Implementation Decisions | Pass | The approved spec remains the source of behavior; this plan records technology choices and trade-offs without adding product requirements. |
+
+**Pre-design gate**: Pass. Confirmed stack choices map to F001 and no scope additions are proposed.
+
+**Post-design gate**: Constitution v2.0.0 permits the tracked incremental delivery provided its disclosure and future-design conditions are met. F002's full-library export/deletion obligation remains outstanding; F001 does not claim full Principle II compliance.
+
+## Architecture and Project Structure
+
+Single process and deployment: ASP.NET Core serves the Bolero WebAssembly application and same-origin JSON endpoints. F# application services own project and document use cases. Persistence and physical-file access remain behind narrow interfaces. On every new document open, verify SHA-256 without reparsing and bind verification and delivery to the same opened file. Ensure bytes cannot change during verification and delivery; fail safely before delivery if that cannot be established. File size and timestamps do not establish integrity. Reuse verification for range requests only when unchanged bytes can be proven; otherwise rehash. The server guarantees exact verified bytes and consistent missing/unreadable/integrity-mismatch errors. Browser-native viewer controls, page rendering, page labels, and navigation UX are browser behavior; Linux Firefox and Chromium are supported, but their controls need not be identical.
+
+```text
+src/
+├── LexScholar.Server/             # ASP.NET Core host, routing, startup, configuration
+├── LexScholar.Client/             # Bolero/Elmish UI, project selection, library, reader
+├── LexScholar.Domain/             # Workspace, project, document and association types/rules
+├── LexScholar.Application/        # Use cases, validation orchestration, storage interfaces
+└── LexScholar.Infrastructure/     # EF Core SQLite, migrations, filesystem store, PdfPig adapter
+
+tests/
+├── LexScholar.Domain.Tests/       # Naming, role, association and identity rules
+├── LexScholar.Application.Tests/  # Import/association use-case behavior with fakes
+├── LexScholar.Infrastructure.Tests/ # Real SQLite and temporary filesystem tests
+├── LexScholar.Server.Tests/       # HTTP contracts, range responses, safe error behavior
+└── LexScholar.Browser.Tests/      # Main user journeys in a real browser
+
+specs/001-research-workspace/
+├── plan.md
+├── research.md
+├── data-model.md
+├── quickstart.md
+└── contracts/
+    └── http-api.yaml
+```
+
+**Structure Decision**: One solution split into a small number of F# projects following host/client, domain/application, and infrastructure boundaries. The document content abstraction is deliberately independent of the browser viewer. Avoid a separate deployment or microservice; no external integration is required.
+
+## Data and Request Flow
+
+1. Acquire a per-data-directory exclusive process lock before opening SQLite or serving requests. Additional tabs attach to that process; a second process using the same data directory fails with an actionable startup message.
+2. Create a pending-import journal entry with operation UUID and generated staging key before receiving bytes. Stream to that request-owned private file while counting bytes and calculating SHA-256. Enforce configurable size and page limits (100,000,000 bytes and 2,000 pages by default). Malformed, zero, or negative limit configuration fails startup. Validate `%PDF-`, readability, and encryption with PdfPig. Do not expose a library record or association until validation succeeds.
+3. Compare SHA-256 candidates with byte-for-byte comparisons. Every valid simultaneous identical import succeeds and returns the same UUID document; coordinate contention with safe internal retries as needed. Preserve one record, original bytes and associations, and clean only each operation's own staging/journal artifacts. For new bytes, record validated metadata in the journal, atomically move staged bytes to an opaque final key on the same filesystem, then transactionally insert the document and clear the journal. Recovery verifies journaled length/hash and PDF readability before finalizing or safely discarding only artifacts owned by that operation. Never delete referenced data; quarantine/report unexplained artifacts instead of automatically deleting them.
+4. Store the sanitized original filename only as display metadata, never as a path. Project associations hold per-project role. Removing one deletes only that association; a document with no associations remains in the library.
+5. On every new document open, verify SHA-256 against the imported hash without reparsing and bind verification and delivery to the same opened file. Reuse verification for range requests only when unchanged bytes can be proven; otherwise rehash. A mismatch, inaccessible/missing file, or read failure returns 503 `document_unavailable`, leaving metadata and associations unchanged. The reader requests `/api/documents/{uuid}/content`; the host resolves UUID to a storage key and streams exact verified bytes with `application/pdf`, inline disposition, and range support. Unknown UUIDs return 404 `document_not_found`. The path is never derived from request input.
+
+## Test Mapping
+
+See `quickstart.md` for executable validation flows. Automated coverage maps to spec criteria as follows:
+
+| Spec coverage | Automated verification |
+|---|---|
+| US1; FR-001, FR-002, FR-013; SC-001 | Browser project create/list/select/switch journey; active-project document list and role refresh, empty states and isolation are covered in the US2 browser journey. |
+| US2; FR-003–006, FR-010–012, FR-015, FR-017; SC-002–004, SC-007–008 | SC-002 requires at least 99 successful imports from 100 supported valid readable PDFs within limits. Separately test failure-message quality, invalid inputs, limits, collision-safe equality, concurrent identical imports, and final-association retention. |
+| US3; FR-007–009; SC-004, SC-006 | Role isolation is automated. Delivery tests verify original bytes, metadata, ranges, and integrity hash failures. Native viewer page navigation is evaluated as browser behavior in supported Firefox and Chromium on Linux; do not attribute browser UI behavior to the API. |
+| FR-011; SC-005 | Restart host over the same temporary SQLite and file roots and verify projects, documents, associations, and active-project selection persist across repeated restart cycles. |
+| Constitution I/II/IV; FR-014 | Tests assert original bytes are served unchanged, storage path cannot be supplied by client, and no external service is invoked; document local storage path in user-facing settings/help. |
+
+## Risks and Trade-offs
+
+- **Filesystem and SQLite are not one transaction.** Use a SQLite import journal plus request-owned staging and same-volume atomic rename. Recovery verifies journal and content before finalizing; it never deletes referenced data and quarantines unexplained artifacts. Keep originals immutable. Automated fault-injection tests exercise interruption points.
+- **A PDF signature is not proof of a valid or safe PDF.** Parse with PdfPig and reject encrypted input. Parsing is still attack surface; keep the library patched and enforce configurable 100,000,000-byte/2,000-page defaults. F001 does not require malware scanning or content sanitization.
+- **Hash-only deduplication is not the product identity rule.** SHA-256 narrows candidates, while byte comparison guarantees exact identity even in a theoretical collision.
+- **Native PDF viewers vary by browser.** LexScholar controls endpoint availability, exact byte delivery, headers, integrity verification, and range semantics, but not viewer UI, rendering, navigation controls, or page labels. Official browser support is Firefox and Chromium on Linux.
+- **Loopback hosting is a security boundary, not authentication.** Default to loopback binding, same-origin requests, CSRF/origin protection for mutations, opaque IDs, and no CORS wildcard. Do not accept arbitrary Host or forwarded headers when running locally.
+- **SQLite migration capabilities are narrower than server databases.** Keep schema simple and test migrations against the real SQLite provider. No distributed locking or multi-user writes are needed for this feature.
+- **Single-instance lock failure or stale lock files.** Use an OS-held exclusive lock (released on process exit), not lock-file presence alone. Test second-process rejection and multi-tab operation.
+- **Linux local storage location.** Resolve a per-user application data directory, allow an explicit operator override, and show the effective location. Backup and whole-library export UX are not specified by F001.
+
+## Unresolved Technical Questions for Review
+
+1. **Browser behavior boundary**: Firefox and Chromium on Linux are official targets. Native viewer controls/navigation remain browser behavior; LexScholar guarantees content integrity and delivery, not identical viewer UI.
+2. **Constitution Principle II obligation**: Full-library export/deletion is deferred to F002 ([Codecks $12y](https://thyago-cunha-dev.codecks.io/card/12y)) under v2.0.0 incremental-delivery governance and remains outstanding; F001 does not claim full compliance.
+
+No implementation tasks or application code are generated by this plan.
+
+## Complexity Tracking
+
+The import journal, process lock, and integrity check address consistency and preservation needs; no service/deployment tier is added. The outstanding Principle II obligation is recorded above, not treated as an exception or as satisfied.

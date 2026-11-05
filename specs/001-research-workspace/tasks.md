@@ -1,0 +1,85 @@
+# Tasks: F001 — Research Workspace and PDF Library
+
+**Feature**: F001 | **Codecks**: [$12s](https://thyago-cunha-dev.codecks.io/card/12s) | **Inputs**: [spec](spec.md), [plan](plan.md), [model](data-model.md), [research](research.md), [contract](contracts/http-api.yaml), [quickstart](quickstart.md)
+
+Tests are required from the first increment. Establish the compile-ready scaffolding and schema prerequisites below before writing behavior tests. Run each new test against the configured harness and demonstrate an assertion failure for the missing behavior before implementing that behavior; build errors, missing fixtures, failed host startup, and database setup failures are not acceptable test-first evidence. Paths are planned paths from `plan.md`; tasks create them during implementation.
+
+## Phase 1: Setup
+
+- [ ] T001 Create the F# solution and Server, Client, Domain, Application, Infrastructure projects and references in `LexScholar.sln` and `src/` as specified in `plan.md`.
+- [ ] T002 Create xUnit v3 Domain, Application, Infrastructure, Server, and Browser test projects and solution references in `tests/` and `LexScholar.sln`.
+- [ ] T003 Pin compatible .NET 10 SDK, Bolero, EF Core SQLite, PdfPig and test dependencies in `global.json` and `Directory.Packages.props`.
+- [ ] T004 Add small, redistributable valid, encrypted, corrupt, non-PDF and distinct-byte fixtures with provenance in `tests/Fixtures/README.md` and `tests/Fixtures/`.
+- [ ] T045 Establish compile-ready F# signatures and no-behavior stubs for configuration, locking, services, validation, journal, verified content and HTTP routes in `src/LexScholar.Server/`, `src/LexScholar.Application/` and `src/LexScholar.Infrastructure/`; register them in their `.fsproj` compile order and create a runnable isolated host/temporary SQLite and filesystem harness in `tests/LexScholar.Server.Tests/TestHarness.fs`. Stub responses must allow tests to start and fail on expected behavior, not setup. Complete T001–T004 first.
+
+## Phase 2: Foundation
+
+- [ ] T005 [P] Write configuration tests for 100,000,000-byte and 2,000-page defaults, positive overrides, and malformed/zero/negative startup rejection in `tests/LexScholar.Server.Tests/ConfigurationTests.fs`.
+- [ ] T006 [P] Write process-lock tests for second-process refusal, release after exit, separate directories, and multiple tabs against one host in `tests/LexScholar.Server.Tests/ProcessLockTests.fs`.
+- [ ] T007 Implement validated local data-directory and PDF limit configuration in `src/LexScholar.Server/Configuration.fs` (depends on T005).
+- [ ] T008 Implement OS-held exclusive data-directory lock before migration/serving and actionable startup failure in `src/LexScholar.Infrastructure/DataDirectoryLock.fs` and `src/LexScholar.Server/Program.fs` (depends on T006–T007).
+- [ ] T009 Configure ASP.NET Core loopback host, same-origin/antiforgery and Host validation, safe problem responses, and Bolero static assets in `src/LexScholar.Server/Program.fs` and `src/LexScholar.Server/Errors.fs` (FR-014).
+- [ ] T010 Create SQLite context, migration initialization, foreign-key enforcement, canonical UUID text mapping and UTC timestamp convention in `src/LexScholar.Infrastructure/WorkspaceDb.fs` and `src/LexScholar.Infrastructure/Migrations/`.
+- [ ] T011 Define application storage and document-content interfaces independent of the viewer in `src/LexScholar.Application/Ports.fs`.
+
+## Phase 3: US1 — Organize research projects (P1; project MVP)
+
+**Goal**: Create, list, select, switch and restore projects. **Independent check**: create two projects, reject a normalized duplicate, switch and restart with the last selection restored. [FR-001, FR-002, FR-011, FR-013, FR-016; SC-001, SC-005]
+
+- [ ] T012 [P] [US1] After the type/signature scaffolding in T014 and harness T045, write domain tests for required trimmed names and capitalization/outer-whitespace duplicate rejection in `tests/LexScholar.Domain.Tests/ProjectTests.fs`.
+- [ ] T013 [P] [US1] After schema scaffolding T015 and harness T045, write SQLite and HTTP tests for project creation/list/selection, duplicate conflict and selection restoration in `tests/LexScholar.Server.Tests/ProjectContractTests.fs` and `tests/LexScholar.Infrastructure.Tests/ProjectPersistenceTests.fs`.
+- [ ] T014 [US1] Define Workspace and ResearchProject UUID entities in `src/LexScholar.Domain/Projects.fs`: active project is nullable, project name is required and trimmed, and normalized name is unique within a workspace.
+- [ ] T015 [US1] Add project/workspace schema, `(WorkspaceId, NormalizedName)` uniqueness and active-project foreign key in `src/LexScholar.Infrastructure/WorkspaceDb.fs` and `src/LexScholar.Infrastructure/Migrations/` (depends on T010, T014).
+- [ ] T016 [US1] Implement project creation, list, selection and persisted restoration in `src/LexScholar.Application/Projects.fs` and `src/LexScholar.Infrastructure/ProjectRepository.fs` (depends on T015).
+- [ ] T017 [US1] Implement `/api/projects` and `/api/projects/{projectId}/active` according to `contracts/http-api.yaml` in `src/LexScholar.Server/ProjectEndpoints.fs` (depends on T016).
+- [ ] T018 [US1] Implement project creation/list, project selection and active-project display, duplicate feedback and project-list empty state in `src/LexScholar.Client/Projects.fs` (depends on T017); T032 owns the associated-document list.
+- [ ] T019 [US1] Add Linux Firefox and Chromium project creation, selection, active-project display, project-list empty state and restart coverage in `tests/LexScholar.Browser.Tests/ProjectJourneyTests.fs` (depends on T018); T033 covers associated documents after switching.
+
+**Checkpoint after T019**: Verify project-management functionality. Full US1 acceptance also depends on T032–T033 in US2, which display and verify the active project's associated documents.
+
+## Phase 4: US2 — Import and reuse PDFs (P1)
+
+**Goal**: Import a shared original, associate it with multiple projects, and remove associations while retaining the original. **Independent check**: import identical bytes twice under different names, associate with two projects, remove both associations and reuse the retained document. [FR-003–006, FR-010–012, FR-014–017; SC-002–005, SC-007–008]
+
+- [ ] T020 [P] [US2] Write validation tests for valid, non-PDF, corrupt, encrypted, exact-boundary and over-limit PDFs, including non-mutating rejection and configurable overrides, in `tests/LexScholar.Application.Tests/PdfValidationTests.fs`; current limits apply to every new import request, including re-imports.
+- [ ] T021 [P] [US2] Write real SQLite/filesystem tests for exact-byte duplicate reuse, different bytes including forced hash-candidate collision, and final-association retention in `tests/LexScholar.Infrastructure.Tests/LibraryTests.fs`. Start concurrent valid identical imports with a synchronization barrier, including different filenames; assert every request succeeds and returns the same document, exactly one library record exists, original bytes and existing associations remain intact, and restart leaves no lost or corrupted data. Repeat the race and verify safe journal/staging cleanup; internal contention retries are allowed.
+- [ ] T022 [P] [US2] Write fault-injection tests at journal, staging, promotion and commit boundaries, ensuring referenced files/records survive and only journal-owned artifacts are cleaned, in `tests/LexScholar.Infrastructure.Tests/ImportRecoveryTests.fs`.
+- [ ] T023 [P] [US2] Write HTTP contract tests for library listing/import, association creation/removal, duplicate association and safe failure responses in `tests/LexScholar.Server.Tests/LibraryContractTests.fs`.
+- [ ] T024 [US2] Define LibraryDocument and ProjectDocument types in `src/LexScholar.Domain/Documents.fs`: SHA-256 is a non-unique candidate index; storage key is generated and unique; byte length and page count are positive, with configured limits checked only when importing; association key is `(ProjectId, DocumentId)` and role is exactly `FocusedSource` or `ReferenceSource`. Lowered limits must not invalidate previously accepted documents.
+- [ ] T025 [US2] Add document, association and PendingImport SQLite mappings/migration in `src/LexScholar.Infrastructure/WorkspaceDb.fs` and `src/LexScholar.Infrastructure/Migrations/`: UUID keys, unique storage key, non-unique hash index, required foreign keys, and journal `Uploading`, `Validated`, `Promoted` states (depends on T024).
+- [ ] T026 [US2] Implement private generated-key filesystem staging and immutable same-filesystem promotion in `src/LexScholar.Infrastructure/DocumentStore.fs`; never derive paths from client filenames (depends on T011).
+- [ ] T027 [US2] Implement streaming byte limit and SHA-256 calculation plus PdfPig signature/readability/encryption/page-limit validation in `src/LexScholar.Infrastructure/PdfValidator.fs` (depends on T020, T026).
+- [ ] T028 [US2] Implement journal-before-stream import, validated promotion, transactional metadata commit and startup reconciliation under the data-directory lock in `src/LexScholar.Infrastructure/ImportJournal.fs` (depends on T008, T022, T025–T027).
+- [ ] T029 [US2] Implement exact-byte candidate comparison, duplicate reuse, and non-mutating import failures in `src/LexScholar.Application/ImportDocument.fs`; coordinate concurrent valid identical imports so every request succeeds and returns the same document, with one record, preserved original bytes and associations, and safe operation-owned staging/journal cleanup. Permit safe internal contention retries (depends on T021, T027–T028).
+- [ ] T030 [US2] Implement shared library listing and per-project association creation/removal with final-document retention in `src/LexScholar.Application/Library.fs` and `src/LexScholar.Infrastructure/LibraryRepository.fs` (depends on T025, T029).
+- [ ] T031 [US2] Implement library/import and association HTTP endpoints with contract status codes and safe errors in `src/LexScholar.Server/LibraryEndpoints.fs` (depends on T023, T030).
+- [ ] T032 [US2] Implement shared library, upload feedback, association and removal flows in `src/LexScholar.Client/Library.fs`; display the active project's associated documents and their project-specific roles, refresh the list on project switch, show a clear no-associated-documents state, and preserve project isolation (depends on T018, T031).
+- [ ] T033 [US2] Add Linux Firefox and Chromium multi-project import/reuse/retention journeys in `tests/LexScholar.Browser.Tests/LibraryJourneyTests.fs`; switch between projects with different documents and roles, verify list refresh and isolation, and verify the empty-project state (depends on T032).
+
+## Phase 5: US3 — Read and classify sources (P1)
+
+**Goal**: Read an associated original with page navigation and change only its project-specific role. **Independent check**: open a PDF, navigate pages, change its role and confirm the other project's role is unchanged. [FR-007–009, FR-012, FR-017; SC-004, SC-006–007]
+
+- [ ] T034 [P] [US3] Write role-isolation tests and content HTTP tests for exact bytes, 200/206/416, unknown UUID 404, and missing/unreadable/hash-mismatched 503 with unchanged records in `tests/LexScholar.Server.Tests/ReaderContractTests.fs`.
+- [ ] T035 [P] [US3] Write integrity tests covering same-size replacement with restored modification time, replacement during verification, repeated range requests, and restart in `tests/LexScholar.Infrastructure.Tests/ContentIntegrityTests.fs`; no stale cached result may authorize changed bytes.
+- [ ] T036 [US3] Implement association role updates scoped by project and document UUID in `src/LexScholar.Application/DocumentRoles.fs` and `src/LexScholar.Infrastructure/LibraryRepository.fs` (depends on T030, T034).
+- [ ] T037 [US3] Implement content opening and streaming SHA-256 verification against the imported digest in `src/LexScholar.Infrastructure/VerifiedDocumentContent.fs`; bind verification and delivery to the same open file, ensure its bytes cannot change during verification and delivery, and fail safely before delivery if that cannot be established. Revalidate every new document open without reparsing. Reuse verification for range requests only when the implementation can prove the bytes cannot have changed; otherwise rehash (depends on T011, T035).
+- [ ] T038 [US3] Implement role PATCH and inline range-capable content endpoint with 404/503 safe problem responses in `src/LexScholar.Server/ReaderEndpoints.fs` (depends on T034, T036–T037).
+- [ ] T039 [US3] Implement native browser reader and role controls with clear unavailable-document feedback in `src/LexScholar.Client/Reader.fs` (depends on T032, T038).
+- [ ] T040 [US3] Add Linux Firefox and Chromium reader/role journeys in `tests/LexScholar.Browser.Tests/ReaderJourneyTests.fs`, recording manual viewer navigation evidence where browser internals prevent automation (depends on T039).
+
+## Phase 6: Cross-cutting verification
+
+- [ ] T041 Add restart-cycle coverage for 100 consecutive persistence checks and active-project restoration in `tests/LexScholar.Infrastructure.Tests/RestartTests.fs`; in `tests/LexScholar.Server.Tests/LimitRestartTests.fs`, import a multi-page PDF, lower both positive import limits below its size and page count, restart and reopen the existing PDF unchanged, then verify new over-limit imports are rejected (FR-003, FR-011; SC-005, SC-008; depends on T038).
+- [ ] T042 Add local-only, path traversal, original-byte preservation and error-data non-disclosure checks in `tests/LexScholar.Server.Tests/LocalSecurityTests.fs` (FR-012, FR-014, FR-017; SC-007).
+- [ ] T043 Document effective local storage location, data handling, supported browsers, configured limits and unavailable full-library export/deletion controls tracked in F002 (Codecks $12y) in `docs/local-workspace.md`; do not claim full Principle II compliance (Constitution v2.0.0; FR-014).
+- [ ] T044 Assemble a documented SC-002 corpus of 100 supported, valid, readable PDFs within configured size and page limits and run it with the automated suites; record corpus provenance and hashes, each import result, and the successful-import count in `specs/001-research-workspace/verification.md`. At least 99 of 100 must import successfully. Assess error-message quality separately under SC-007; record automated SC-003–005 and SC-007–008 results separately from usability evidence.
+- [ ] T046 Conduct and document unassisted researcher usability evaluations for SC-001 and SC-006 on Linux with Firefox and Chromium in `specs/001-research-workspace/verification.md`: record participant counts, browser/version, tasks, success counts and percentages. At least 90% must create two projects, switch and identify the active project for SC-001; at least 90% must open an associated PDF and navigate to a specified page for SC-006. Record automated browser checks separately; do not treat them as participant evidence (depends on T019, T040, T044).
+
+## Dependencies and parallel work
+
+Phase 1 → Phase 2 → US1 → US2 → US3 → Phase 6. T045 supplies runnable test scaffolding before T005–T006 and all story tests. Before T012–T013, complete T014's type signatures and T015's runnable schema scaffolding; implement project behavior only after those tests fail. Before T020–T023, complete T024's types and T025's runnable schema scaffolding plus the T045 harness; implement validation, import and association behavior only after the relevant tests fail. T034–T035 use the existing US2 data setup and T045 reader stubs before T036–T038 implement behavior. Numbering retains existing IDs and does not override these dependencies. US2 needs projects and US3 needs shared documents and associations; each checkpoint can be verified with its own fixtures after its prerequisites. Once their stated scaffolds are complete, T012 and T013 can run independently, as can T020–T023 and T034–T035. `[P]` marks only work on separate files with no dependency on another incomplete task in the same group. Shared repository and migration edits are sequential.
+
+## Implementation strategy and scope
+
+Deliver project management through T019 as the first independently reviewable increment, then US2 shared library, then US3 reading and roles. Full US1 acceptance follows T032–T033, which display and verify the active project's associated documents. Tests accompany each increment. Constitution v2.0.0 permits tracked, disclosed incremental delivery: full-library export/deletion is tracked in F002 ([Codecks $12y](https://thyago-cunha-dev.codecks.io/card/12y)), remains outstanding and must not be unnecessarily blocked by F001 design; full Principle II compliance is not claimed. Unavailable-document recovery UI is deferred. No tasks create Codecks cards.
