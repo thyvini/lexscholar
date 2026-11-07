@@ -27,6 +27,8 @@ Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "LexScholar.Infrastructure.T
 EndProject
 Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "LexScholar.Server.Tests", "tests\LexScholar.Server.Tests\LexScholar.Server.Tests.fsproj", "{E525CA55-A74C-4011-B334-47F42B39AC3D}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LexScholar.Client.Bootstrap", "src\LexScholar.Client.Bootstrap\LexScholar.Client.Bootstrap.csproj", "{760D1A92-7EDA-4AE0-9502-A03DB24FAEC8}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -157,6 +159,18 @@ Global
 		{E525CA55-A74C-4011-B334-47F42B39AC3D}.Release|x64.Build.0 = Release|Any CPU
 		{E525CA55-A74C-4011-B334-47F42B39AC3D}.Release|x86.ActiveCfg = Release|Any CPU
 		{E525CA55-A74C-4011-B334-47F42B39AC3D}.Release|x86.Build.0 = Release|Any CPU
+		{760D1A92-7EDA-4AE0-9502-A03DB24FAEC8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{760D1A92-7EDA-4AE0-9502-A03DB24FAEC8}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{760D1A92-7EDA-4AE0-9502-A03DB24FAEC8}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{760D1A92-7EDA-4AE0-9502-A03DB24FAEC8}.Debug|x64.Build.0 = Debug|Any CPU
+		{760D1A92-7EDA-4AE0-9502-A03DB24FAEC8}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{760D1A92-7EDA-4AE0-9502-A03DB24FAEC8}.Debug|x86.Build.0 = Debug|Any CPU
+		{760D1A92-7EDA-4AE0-9502-A03DB24FAEC8}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{760D1A92-7EDA-4AE0-9502-A03DB24FAEC8}.Release|Any CPU.Build.0 = Release|Any CPU
+		{760D1A92-7EDA-4AE0-9502-A03DB24FAEC8}.Release|x64.ActiveCfg = Release|Any CPU
+		{760D1A92-7EDA-4AE0-9502-A03DB24FAEC8}.Release|x64.Build.0 = Release|Any CPU
+		{760D1A92-7EDA-4AE0-9502-A03DB24FAEC8}.Release|x86.ActiveCfg = Release|Any CPU
+		{760D1A92-7EDA-4AE0-9502-A03DB24FAEC8}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -172,5 +186,6 @@ Global
 		{1FB39838-0C3F-458A-A5EB-0C650073642A} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{183A9552-79E9-4080-839E-0F513BC813CC} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{E525CA55-A74C-4011-B334-47F42B39AC3D} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
+		{760D1A92-7EDA-4AE0-9502-A03DB24FAEC8} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 	EndGlobalSection
 EndGlobal
