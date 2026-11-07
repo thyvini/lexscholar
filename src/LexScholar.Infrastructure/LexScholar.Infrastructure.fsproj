@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../LexScholar.Domain/LexScholar.Domain.fsproj" />
+    <ProjectReference Include="../LexScholar.Application/LexScholar.Application.fsproj" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
+    <PackageReference Include="PdfPig" />
+  </ItemGroup>
+</Project>

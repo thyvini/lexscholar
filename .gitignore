@@ -42,5 +42,12 @@ AGENTS.local.md
 .idea/
 .vscode/
 
+# .NET build and IDE outputs
+bin/
+obj/
+packages/
+*.user
+*.suo
+
 # Spec Kit project configuration, specifications, templates, workflows,
 # and shared .agents/skills are intentionally kept under version control.
