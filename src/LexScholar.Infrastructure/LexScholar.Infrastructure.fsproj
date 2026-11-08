@@ -3,6 +3,10 @@
     <TargetFramework>net10.0</TargetFramework>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="DataDirectoryLock.fs" />
+    <Compile Include="PdfValidator.fs" />
+    <Compile Include="ImportJournal.fs" />
+    <Compile Include="VerifiedDocumentContent.fs" />
     <ProjectReference Include="../LexScholar.Domain/LexScholar.Domain.fsproj" />
     <ProjectReference Include="../LexScholar.Application/LexScholar.Application.fsproj" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />

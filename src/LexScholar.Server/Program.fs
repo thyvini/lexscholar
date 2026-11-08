@@ -4,14 +4,20 @@ open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.Hosting.StaticWebAssets
 open Microsoft.AspNetCore.Http
 
-[<EntryPoint>]
-let main args =
-    let builder = WebApplication.CreateBuilder(args)
+let create (builder: WebApplicationBuilder) (serveClient: bool) =
     let app = builder.Build()
 #if DEBUG
-    StaticWebAssetsLoader.UseStaticWebAssets(app.Environment, app.Configuration)
+    if serveClient then
+        StaticWebAssetsLoader.UseStaticWebAssets(app.Environment, app.Configuration)
 #endif
-    app.MapStaticAssets() |> ignore
-    app.MapGet("/", System.Func<IResult>(fun () -> Results.Redirect("/index.html"))) |> ignore
+    if serveClient then
+        app.MapStaticAssets() |> ignore
+        app.MapGet("/", System.Func<IResult>(fun () -> Results.Redirect("/index.html"))) |> ignore
+    LexScholar.Server.Endpoints.map app
+    app
+
+[<EntryPoint>]
+let main args =
+    let app = create (WebApplication.CreateBuilder(args)) true
     app.Run()
     0

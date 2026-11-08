@@ -4,6 +4,8 @@
     <RequiresAspNetWebAssets>true</RequiresAspNetWebAssets>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="Configuration.fs" />
+    <Compile Include="Endpoints.fs" />
     <Compile Include="Program.fs" />
     <ProjectReference Include="../LexScholar.Client/LexScholar.Client.fsproj" />
     <ProjectReference Include="../LexScholar.Application/LexScholar.Application.fsproj" />
