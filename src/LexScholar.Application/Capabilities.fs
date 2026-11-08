@@ -14,18 +14,14 @@ type ProjectOperations =
 
 type LibraryOperations =
     { List: CancellationToken -> Task<Document list>
+      /// Import borrows the caller-owned input until its task completes. The
+      /// implementation must not dispose or retain it, including on cancellation.
       Import: Stream -> string -> CancellationToken -> Task<ImportResult>
       ListForProject: Guid -> CancellationToken -> Task<ProjectDocument list>
       Associate: Guid -> Guid -> DocumentRole -> CancellationToken -> Task<ProjectDocument>
       ChangeRole: Guid -> Guid -> DocumentRole -> CancellationToken -> Task<ProjectDocument>
       RemoveAssociation: Guid -> Guid -> CancellationToken -> Task<unit> }
 
+/// Validation borrows the caller-owned input until its task completes. The
+/// implementation must not dispose or retain it, including on cancellation.
 type ValidatePdf = Stream -> ImportLimits -> CancellationToken -> Task<ValidatedPdf>
-
-type ImportJournalOperations =
-    { Create: PendingImport -> CancellationToken -> Task<unit>
-      Update: PendingImport -> CancellationToken -> Task<unit>
-      Remove: Guid -> CancellationToken -> Task<unit>
-      Recover: CancellationToken -> Task<unit> }
-
-type OpenVerifiedContent = Guid -> CancellationToken -> Task<VerifiedContent>

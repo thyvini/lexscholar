@@ -39,6 +39,8 @@ type PendingImport =
       PageCount: int option
       CreatedUtc: DateTimeOffset }
 
-// The stream is owned by the caller; an implementation must bind verification
-// and delivery to the same protected handle.
+// On a successful open, the caller owns and must dispose Stream, even if later
+// reads fail or are cancelled. Verification and delivery use the same read-only
+// handle, protected from changes; no physical path or browser-specific
+// representation is exposed.
 type VerifiedContent = { Stream: Stream; ByteLength: int64; OriginalFileName: string }
