@@ -4,6 +4,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="Contracts.fs" />
+    <Compile Include="Ports.fs" />
     <Compile Include="Capabilities.fs" />
     <Compile Include="Projects.fs" />
     <Compile Include="Library.fs" />

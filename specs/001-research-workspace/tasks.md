@@ -20,7 +20,7 @@ Tests are required from the first increment. Establish the compile-ready scaffol
 - [X] T008 Implement OS-held exclusive data-directory lock before migration/serving and actionable startup failure in `src/LexScholar.Infrastructure/DataDirectoryLock.fs` and `src/LexScholar.Server/Program.fs` (depends on T006–T007).
 - [X] T009 Configure ASP.NET Core loopback host, same-origin/antiforgery and Host validation, safe problem responses, and Bolero static assets in `src/LexScholar.Server/Program.fs` and `src/LexScholar.Server/Errors.fs` (FR-014).
 - [X] T010 Create SQLite context, migration initialization, foreign-key enforcement, canonical UUID text mapping and UTC timestamp convention in `src/LexScholar.Infrastructure/WorkspaceDb.fs` and `src/LexScholar.Infrastructure/Migrations/`.
-- [ ] T011 Define application storage and document-content interfaces independent of the viewer in `src/LexScholar.Application/Ports.fs`.
+- [X] T011 Define application storage and document-content interfaces independent of the viewer in `src/LexScholar.Application/Ports.fs`.
 
 ## Phase 3: US1 — Organize research projects (P1; project MVP)
 
