@@ -26,7 +26,7 @@ Tests are required from the first increment. Establish the compile-ready scaffol
 
 **Goal**: Create, list, select, switch and restore projects. **Independent check**: create two projects, reject a normalized duplicate, switch and restart with the last selection restored. [FR-001, FR-002, FR-011, FR-013, FR-016; SC-001, SC-005]
 
-- [ ] T012 [P] [US1] After the type/signature scaffolding in T014 and harness T045, write domain tests for required trimmed names and capitalization/outer-whitespace duplicate rejection in `tests/LexScholar.Domain.Tests/ProjectTests.fs`.
+- [X] T012 [P] [US1] After the type/signature scaffolding in T014 and harness T045, write domain tests for required trimmed names and capitalization/outer-whitespace duplicate rejection in `tests/LexScholar.Domain.Tests/ProjectTests.fs` (written and verified RED; see [evidence](evidence/t012-project-domain-red.md)).
 - [ ] T013 [P] [US1] After schema scaffolding T015 and harness T045, write SQLite and HTTP tests for project creation/list/selection, duplicate conflict and selection restoration in `tests/LexScholar.Server.Tests/ProjectContractTests.fs` and `tests/LexScholar.Infrastructure.Tests/ProjectPersistenceTests.fs`.
 - [ ] T014 [US1] Define Workspace and ResearchProject UUID entities in `src/LexScholar.Domain/Projects.fs`: active project is nullable, project name is required and trimmed, and normalized name is unique within a workspace.
 - [ ] T015 [US1] Add project/workspace schema, `(WorkspaceId, NormalizedName)` uniqueness and active-project foreign key in `src/LexScholar.Infrastructure/WorkspaceDb.fs` and `src/LexScholar.Infrastructure/Migrations/` (depends on T010, T014).
