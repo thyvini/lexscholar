@@ -30,6 +30,7 @@ let private createHost (builder: WebApplicationBuilder) (serveClient: bool) port
         | Ok handle ->
             let lease = new DataDirectoryLease(handle)
             try
+                WorkspaceDb.initialize configuration.DataDirectory
                 HostSecurity.configure builder port configuration.DataDirectory
                 // The resolved factory singleton is disposed with the host even if
                 // it is built but never started. ApplicationStopped also releases it
