@@ -2,5 +2,8 @@ module LexScholar.Client.Program
 
 open Microsoft.AspNetCore.Components.WebAssembly.Hosting
 
-let run args =
-    WebAssemblyHostBuilder.CreateDefault(args).Build().RunAsync()
+[<EntryPoint>]
+let main args =
+    let builder = WebAssemblyHostBuilder.CreateDefault(args)
+    builder.Build().RunAsync() |> ignore
+    0
