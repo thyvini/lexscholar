@@ -4,6 +4,7 @@ open System
 open System.IO
 open System.Net
 open System.Net.Http
+open System.Text.Json
 open Microsoft.Data.Sqlite
 open Xunit
 
@@ -49,6 +50,10 @@ let ``all contract routes are reachable and report unimplemented`` () =
     use harness = TestHarness.Start()
     let project = Guid.NewGuid().ToString()
     let document = Guid.NewGuid().ToString()
+    use tokenResponse = harness.Client.GetAsync("/api/antiforgery").GetAwaiter().GetResult()
+    Assert.Equal(HttpStatusCode.OK, tokenResponse.StatusCode)
+    use tokenJson = JsonDocument.Parse(tokenResponse.Content.ReadAsStringAsync().GetAwaiter().GetResult())
+    let token = tokenJson.RootElement.GetProperty("requestToken").GetString()
     let routes =
         [ HttpMethod.Get, "/api/projects"
           HttpMethod.Post, "/api/projects"
@@ -62,5 +67,7 @@ let ``all contract routes are reachable and report unimplemented`` () =
           HttpMethod.Get, $"/api/documents/{document}/content" ]
     for method, path in routes do
         use request = new HttpRequestMessage(method, path)
+        if method <> HttpMethod.Get then
+            request.Headers.Add("X-CSRF-TOKEN", token)
         use response = harness.Client.Send(request)
         Assert.Equal(HttpStatusCode.NotImplemented, response.StatusCode)

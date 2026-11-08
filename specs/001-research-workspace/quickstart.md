@@ -32,6 +32,13 @@ dotnet run --project src/LexScholar.Server
 
 Expected: one local loopback process starts and reports its URL and effective private data directory. A second process pointed at that same data directory fails clearly. Multiple tabs connect to the existing process. Database, staging, and PDF files are not served as static content.
 
+### Local host and future client requests (T009)
+
+- The listener is IPv4 loopback only, on port 5000 by default. Set `LexScholar__Port` (or `LexScholar:Port` in configuration) to an integer from 0 to 65535; port 0 selects an ephemeral port, reported in the host log. Generic URL and Kestrel endpoint settings do not change the bind address or port. Use `http://127.0.0.1:<port>` or `http://localhost:<port>` consistently: they are distinct browser origins.
+- Before a mutation, the client fetches `GET /api/antiforgery` from the same origin. Read `requestToken` from the JSON response, retain the HttpOnly SameSite=Strict cookie, and send both the cookie and the `X-CSRF-TOKEN` header on POST, PUT, PATCH, DELETE, and other unsafe methods. Browser `fetch` uses same-origin credentials by default. Do not put the token in the URL. Tokens are process-local; fetch a new one after a restart. Native document GET requests, including ranges, do not need a token.
+- Invalid Host, foreign Origin, or missing/invalid antiforgery tokens return a safe `403` problem response with a security-specific `code`; unexpected errors return a generic `500` problem. These host-level responses are separate from the existing documented domain `400` problem codes. API route implementations remain deferred.
+- Static hosting uses the build/publish manifest, not the development fallback that serves newly added files. Rebuild to include new client assets, and keep the configured data directory outside public asset trees. See [T009 evidence](evidence/t009-host-security.md) for checks and limitations.
+
 ## Acceptance validation scenarios
 
 1. **Projects and active selection (US1, FR-001/002/011/013/016, SC-001/005)**: create two projects, switch between them, verify associations remain separate, and try a case/outer-whitespace duplicate. Restart the host and verify the last active project is restored.

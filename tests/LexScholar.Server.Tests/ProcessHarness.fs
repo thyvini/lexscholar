@@ -35,6 +35,7 @@ let private startupErrorCode = function
     | Program.ConfigurationFailure (NonPositiveLimit name) -> "NonPositiveLimit:" + name
     | Program.ConfigurationFailure (InvalidDataDirectory _) -> "InvalidDataDirectory"
     | Program.LockFailure (DirectoryAlreadyInUse _) -> "DirectoryAlreadyInUse"
+    | Program.InvalidPort _ -> "InvalidPort"
 
 /// Entry point mode of the existing test executable, not another project.
 let runChild (args: string array) =
