@@ -29,13 +29,14 @@ type TemporaryWorkspace private (root: string) =
 
 module HostSetup =
     let builder root overrides =
-        let options = WebApplicationOptions(ContentRootPath = root, EnvironmentName = "Testing")
+        let options = WebApplicationOptions(ContentRootPath = root, EnvironmentName = "Testing", ApplicationName = typeof<WorkspaceConfiguration>.Assembly.GetName().Name)
         let builder = WebApplication.CreateBuilder(options)
         // Do not inherit developer configuration or environment-supplied paths.
         builder.Configuration.Sources.Clear()
         let settings = Dictionary<string, string>()
         settings.Add("LexScholar:DataDirectory", root)
         settings.Add("LexScholar:DatabasePath", Path.Combine(root, "workspace.sqlite"))
+        settings.Add("LexScholar:Port", "0")
         for key, value in overrides do
             settings.[key] <- value
         builder.Configuration.AddInMemoryCollection(settings) |> ignore
@@ -49,16 +50,20 @@ type TestHarness private (workspace: TemporaryWorkspace, app: WebApplication, cl
     member _.App = app
     member _.Client = client
 
-    static member Start() =
+    static member Start(?settings: (string * string) list, ?serveClient: bool, ?configure: WebApplication -> unit, ?environment: string) =
         let workspace = TemporaryWorkspace.Create()
         let mutable app: WebApplication option = None
         try
-            let builder = HostSetup.builder workspace.Root []
+            let builder = HostSetup.builder workspace.Root (defaultArg settings [])
+            environment |> Option.iter (fun name -> builder.Environment.EnvironmentName <- name)
+            if defaultArg serveClient false then
+                builder.WebHost.UseStaticWebAssets() |> ignore
             let host =
-                match Program.create builder false with
+                match Program.create builder (defaultArg serveClient false) with
                 | Ok host -> host
                 | Error error -> failwithf "Test host unexpectedly rejected: %A" error
             app <- Some host
+            configure |> Option.iter (fun setup -> setup host)
             // Acquire application ownership before touching the test database.
             let cs = SqliteConnectionStringBuilder(DataSource = workspace.DatabasePath, Pooling = false)
             use connection = new SqliteConnection(cs.ToString())
