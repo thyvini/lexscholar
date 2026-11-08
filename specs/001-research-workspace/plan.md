@@ -6,6 +6,8 @@
 
 **Input**: Approved specification from `specs/001-research-workspace/spec.md`
 
+**Architecture decision adopted**: 2026-11-08 — [functional-first F# architecture](proposals/functional-first-architecture.md); product scope unchanged.
+
 ## Summary
 
 Deliver the approved single-researcher workspace for projects, a shared PDF library, project-specific document roles and associations, and page reading. Implement as one locally hosted Linux ASP.NET Core deployment with a Bolero WebAssembly UI, SQLite metadata, and original PDF bytes in a private local filesystem directory. Official initial support is Linux with Firefox and Chromium. Use UUID identifiers consistently in F# domain types, SQLite TEXT columns, and HTTP paths/bodies. Keep document lookup and byte streaming behind a storage abstraction so the native browser PDF viewer is only a consumer of the document content endpoint. Identify duplicate imports using SHA-256 as an efficient index, then compare bytes before reusing a record to satisfy the spec's byte-for-byte identity rule. Validate uploads with signature checks and PdfPig parsing before publishing them to the library. Enforce configurable limits defaulting to 100,000,000 bytes and 2,000 pages, and acquire an exclusive process lock per data directory; multiple tabs share the same process and data.
@@ -40,7 +42,7 @@ Import limits apply to each import request, including re-imports, using the curr
 | II. Privacy and User Control | Incremental delivery; obligation outstanding | Constitution v2.0.0 permits tracked, disclosed deferral. F001 preserves unassociated documents and defers full-library export/deletion to F002 ([Codecks $12y](https://thyago-cunha-dev.codecks.io/card/12y)); user-facing documentation must identify unavailable controls and design must not unnecessarily block them. Full compliance is not claimed. |
 | III. Human Oversight of Generated Content | Pass | No generated content is in scope. |
 | IV. Testability and Reproducibility | Pass | Acceptance criteria are mapped to automated tests below and in `quickstart.md`; test fixtures include readable, corrupt, encrypted, identical, and distinct PDFs. |
-| V. Simplicity and Incremental Development | Pass | One deployable app, one relational metadata store, one filesystem document store, and no external services. Interfaces are introduced only at the document storage/view boundary and persistence boundary. |
+| V. Simplicity and Incremental Development | Pass | One deployable app, one relational metadata store, one filesystem document store, and no external services. Narrow capability boundaries separate persistence and document storage/content from domain behavior; these do not require CLR interfaces or additional architectural layers. |
 | VI. Requirements and Implementation Decisions | Pass | The approved spec remains the source of behavior; this plan records technology choices and trade-offs without adding product requirements. |
 
 **Pre-design gate**: Pass. Confirmed stack choices map to F001 and no scope additions are proposed.
@@ -49,14 +51,29 @@ Import limits apply to each import request, including re-imports, using the curr
 
 ## Architecture and Project Structure
 
-Single process and deployment: ASP.NET Core serves the Bolero WebAssembly application and same-origin JSON endpoints. F# application services own project and document use cases. Persistence and physical-file access remain behind narrow interfaces. On every new document open, verify SHA-256 without reparsing and bind verification and delivery to the same opened file. Ensure bytes cannot change during verification and delivery; fail safely before delivery if that cannot be established. File size and timestamps do not establish integrity. Reuse verification for range requests only when unchanged bytes can be proven; otherwise rehash. The server guarantees exact verified bytes and consistent missing/unreadable/integrity-mismatch errors. Browser-native viewer controls, page rendering, page labels, and navigation UX are browser behavior; Linux Firefox and Chromium are supported, but their controls need not be identical.
+Single process and deployment: ASP.NET Core serves the Bolero WebAssembly application and same-origin JSON endpoints. F# application workflows own project and document use cases. Persistence and physical-file access remain behind narrow capability boundaries. References to storage or document-content "interfaces" in this plan describe those boundaries, not necessarily CLR interfaces: ordinary functions, records of functions, interfaces, or classes may express the required contract.
+
+On every new document open, verify SHA-256 without reparsing and bind verification and delivery to the same opened file. Ensure bytes cannot change during verification and delivery; fail safely before delivery if that cannot be established. File size and timestamps do not establish integrity. Reuse verification for range requests only when unchanged bytes can be proven; otherwise rehash. The server guarantees exact verified bytes and consistent missing/unreadable/integrity-mismatch errors. Browser-native viewer controls, page rendering, page labels, and navigation UX are browser behavior; Linux Firefox and Chromium are supported, but their controls need not be identical.
+
+### Functional-first F# design
+
+- Prefer immutable records, discriminated unions, modules, and pure functions for domain state and rules. Keep domain behavior independent of ASP.NET Core, EF Core, physical storage, and other framework concerns; pass required values explicitly rather than reading ambient state.
+- Design application workflows by composing small operations with clear boundaries between domain decisions and effects such as database access, file I/O, time, and ID generation. Make dependencies explicit and pass only the capabilities each operation needs. Domain rules can be unit-tested independently; effectful workflows are verified with integration tests.
+- Use an ordinary function for a simple operation and a small record of functions when related capabilities need to travel together. Interfaces or classes are also appropriate when they better express a contract, generic operations, encapsulated state, resource ownership, or interoperability. Neither service class/interface pairs nor function records are mandatory for every operation.
+- Use F# computation expressions such as `task { ... }` or `async { ... }` where they clarify effect sequencing and resource lifetimes. Keep cancellation and disposal responsibilities explicit. Prefer readable named steps over elaborate generic workflow machinery.
+- Use object-oriented interoperability where beneficial, especially for ASP.NET Core hosting, EF Core contexts, streams, and disposable resources such as the test harness. Keep mutable state encapsulated at effectful boundaries rather than exposing it to domain behavior. Framework dependency injection is acceptable where useful for integration; it must not hide application dependencies behind a service locator.
+- Prefer idiomatic F# and the simplest implementation that satisfies the requirements. Do not enforce functional purity dogmatically or add unnecessary abstractions, generic frameworks, architectural layers, or excessive indirection. Direct calls to stable pure functions do not need artificial dependency wrappers.
+
+This is LexScholar's contextual design decision, informed by *Domain Modeling Made Functional*, *Stylish F#*, Microsoft F# guidance, and F# for Fun and Profit; it is not a claim that those references prescribe a single mandatory architecture. See [research and references](research.md#functional-first-f-architecture) and the [approved, incorporated proposal](proposals/functional-first-architecture.md).
+
+### Project layout
 
 ```text
 src/
 ├── LexScholar.Server/             # ASP.NET Core host, routing, startup, configuration
 ├── LexScholar.Client/             # Bolero/Elmish UI, project selection, library, reader
 ├── LexScholar.Domain/             # Workspace, project, document and association types/rules
-├── LexScholar.Application/        # Use cases, validation orchestration, storage interfaces
+├── LexScholar.Application/        # Use cases, validation orchestration, storage capabilities
 └── LexScholar.Infrastructure/     # EF Core SQLite, migrations, filesystem store, PdfPig adapter
 
 tests/

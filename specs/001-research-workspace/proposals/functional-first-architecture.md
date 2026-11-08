@@ -1,16 +1,29 @@
-# Proposed decision: functional-first F# architecture
+# Architecture decision: functional-first F# architecture
 
-**Status**: Proposed — awaiting owner approval.
+**Status**: Approved and incorporated.
 
-**Date**: 2026-11-08
+**Proposed / approved / incorporated**: 2026-11-08
 
 **Scope**: F001 implementation architecture; no feature or Constitution changes.
 
-This is a separate proposal, not an amendment to the approved `plan.md` or
-`research.md`. The T045 refactor follows the requested implementation direction;
-adopting the following text into those approved documents requires approval.
+The project owner approved adoption with a pragmatic clarification: prefer
+functional-first F#, but use ordinary functions, records of functions, interfaces,
+or classes wherever each is appropriate. Do not enforce purity dogmatically.
 
-## Proposed text for `plan.md` → Architecture and Project Structure
+The decision is incorporated in:
+
+- [Plan: Functional-first F# design](../plan.md#functional-first-f-design),
+  including the storage capability-boundary clarification and unchanged
+  five-project structure.
+- [Research: Functional-first F# architecture](../research.md#functional-first-f-architecture),
+  including rationale, trade-offs, and the architectural references.
+
+Those planning sections are the current guidance. The original proposal below
+is retained for provenance; its more restrictive wording about interfaces,
+classes, and DI is qualified by the approved guidance above. This adoption is
+documentation-only and does not implement or complete any task.
+
+## Original proposed text (historical)
 
 Use a functional core with effectful adapters at the boundaries. Model domain
 state with immutable records and discriminated unions, and domain rules with
@@ -37,7 +50,7 @@ the Bolero UI. The existing storage/content boundaries remain independent of the
 viewer. This decision does not change the approved data model, HTTP contract,
 storage technology, deployment, or feature behavior.
 
-## Rationale and trade-offs
+## Original rationale and trade-offs (historical)
 
 - Explicit functions make dependencies visible and replaceable in tests without
   service mocks, container registrations, or runtime service resolution.
@@ -49,16 +62,17 @@ storage technology, deployment, or feature behavior.
 - Composition and resource ownership must be explicit. Existing framework APIs
   remain object-oriented where required; this is not a ban on .NET interop.
 
-## Follow-up document edits if approved
+## Incorporation record
 
-- Insert the proposed text into `plan.md` under Architecture and Project Structure.
-- Clarify that “interfaces” in the plan's simplicity check and storage/content
-  boundaries means narrow capability contracts, normally F# functions/records,
-  not a requirement for CLR service interfaces.
-- Record the decision and rationale in `research.md` if desired. Leave the
-  Constitution unchanged.
+- Incorporated the decision into `plan.md`, with explicit allowance for ordinary
+  functions, records of functions, interfaces, classes, and beneficial OO interop.
+- Clarified that storage/content interfaces describe narrow capability boundaries,
+  not necessarily CLR interfaces, in the plan and research.
+- Recorded the rationale, alternatives, trade-offs, and references in `research.md`.
+- Left the Constitution, product requirements, HTTP contracts, application code,
+  and task completion statuses unchanged.
 
-## T045 boundary
+## T045 boundary (historical proposal scope)
 
 Only scaffold representations change now. Application operations, PDF validation,
 import journaling, and verified content remain explicit `NotImplementedException`
