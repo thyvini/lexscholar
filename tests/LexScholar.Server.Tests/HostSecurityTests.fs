@@ -145,6 +145,92 @@ let ``invalid tokens cookie mismatches and foreign origin are rejected`` () =
     Assert.Equal(HttpStatusCode.Forbidden, foreignToken.StatusCode)
 
 [<Fact; Trait("Task", "T009")>]
+let ``independent hosts do not overwrite each other's antiforgery cookies`` () =
+    use contentRoot = TemporaryWorkspace.Create()
+    use workspaceA = TemporaryWorkspace.Create()
+    use workspaceB = TemporaryWorkspace.Create()
+    Assert.True(workspaceA.Root <> workspaceB.Root)
+    // The hosts share a working/content root but configure different data roots.
+    use hostA = HostProcess.Start(contentRoot.Root, [ "LexScholar:DataDirectory", workspaceA.Root ])
+    use hostB = HostProcess.Start(contentRoot.Root, [ "LexScholar:DataDirectory", workspaceB.Root ])
+    Assert.Equal("ready", hostA.Startup.Kind)
+    Assert.Equal("ready", hostB.Startup.Kind)
+    Assert.NotEqual(hostA.Id, hostB.Id)
+    let addressA = Uri(hostA.Startup.Address)
+    let addressB = Uri(hostB.Startup.Address)
+    Assert.Equal("127.0.0.1", addressA.Host)
+    Assert.Equal(addressA.Host, addressB.Host)
+    Assert.NotEqual(0, addressA.Port)
+    Assert.NotEqual(0, addressB.Port)
+    Assert.NotEqual(addressA.Port, addressB.Port)
+
+    // CookieContainer, like a browser, shares host cookies across ports.
+    let cookies = CookieContainer()
+    use handlerA = new HttpClientHandler(UseProxy = false, CookieContainer = cookies)
+    use handlerB = new HttpClientHandler(UseProxy = false, CookieContainer = cookies)
+    use clientA = new HttpClient(handlerA, false, BaseAddress = addressA, Timeout = TimeSpan.FromSeconds(10.0))
+    use clientB = new HttpClient(handlerB, false, BaseAddress = addressB, Timeout = TimeSpan.FromSeconds(10.0))
+    let assertAllowed (client: HttpClient) token =
+        use response = send client HttpMethod.Post "/api/projects" None (Some (origin client)) (Some token) None
+        Assert.Equal(HttpStatusCode.NotImplemented, response.StatusCode)
+    let assertRejected (client: HttpClient) token =
+        use response = send client HttpMethod.Post "/api/projects" None (Some (origin client)) (Some token) None
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode)
+        use json = JsonDocument.Parse(response.Content.ReadAsStringAsync().GetAwaiter().GetResult())
+        Assert.Equal("invalid_antiforgery_token", json.RootElement.GetProperty("code").GetString())
+
+    let tokenA = getToken clientA
+    Assert.False(String.IsNullOrWhiteSpace(tokenA))
+    assertAllowed clientA tokenA
+    let tokenB = getToken clientB
+    Assert.False(String.IsNullOrWhiteSpace(tokenB))
+    assertAllowed clientB tokenB
+    assertAllowed clientA tokenA
+    assertAllowed clientB tokenB
+    Assert.Equal(2, cookies.GetCookies(addressA).Count)
+    Assert.Equal(2, cookies.GetCookies(addressB).Count)
+    assertRejected clientA tokenB
+    assertRejected clientB tokenA
+    assertAllowed clientA tokenA
+    assertAllowed clientB tokenB
+
+[<Fact; Trait("Task", "T009")>]
+let ``restarting a workspace replaces its stale antiforgery cookie`` () =
+    use workspace = TemporaryWorkspace.Create()
+    let cookies = CookieContainer()
+    use handler = new HttpClientHandler(UseProxy = false, CookieContainer = cookies)
+    let oldToken, cookieName =
+        use first = HostProcess.Start(workspace.Root, [])
+        Assert.Equal("ready", first.Startup.Kind)
+        let address = Uri(first.Startup.Address)
+        use client = new HttpClient(handler, false, BaseAddress = address, Timeout = TimeSpan.FromSeconds(10.0))
+        let token = getToken client
+        use response = send client HttpMethod.Post "/api/projects" None (Some (origin client)) (Some token) None
+        Assert.Equal(HttpStatusCode.NotImplemented, response.StatusCode)
+        let stored = cookies.GetCookies(address)
+        Assert.Equal(1, stored.Count)
+        token, stored.[0].Name
+
+    // A trailing separator denotes the same directory, even after a restart.
+    use restarted = HostProcess.Start(workspace.Root, [ "LexScholar:DataDirectory", workspace.Root + string Path.DirectorySeparatorChar ])
+    Assert.Equal("ready", restarted.Startup.Kind)
+    let address = Uri(restarted.Startup.Address)
+    use client = new HttpClient(handler, false, BaseAddress = address, Timeout = TimeSpan.FromSeconds(10.0))
+    let assertRejected token =
+        use response = send client HttpMethod.Post "/api/projects" None (Some (origin client)) (Some token) None
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode)
+        use json = JsonDocument.Parse(response.Content.ReadAsStringAsync().GetAwaiter().GetResult())
+        Assert.Equal("invalid_antiforgery_token", json.RootElement.GetProperty("code").GetString())
+    assertRejected oldToken
+    let newToken = getToken client
+    let stored = cookies.GetCookies(address)
+    Assert.Equal(1, stored.Count)
+    Assert.Equal(cookieName, stored.[0].Name)
+    assertRejected oldToken
+    use response = send client HttpMethod.Post "/api/projects" None (Some (origin client)) (Some newToken) None
+    Assert.Equal(HttpStatusCode.NotImplemented, response.StatusCode)
+
+[<Fact; Trait("Task", "T009")>]
 let ``all mutation methods require tokens even with an empty body`` () =
     use harness = TestHarness.Start()
     let id = Guid.NewGuid().ToString()

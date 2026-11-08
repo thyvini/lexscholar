@@ -4,6 +4,8 @@ open System
 open System.Collections.Generic
 open System.IO
 open System.Net
+open System.Security.Cryptography
+open System.Text
 open System.Threading.Tasks
 open Microsoft.AspNetCore.Antiforgery
 open Microsoft.AspNetCore.Builder
@@ -20,7 +22,12 @@ module HostSecurity =
     [<Literal>]
     let TokenHeader = "X-CSRF-TOKEN"
 
-    let configure (builder: WebApplicationBuilder) port =
+    let configure (builder: WebApplicationBuilder) port (dataDirectory: string) =
+        // Cookies are shared across ports. A stable name per locked directory
+        // avoids collisions without accumulating new names on every restart.
+        let directory = Path.TrimEndingDirectorySeparator(dataDirectory)
+        let directoryHash = SHA256.HashData(Encoding.UTF8.GetBytes(directory))
+        let cookieName = ".LexScholar.Antiforgery." + Convert.ToHexString(directoryHash)
         // Default hosting can enable forwarded headers from environment settings.
         // This host does not run behind a trusted proxy.
         let settings = Dictionary<string, string>()
@@ -41,7 +48,7 @@ module HostSecurity =
         builder.Services.AddAntiforgery(fun options ->
             options.HeaderName <- TokenHeader
             options.SuppressReadingTokenFromFormBody <- true
-            options.Cookie.Name <- ".LexScholar.Antiforgery"
+            options.Cookie.Name <- cookieName
             options.Cookie.HttpOnly <- true
             options.Cookie.SameSite <- SameSiteMode.Strict
             options.Cookie.SecurePolicy <- CookieSecurePolicy.None) |> ignore

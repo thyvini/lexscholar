@@ -21,7 +21,7 @@ type private DataDirectoryLease(handle: System.IDisposable) =
     interface System.IDisposable with
         member this.Dispose() = this.Release()
 
-let private createHost (builder: WebApplicationBuilder) (serveClient: bool) =
+let private createHost (builder: WebApplicationBuilder) (serveClient: bool) port =
     match Configuration.load builder.Configuration with
     | Error error -> Error (ConfigurationFailure error)
     | Ok configuration ->
@@ -30,6 +30,7 @@ let private createHost (builder: WebApplicationBuilder) (serveClient: bool) =
         | Ok handle ->
             let lease = new DataDirectoryLease(handle)
             try
+                HostSecurity.configure builder port configuration.DataDirectory
                 // The resolved factory singleton is disposed with the host even if
                 // it is built but never started. ApplicationStopped also releases it
                 // after a normal stop; SafeFileHandle disposal is idempotent.
@@ -65,9 +66,7 @@ let create (builder: WebApplicationBuilder) (serveClient: bool) =
             | _ -> Error (InvalidPort portValue)
     match portResult with
     | Error error -> Error error
-    | Ok port ->
-        HostSecurity.configure builder port
-        createHost builder serveClient
+    | Ok port -> createHost builder serveClient port
 
 [<EntryPoint>]
 let main args =

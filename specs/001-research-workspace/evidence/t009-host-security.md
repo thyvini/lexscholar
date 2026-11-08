@@ -35,6 +35,18 @@ Restore succeeded; Release build had **0 warnings and 0 errors**; focused T009 t
 
 Tests use Kestrel and real sockets, including actual production-entrypoint subprocesses under wildcard environment and CLI settings, a configured port and port `0`, forged Host/Origin/forwarded headers, CORS preflight, missing/invalid token and cookie, valid JSON and actual multipart body reading, every contract mutation method, native-viewer-style range GET, Testing and Development exception responses, and local client assets. Static checks cover unlisted SQLite/PDF/staging files, manifest assets in the private directory, a symlinked data directory, asset symlinks (including a symlink in the target's parent), and compressed variants of private originals.
 
+## PR #6 antiforgery cookie collision follow-up
+
+The regression test starts two independent processes using different configured data directories and the same content root. Both use port `0` and listen on `127.0.0.1` at different actual ports; two HTTP clients share one `CookieContainer`, which matches host cookies across ports. With the original fixed cookie name, A's valid mutation reached its `501` stub before B obtained a token, and then returned `403` after B obtained its token. The final same-content-root test was also verified with the original name temporarily reinstated:
+
+```sh
+dotnet test --project tests/LexScholar.Server.Tests/LexScholar.Server.Tests.fsproj --configuration Release --filter-display-name '*independent hosts do not overwrite*' --output Detailed
+```
+
+Result: **1 failed** at A's post-B mutation, expected `501`, actual `403`. The fix uses a SHA-256 digest of the normalized, locked data-directory path in the cookie name; it does not depend on the listening port or disclose the raw path. The test now verifies both hosts remain usable and reject each other's request tokens. A separate restart test verifies the name remains stable, stale tokens are rejected, and obtaining a fresh token replaces the stale cookie rather than accumulating names.
+
+With the fix restored, `dotnet restore LexScholar.sln -warnaserror` and `dotnet build LexScholar.sln -c Release --no-restore -warnaserror` succeeded with **0 warnings and 0 errors**. The focused `Task=T009` command above passed **31/31**, and the complete Release solution test command passed **94/94**, with no skips.
+
 ## Independent published Linux host probe
 
 The following exact command was run after the publish above. It creates and removes its own temporary workspace, verifies the process's actual kernel socket with `ss`, tries the host's non-loopback interface, checks published static assets and private paths, exercises security/token responses, and stops the server.
