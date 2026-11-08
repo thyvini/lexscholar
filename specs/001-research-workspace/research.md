@@ -4,7 +4,27 @@
 **Codecks card**: [$12s](https://thyago-cunha-dev.codecks.io/card/12s)  
 **Research date**: 2026-11-04
 
+**Architecture decision adopted**: 2026-11-08 — [functional-first F# architecture](proposals/functional-first-architecture.md).
+
 ## Decisions
+
+### Functional-first F# architecture
+
+- **Decision**: Adopt functional-first, pragmatic F# within the existing five application projects. Prefer immutable records, discriminated unions, modules, pure domain functions, and explicit dependencies. Keep domain decisions independent of framework and infrastructure concerns, and compose application workflows around clear effect boundaries. See the [implementation guidance in the plan](plan.md#functional-first-f-design).
+- **Capability boundaries**: Storage and document-content "interfaces" mean narrow contracts, not a requirement for CLR interfaces. Use ordinary functions, records of functions, interfaces, or classes according to the problem. Functions and small function records suit explicit F# workflow dependencies; interfaces can group related or generic operations, and classes can encapsulate state and resource lifetimes. Do not introduce a service class/interface pair or an all-purpose dependency record by default.
+- **Pragmatism and interoperability**: ASP.NET Core, EF Core, streams, and resource management naturally use object-oriented APIs. Use them directly where beneficial, encapsulate mutation, and keep ownership and disposal clear. Computation expressions can simplify effectful composition. Functional purity is a design aid, not a dogmatic constraint; framework DI is acceptable when helpful, but application dependencies should remain explicit rather than obtained through service locators.
+- **Rationale**: Immutable models and pure rules make domain decisions understandable and independently testable. Explicit dependencies and composed workflows expose where effects occur and allow focused testing. Choosing the simplest idiomatic representation avoids unnecessary abstractions, generic frameworks, additional layers, and excessive indirection.
+- **Alternatives and trade-offs**: A uniform service-class/interface/container model can obscure simple workflows and introduce indirection without a requirement. Conversely, requiring every capability to be a function record or insisting on purity everywhere can complicate .NET interoperability and resource ownership. Select the representation that best fits the operation; do not wrap stable pure functions or framework APIs without a concrete benefit.
+- **Scope and provenance**: Approved by the project owner on 2026-11-08 and incorporated from the [separate proposal](proposals/functional-first-architecture.md), with an explicit clarification that functions, interfaces, and classes are all valid tools. This changes implementation guidance only, not the Constitution, product requirements, data model, HTTP contract, project count, or task completion statuses.
+
+#### Architectural references
+
+These sources inform the decision; the summaries below are not quotations. The choice of architecture is LexScholar's, not a claim that the authors or Microsoft mandate one architecture.
+
+- Scott Wlaschin, [*Domain Modeling Made Functional: Tackle Software Complexity with Domain-Driven Design and F#*](https://pragprog.com/titles/swdddf/domain-modeling-made-functional/) (Pragmatic Bookshelf, 2018). Reference for domain modeling with types, workflows composed from functions, explicit dependencies, and persistence at the edges. LexScholar applies these ideas without adopting every pattern or adding bounded contexts or architectural layers beyond its approved scope.
+- Kit Eason, [*Stylish F#: Crafting Elegant Functional Code for .NET and .NET Core*](https://www.apress.com/9781484239995) (Apress, 2018; [publisher's companion code](https://github.com/Apress/stylish-f)). Reference for idiomatic, readable F# and thoughtful type and function design; used as design guidance, not as a prescription for one application architecture.
+- Microsoft, [F# style guide](https://learn.microsoft.com/en-us/dotnet/fsharp/style-guide/) and [F# component design guidelines](https://learn.microsoft.com/en-us/dotnet/fsharp/style-guide/component-design-guidelines). Guidance on composability, interoperability, encapsulated mutation, and choosing modules, functions, interfaces, and classes appropriately. In particular, the component guidance includes interfaces for grouping related operations; it should not be presented as endorsing function records universally.
+- Scott Wlaschin, F# for Fun and Profit: [Six approaches to dependency injection](https://fsharpforfunandprofit.com/posts/dependencies/) and [Dependency injection using parameters](https://fsharpforfunandprofit.com/posts/dependencies-2/) (2020). Discussion of separating decisions from I/O and passing dependencies explicitly, including both interfaces and records of functions, with trade-offs rather than one compulsory technique.
 
 ### Runtime, UI, hosting, and support
 
