@@ -4,7 +4,9 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="Contracts.fs" />
-    <Compile Include="Services.fs" />
+    <Compile Include="Capabilities.fs" />
+    <Compile Include="Projects.fs" />
+    <Compile Include="Library.fs" />
     <ProjectReference Include="../LexScholar.Domain/LexScholar.Domain.fsproj" />
   </ItemGroup>
 </Project>

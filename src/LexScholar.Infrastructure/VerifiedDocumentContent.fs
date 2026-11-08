@@ -1,8 +1,7 @@
-namespace LexScholar.Infrastructure
+module LexScholar.Infrastructure.VerifiedDocumentContent
 
 open System
 open LexScholar.Application
 
-type VerifiedDocumentContent() =
-    interface IVerifiedDocumentContent with
-        member _.Open(_, _) = raise (NotImplementedException())
+let openRead : OpenVerifiedContent =
+    fun _ _ -> task { return raise (NotImplementedException("Verified document opening is not implemented.")) }

@@ -1,8 +1,7 @@
-namespace LexScholar.Infrastructure
+module LexScholar.Infrastructure.PdfValidator
 
 open System
 open LexScholar.Application
 
-type PdfValidator() =
-    interface IPdfValidator with
-        member _.Validate(_, _, _) = raise (NotImplementedException())
+let validate : ValidatePdf =
+    fun _ _ _ -> task { return raise (NotImplementedException("PDF validation is not implemented.")) }

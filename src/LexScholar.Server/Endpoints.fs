@@ -5,6 +5,8 @@ open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.Http
 
 module Endpoints =
+    // Route behavior is deferred. Do not resolve or invoke application
+    // capabilities until those tasks pass the required functions explicitly.
     let private notImplemented () : IResult =
         Results.Problem(title = "Not implemented", statusCode = StatusCodes.Status501NotImplemented)
 

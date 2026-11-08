@@ -3,16 +3,8 @@ module LexScholar.Server.Program
 open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.Hosting.StaticWebAssets
 open Microsoft.AspNetCore.Http
-open Microsoft.Extensions.DependencyInjection
-open LexScholar.Application
-open LexScholar.Infrastructure
 
 let create (builder: WebApplicationBuilder) (serveClient: bool) =
-    builder.Services.AddSingleton<IProjectService, ProjectService>() |> ignore
-    builder.Services.AddSingleton<ILibraryService, LibraryService>() |> ignore
-    builder.Services.AddSingleton<IPdfValidator, PdfValidator>() |> ignore
-    builder.Services.AddSingleton<IImportJournal, ImportJournal>() |> ignore
-    builder.Services.AddSingleton<IVerifiedDocumentContent, VerifiedDocumentContent>() |> ignore
     let app = builder.Build()
 #if DEBUG
     if serveClient then
