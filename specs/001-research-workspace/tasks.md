@@ -10,7 +10,7 @@ Tests are required from the first increment. Establish the compile-ready scaffol
 - [X] T002 Create xUnit v3 Domain, Application, Infrastructure, Server, and Browser test projects and solution references in `tests/` and `LexScholar.sln`.
 - [X] T003 Pin compatible .NET 10 SDK, Bolero, EF Core SQLite, PdfPig and test dependencies in `global.json` and `Directory.Packages.props`.
 - [X] T004 Add small, redistributable valid, encrypted, corrupt, non-PDF and distinct-byte fixtures with provenance in `tests/Fixtures/README.md` and `tests/Fixtures/`.
-- [ ] T045 Establish compile-ready F# signatures and no-behavior stubs for configuration, locking, services, validation, journal, verified content and HTTP routes in `src/LexScholar.Server/`, `src/LexScholar.Application/` and `src/LexScholar.Infrastructure/`; register them in their `.fsproj` compile order and create a runnable isolated host/temporary SQLite and filesystem harness in `tests/LexScholar.Server.Tests/TestHarness.fs`. Stub responses must allow tests to start and fail on expected behavior, not setup. Complete T001–T004 first.
+- [X] T045 Establish compile-ready F# signatures and no-behavior stubs for configuration, locking, services, validation, journal, verified content and HTTP routes in `src/LexScholar.Server/`, `src/LexScholar.Application/` and `src/LexScholar.Infrastructure/`; register them in their `.fsproj` compile order and create a runnable isolated host/temporary SQLite and filesystem harness in `tests/LexScholar.Server.Tests/TestHarness.fs`. Stub responses must allow tests to start and fail on expected behavior, not setup. Complete T001–T004 first.
 
 ## Phase 2: Foundation
 

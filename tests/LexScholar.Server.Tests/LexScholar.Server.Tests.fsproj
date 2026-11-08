@@ -8,6 +8,8 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../RunnerSmoke.fs" Link="RunnerSmoke.fs" />
+    <Compile Include="TestHarness.fs" />
+    <Compile Include="HarnessSmoke.fs" />
     <ProjectReference Include="../../src/LexScholar.Server/LexScholar.Server.fsproj" />
     <PackageReference Include="xunit.v3" />
   </ItemGroup>
