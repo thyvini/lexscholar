@@ -27,7 +27,7 @@ Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "LexScholar.Infrastructure.T
 EndProject
 Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "LexScholar.Server.Tests", "tests\LexScholar.Server.Tests\LexScholar.Server.Tests.fsproj", "{E525CA55-A74C-4011-B334-47F42B39AC3D}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LexScholar.Client.Bootstrap", "src\LexScholar.Client.Bootstrap\LexScholar.Client.Bootstrap.csproj", "{760D1A92-7EDA-4AE0-9502-A03DB24FAEC8}"
+Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "LexScholar.Client.Bootstrap", "src\LexScholar.Client.Bootstrap\LexScholar.Client.Bootstrap.fsproj", "{760D1A92-7EDA-4AE0-9502-A03DB24FAEC8}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

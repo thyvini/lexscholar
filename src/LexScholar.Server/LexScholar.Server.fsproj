@@ -5,7 +5,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="Program.fs" />
-    <ProjectReference Include="../LexScholar.Client.Bootstrap/LexScholar.Client.Bootstrap.csproj" />
+    <ProjectReference Include="../LexScholar.Client.Bootstrap/LexScholar.Client.Bootstrap.fsproj" />
     <ProjectReference Include="../LexScholar.Application/LexScholar.Application.fsproj" />
     <ProjectReference Include="../LexScholar.Infrastructure/LexScholar.Infrastructure.fsproj" />
     <PackageReference Include="Bolero.Server" />
