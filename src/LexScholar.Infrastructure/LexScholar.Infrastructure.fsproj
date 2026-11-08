@@ -4,6 +4,9 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="DataDirectoryLock.fs" />
+    <Compile Include="WorkspaceDb.fs" />
+    <Compile Include="Migrations/Initial.fs" />
+    <Compile Include="Migrations/WorkspaceDbModelSnapshot.fs" />
     <Compile Include="PdfValidator.fs" />
     <Compile Include="ImportJournal.fs" />
     <Compile Include="VerifiedDocumentContent.fs" />

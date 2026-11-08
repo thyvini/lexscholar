@@ -8,7 +8,6 @@ open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.Hosting
 open Microsoft.AspNetCore.Hosting.Server
 open Microsoft.AspNetCore.Hosting.Server.Features
-open Microsoft.Data.Sqlite
 open Microsoft.Extensions.Configuration
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Hosting
@@ -64,10 +63,7 @@ type TestHarness private (workspace: TemporaryWorkspace, app: WebApplication, cl
                 | Error error -> failwithf "Test host unexpectedly rejected: %A" error
             app <- Some host
             configure |> Option.iter (fun setup -> setup host)
-            // Acquire application ownership before touching the test database.
-            let cs = SqliteConnectionStringBuilder(DataSource = workspace.DatabasePath, Pooling = false)
-            use connection = new SqliteConnection(cs.ToString())
-            connection.Open()
+            // Program.create owns database initialization under the directory lock.
             host.StartAsync().GetAwaiter().GetResult()
             let server = host.Services.GetRequiredService<IServer>()
             let addresses = server.Features.Get<IServerAddressesFeature>().Addresses

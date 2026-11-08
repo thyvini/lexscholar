@@ -32,6 +32,8 @@ dotnet run --project src/LexScholar.Server
 
 Expected: one local loopback process starts and reports its URL and effective private data directory. A second process pointed at that same data directory fails clearly. Multiple tabs connect to the existing process. Database, staging, and PDF files are not served as static content.
 
+At startup, the lock is acquired before `workspace.sqlite` is opened in the configured data directory and EF migrations are applied before the server listens. The T010 baseline records migration history but does not yet create workspace, project, or document tables. See [T010 evidence](evidence/t010-sqlite-foundation.md) for the timestamp/UUID conventions and verification.
+
 ### Local host and future client requests (T009)
 
 - The listener is IPv4 loopback only, on port 5000 by default. Set `LexScholar__Port` (or `LexScholar:Port` in configuration) to an integer from 0 to 65535; port 0 selects an ephemeral port, reported in the host log. Generic URL and Kestrel endpoint settings do not change the bind address or port. Use `http://127.0.0.1:<port>` or `http://localhost:<port>` consistently: they are distinct browser origins.
