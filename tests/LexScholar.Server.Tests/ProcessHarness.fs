@@ -10,6 +10,7 @@ open Microsoft.AspNetCore.Hosting.Server.Features
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Logging
 open LexScholar.Server
+open LexScholar.Infrastructure
 
 // A single flushed protocol message distinguishes actual startup from rejection.
 // No test-side validation or lock acquisition is injected into Program.create.
@@ -29,6 +30,12 @@ let private emit kind address errorType message =
     Console.WriteLine(JsonSerializer.Serialize(result))
     Console.Out.Flush()
 
+let private startupErrorCode = function
+    | Program.ConfigurationFailure (InvalidLimit (name, _)) -> "InvalidLimit:" + name
+    | Program.ConfigurationFailure (NonPositiveLimit name) -> "NonPositiveLimit:" + name
+    | Program.ConfigurationFailure (InvalidDataDirectory _) -> "InvalidDataDirectory"
+    | Program.LockFailure (DirectoryAlreadyInUse _) -> "DirectoryAlreadyInUse"
+
 /// Entry point mode of the existing test executable, not another project.
 let runChild (args: string array) =
     let root = args.[0]
@@ -42,17 +49,22 @@ let runChild (args: string array) =
     builder.Logging.ClearProviders() |> ignore
     let mutable started = false
     try
-        use app = Program.create builder false
-        app.StartAsync().WaitAsync(deadline).GetAwaiter().GetResult()
-        started <- true
-        let server = app.Services.GetRequiredService<IServer>()
-        let address = server.Features.Get<IServerAddressesFeature>().Addresses |> Seq.exactlyOne
-        emit "ready" address "" ""
-        // EOF also stops the child if its parent disappears. Watchdog bounds an
-        // abandoned pipe; no sleeps or port-readiness polling are used.
-        Console.In.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(45.0)).GetAwaiter().GetResult() |> ignore
-        app.StopAsync().WaitAsync(deadline).GetAwaiter().GetResult()
-        0
+        match Program.create builder false with
+        | Error error ->
+            emit "rejected" "" (startupErrorCode error) (Program.describeStartupError error)
+            2
+        | Ok app ->
+            use app = app
+            app.StartAsync().WaitAsync(deadline).GetAwaiter().GetResult()
+            started <- true
+            let server = app.Services.GetRequiredService<IServer>()
+            let address = server.Features.Get<IServerAddressesFeature>().Addresses |> Seq.exactlyOne
+            emit "ready" address "" ""
+            // EOF also stops the child if its parent disappears. Watchdog bounds an
+            // abandoned pipe; no sleeps or port-readiness polling are used.
+            Console.In.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(45.0)).GetAwaiter().GetResult() |> ignore
+            app.StopAsync().WaitAsync(deadline).GetAwaiter().GetResult()
+            0
     with error ->
         if started then
             Console.Error.WriteLine(error)

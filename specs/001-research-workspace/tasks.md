@@ -16,8 +16,8 @@ Tests are required from the first increment. Establish the compile-ready scaffol
 
 - [X] T005 [P] Write configuration tests for 100,000,000-byte and 2,000-page defaults, positive overrides, and malformed/zero/negative startup rejection in `tests/LexScholar.Server.Tests/ConfigurationTests.fs`.
 - [X] T006 [P] Write process-lock tests for second-process refusal, release after exit, separate directories, and multiple tabs against one host in `tests/LexScholar.Server.Tests/ProcessLockTests.fs`.
-- [ ] T007 Implement validated local data-directory and PDF limit configuration in `src/LexScholar.Server/Configuration.fs` (depends on T005).
-- [ ] T008 Implement OS-held exclusive data-directory lock before migration/serving and actionable startup failure in `src/LexScholar.Infrastructure/DataDirectoryLock.fs` and `src/LexScholar.Server/Program.fs` (depends on T006–T007).
+- [X] T007 Implement validated local data-directory and PDF limit configuration in `src/LexScholar.Server/Configuration.fs` (depends on T005).
+- [X] T008 Implement OS-held exclusive data-directory lock before migration/serving and actionable startup failure in `src/LexScholar.Infrastructure/DataDirectoryLock.fs` and `src/LexScholar.Server/Program.fs` (depends on T006–T007).
 - [ ] T009 Configure ASP.NET Core loopback host, same-origin/antiforgery and Host validation, safe problem responses, and Bolero static assets in `src/LexScholar.Server/Program.fs` and `src/LexScholar.Server/Errors.fs` (FR-014).
 - [ ] T010 Create SQLite context, migration initialization, foreign-key enforcement, canonical UUID text mapping and UTC timestamp convention in `src/LexScholar.Infrastructure/WorkspaceDb.fs` and `src/LexScholar.Infrastructure/Migrations/`.
 - [ ] T011 Define application storage and document-content interfaces independent of the viewer in `src/LexScholar.Application/Ports.fs`.
@@ -78,7 +78,7 @@ Tests are required from the first increment. Establish the compile-ready scaffol
 
 ## Dependencies and parallel work
 
-T005 and T006 test work is complete in RED; see [foundation RED results](foundation-red-results.md) for the failing cases, requirement mapping, and passing smoke controls. This does not complete T007/T008 or establish working configuration or exclusive locking.
+T005 and T006 test work was first verified in RED; see [foundation RED results](foundation-red-results.md) for the original failures and [foundation GREEN results](foundation-green-results.md) for revised typed-boundary RED and T007/T008 verification. Later tasks remain incomplete.
 
 Phase 1 → Phase 2 → US1 → US2 → US3 → Phase 6. T045 supplies runnable test scaffolding before T005–T006 and all story tests. Before T012–T013, complete T014's type signatures and T015's runnable schema scaffolding; implement project behavior only after those tests fail. Before T020–T023, complete T024's types and T025's runnable schema scaffolding plus the T045 harness; implement validation, import and association behavior only after the relevant tests fail. T034–T035 use the existing US2 data setup and T045 reader stubs before T036–T038 implement behavior. Numbering retains existing IDs and does not override these dependencies. US2 needs projects and US3 needs shared documents and associations; each checkpoint can be verified with its own fixtures after its prerequisites. Once their stated scaffolds are complete, T012 and T013 can run independently, as can T020–T023 and T034–T035. `[P]` marks only work on separate files with no dependency on another incomplete task in the same group. Shared repository and migration edits are sequential.
 

@@ -4,7 +4,6 @@ open System
 open System.IO
 open System.Threading
 open System.Threading.Tasks
-open Microsoft.Extensions.Configuration
 open LexScholar.Application
 open LexScholar.Infrastructure
 open LexScholar.Server
@@ -49,9 +48,13 @@ let ``functional capabilities fault explicitly without performing domain behavio
     }
 
 [<Fact>]
-let ``configuration and lock functions remain unimplemented`` () =
-    let configuration = ConfigurationBuilder().Build()
-    Assert.Throws<NotImplementedException>(fun () -> Configuration.load configuration |> ignore) |> ignore
-    let directory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
-    Assert.Throws<NotImplementedException>(fun () -> DataDirectoryLock.acquire directory |> ignore) |> ignore
-    Assert.False(Directory.Exists(directory))
+let ``configuration and locking are implemented independently of remaining stubs`` () =
+    use workspace = TemporaryWorkspace.Create()
+    let configuration = HostSetup.builder workspace.Root []
+    match Configuration.load configuration.Configuration with
+    | Error error -> Assert.Fail($"Valid configuration was rejected: {error}")
+    | Ok settings ->
+        Assert.Equal(100_000_000L, settings.ImportLimits.MaxBytes)
+        match DataDirectoryLock.acquire settings.DataDirectory with
+        | Ok handle -> handle.Dispose()
+        | Error error -> Assert.Fail($"Unowned test directory was rejected: {error}")

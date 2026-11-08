@@ -53,13 +53,16 @@ type TestHarness private (workspace: TemporaryWorkspace, app: WebApplication, cl
         let workspace = TemporaryWorkspace.Create()
         let mutable app: WebApplication option = None
         try
+            let builder = HostSetup.builder workspace.Root []
+            let host =
+                match Program.create builder false with
+                | Ok host -> host
+                | Error error -> failwithf "Test host unexpectedly rejected: %A" error
+            app <- Some host
+            // Acquire application ownership before touching the test database.
             let cs = SqliteConnectionStringBuilder(DataSource = workspace.DatabasePath, Pooling = false)
             use connection = new SqliteConnection(cs.ToString())
             connection.Open()
-
-            let builder = HostSetup.builder workspace.Root []
-            let host = Program.create builder false
-            app <- Some host
             host.StartAsync().GetAwaiter().GetResult()
             let server = host.Services.GetRequiredService<IServer>()
             let addresses = server.Features.Get<IServerAddressesFeature>().Addresses
