@@ -8,6 +8,7 @@ This is a validation guide for implementation, not a task list. See [data-model.
 ## Prerequisites
 
 - Linux desktop and .NET 10 SDK pinned by the implementation.
+- The ASP.NET Core runtime and targeting pack matching the SDK (included with the official .NET SDK distribution). Install the `wasm-tools` workload for optimized WebAssembly publishing.
 - Officially supported browsers: Firefox and Chromium on Linux.
 - No cloud credentials or external services.
 - Test PDFs: readable fixtures at size/page boundaries, encrypted PDF, malformed `.pdf`, non-PDF, exact duplicate under a different filename, and different-byte PDF.
@@ -18,7 +19,7 @@ After implementation, from repository root:
 
 ```sh
 dotnet restore LexScholar.sln
-dotnet test LexScholar.sln --configuration Release
+dotnet test --solution LexScholar.sln --configuration Release
 ```
 
 Expected: unit, SQLite/filesystem, HTTP, process-lock, and Firefox/Chromium browser journey suites pass. Persistence tests use isolated temporary roots. Browser-native viewer internals may limit automation; record manual reader usability evidence where needed.
