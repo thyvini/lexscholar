@@ -32,7 +32,8 @@ temp/
 
 # Local AI agent state; keep shared instructions and skills tracked
 .codex/
-.claude/
+.claude/settings.local.json
+CLAUDE.local.md
 .cursor/
 .opencode/
 .aider*
