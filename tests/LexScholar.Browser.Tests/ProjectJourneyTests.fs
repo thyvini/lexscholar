@@ -8,23 +8,30 @@ open LexScholar.Server.Tests
 
 // Real-browser journeys against an isolated in-process host serving the
 // WebAssembly client. Browsers are Playwright's pinned builds; install them
-// once as described in specs/001-research-workspace/quickstart.md.
+// once with scripts/install-browsers.sh.
 
-let private installHint =
-    "Install the Playwright browsers first: build this project, then run "
-    + "bin/<Configuration>/net10.0/.playwright/node/linux-x64/node "
-    + "bin/<Configuration>/net10.0/.playwright/package/cli.js install chromium firefox"
+/// Sets Playwright's default assertion timeout once per test run. WebAssembly
+/// boot can exceed the 5-second default, especially in Firefox. An assembly
+/// fixture is used because a module-level `do` is not run in this test
+/// executable, so the setting would be silently ignored.
+type PlaywrightDefaults() =
+    do Assertions.SetDefaultExpectTimeout(30_000.0f)
 
-let private launch (name: string) = task {
-    // WebAssembly boot can exceed Playwright's 5-second default, especially in Firefox.
-    Assertions.SetDefaultExpectTimeout(30_000.0f)
-    let! playwright = Playwright.CreateAsync()
-    try
-        let! browser = playwright.[name].LaunchAsync(BrowserTypeLaunchOptions(Headless = true))
-        return playwright, browser
-    with :? PlaywrightException as error ->
-        playwright.Dispose()
-        return failwithf "Could not launch %s. %s\n%s" name installHint error.Message }
+[<assembly: AssemblyFixture(typeof<PlaywrightDefaults>)>]
+do ()
+
+/// Runs a journey in a headless browser, owning Playwright and browser cleanup.
+let private withBrowser (name: string) (journey: IBrowser -> Task) : Task = task {
+    use! playwright = Playwright.CreateAsync()
+    let! browser =
+        task {
+            try
+                return! playwright.[name].LaunchAsync(BrowserTypeLaunchOptions(Headless = true))
+            with :? PlaywrightException as error ->
+                return failwithf "Could not launch %s. Install the Playwright browsers with scripts/install-browsers.sh.\n%s" name error.Message
+        }
+    use _ = browser
+    do! journey browser }
 
 let private startHost (workspace: TemporaryWorkspace) =
     TestHarness.Start(serveClient = true, workspace = workspace)
@@ -59,27 +66,21 @@ let private select (page: IPage) (name: string) =
     (row page name).GetByRole(AriaRole.Button, LocatorGetByRoleOptions(Name = "Select")).ClickAsync()
 
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T019"); Trait("Category", "Browser")>]
-let ``empty workspace shows the project-list empty state`` (browserName: string) : Task = task {
-    use workspace = TemporaryWorkspace.Create()
-    use harness = startHost workspace
-    let! playwright, browser = launch browserName
-    use _ = playwright
-    try
-        let! context, page = openApp browser harness
+let ``empty workspace shows the project-list empty state`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use workspace = TemporaryWorkspace.Create()
+        use harness = startHost workspace
+        let! _, page = openApp browser harness
         do! Assertions.Expect(emptyState page).ToBeVisibleAsync()
         do! Assertions.Expect(page.Locator("ul.projects li")).ToHaveCountAsync(0)
-        do! Assertions.Expect(page.Locator("strong.active")).ToHaveCountAsync(0)
-        do! context.CloseAsync()
-    finally browser.CloseAsync().GetAwaiter().GetResult() }
+        do! Assertions.Expect(page.Locator("strong.active")).ToHaveCountAsync(0) })
 
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T019"); Trait("Category", "Browser")>]
-let ``creating and selecting projects shows the active project`` (browserName: string) : Task = task {
-    use workspace = TemporaryWorkspace.Create()
-    use harness = startHost workspace
-    let! playwright, browser = launch browserName
-    use _ = playwright
-    try
-        let! context, page = openApp browser harness
+let ``creating and selecting projects shows the active project`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use workspace = TemporaryWorkspace.Create()
+        use harness = startHost workspace
+        let! _, page = openApp browser harness
         do! Assertions.Expect(emptyState page).ToBeVisibleAsync()
         do! createProject page "Alpha"
         do! createProject page "Beta"
@@ -96,16 +97,12 @@ let ``creating and selecting projects shows the active project`` (browserName: s
 
         do! select page "Alpha"
         do! expectActive page "Alpha"
-        do! expectSelectable page "Beta"
-        do! context.CloseAsync()
-    finally browser.CloseAsync().GetAwaiter().GetResult() }
+        do! expectSelectable page "Beta" })
 
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T019"); Trait("Category", "Browser")>]
-let ``restart over the same data directory restores the active project`` (browserName: string) : Task = task {
-    use workspace = TemporaryWorkspace.Create()
-    let! playwright, browser = launch browserName
-    use _ = playwright
-    try
+let ``restart over the same data directory restores the active project`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use workspace = TemporaryWorkspace.Create()
         do!
             task {
                 use harness = startHost workspace
@@ -118,9 +115,7 @@ let ``restart over the same data directory restores the active project`` (browse
             }
         // The first host is stopped and its data-directory lock released here.
         use restarted = startHost workspace
-        let! context, page = openApp browser restarted
+        let! _, page = openApp browser restarted
         do! Assertions.Expect(page.Locator("ul.projects li")).ToHaveCountAsync(2)
         do! expectSelectable page "Alpha"
-        do! expectActive page "Beta"
-        do! context.CloseAsync()
-    finally browser.CloseAsync().GetAwaiter().GetResult() }
+        do! expectActive page "Beta" })

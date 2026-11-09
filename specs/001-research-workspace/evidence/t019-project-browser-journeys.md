@@ -18,10 +18,10 @@ Associated-document display after switching is out of scope here; T033 covers it
 - Install command (one time, cached in `~/.cache/ms-playwright`):
 
 ```sh
-dotnet build tests/LexScholar.Browser.Tests -c Release
-B=tests/LexScholar.Browser.Tests/bin/Release/net10.0/.playwright
-$B/node/linux-x64/node $B/package/cli.js install chromium firefox
+scripts/install-browsers.sh
 ```
+
+  The script builds the browser test project and calls `Microsoft.Playwright.Program.Main` through `dotnet fsi`. Playwright then selects its bundled Node driver for the current OS and architecture, so no architecture-specific path or PowerShell is required. The browsers were originally installed by calling the bundled `linux-x64` driver directly. When re-run, the script exited 0 with the browsers already present, and exited 1 for an unknown browser name.
 
 ## Host
 
@@ -43,12 +43,20 @@ GREEN: the harness uses the supplied workspace and deletes only workspaces it cr
 
 ## Final verification
 
+Re-run after the review fixes:
+- one `withBrowser` helper now owns Playwright and browser cleanup;
+- the expect timeout is set once per run by an xUnit assembly fixture;
+- `scripts/install-browsers.sh` replaces the architecture-specific install command.
+
 ```sh
 dotnet restore LexScholar.sln -warnaserror
 dotnet build LexScholar.sln -c Release --no-restore -warnaserror
+dotnet test --project tests/LexScholar.Browser.Tests/LexScholar.Browser.Tests.fsproj --configuration Release --no-build --filter-trait 'Task=T019'
 dotnet test --solution LexScholar.sln --configuration Release --no-build
 ```
 
-Restore and build succeeded with zero warnings. The full suite passed 177/177 (171 previously + 6 T019), zero skipped. No `lexscholar-tests` temporary directories remained after the run.
+Restore and build succeeded with zero warnings. T019 passed 6/6. The full suite passed 177/177 (171 previously + 6 T019), zero skipped. No `lexscholar-tests` temporary directories remained after the run.
+
+Expect-timeout check (temporary probe, not committed): a Chromium expectation on an absent element. With `Assertions.SetDefaultExpectTimeout` in a module-level `do`, the wait gave up after 5.0s: F# never ran the module initializer in this test executable, so the setting was silently ignored. With the assembly fixture it gave up after 30.0s.
 
 Browser tests are part of the default suite and fail, rather than skip, when Playwright browsers are missing. Exclude them with `--filter-not-trait 'Category=Browser'`. These automated checks are not participant usability evidence (SC-001 and T046).

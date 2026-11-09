@@ -10,7 +10,7 @@ This is a validation guide for implementation, not a task list. See [data-model.
 - Linux desktop and .NET 10 SDK pinned by the implementation.
 - The ASP.NET Core runtime and targeting pack matching the SDK (included with the official .NET SDK distribution). Install the `wasm-tools` workload for optimized WebAssembly publishing.
 - Officially supported browsers: Firefox and Chromium on Linux.
-- Browser journey tests use Playwright's Chromium and Firefox builds. Install them once after building, as described in [research.md](research.md#automated-testing) (Browser automation). Without them, browser tests fail; exclude them with `--filter-not-trait 'Category=Browser'`.
+- Browser journey tests use Playwright's Chromium and Firefox builds. Install them once with `scripts/install-browsers.sh` (see Browser automation in [research.md](research.md#automated-testing)). Without them, browser tests fail; exclude them with `--filter-not-trait 'Category=Browser'`.
 - No cloud credentials or external services.
 - Test PDFs: readable fixtures at size/page boundaries, encrypted PDF, malformed `.pdf`, non-PDF, exact duplicate under a different filename, and different-byte PDF.
 
