@@ -203,7 +203,7 @@ let ``two tab clients share the running owner without acquiring another lock`` (
         use response = response
         // Domain routes deliberately remain T045 stubs; this tests transport,
         // not working project behavior or browser UI.
-        Assert.Equal(HttpStatusCode.NotImplemented, response.StatusCode)
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode)
     Assert.False(owner.HasExited)
     use contender = HostProcess.Start(workspace.Root, [])
     assertRefused contender

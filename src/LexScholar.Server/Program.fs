@@ -48,7 +48,7 @@ let private createHost (builder: WebApplicationBuilder) (serveClient: bool) port
                     if serveClient then
                         app.MapStaticAssets() |> ignore
                         app.MapGet("/", System.Func<IResult>(fun () -> Results.Redirect("/index.html"))) |> ignore
-                    LexScholar.Server.Endpoints.map app
+                    LexScholar.Server.Endpoints.map app configuration.DataDirectory
                     Ok app
                 with _ ->
                     app.DisposeAsync().AsTask().GetAwaiter().GetResult()

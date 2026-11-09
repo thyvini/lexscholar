@@ -14,6 +14,8 @@ let private migrations directory =
     use db = WorkspaceDb.create directory
     db.Database.GetAppliedMigrations() |> Seq.toList
 
+let private currentMigrations = [ "20261108000000_Initial"; "20261110000000_Projects" ]
+
 [<Fact; Trait("Task", "T010")>]
 let ``host construction applies migrations before it starts listening`` () =
     use workspace = TemporaryWorkspace.Create()
@@ -24,7 +26,7 @@ let ``host construction applies migrations before it starts listening`` () =
         use app = app
         Assert.False(app.Lifetime.ApplicationStarted.IsCancellationRequested)
         Assert.True(File.Exists(WorkspaceDb.databasePath workspace.Root))
-        Assert.Equal<string list>([ "20261108000000_Initial" ], migrations workspace.Root)
+        Assert.Equal<string list>(currentMigrations, migrations workspace.Root)
         use contender = HostProcess.Start(workspace.Root, [])
         Assert.Equal("rejected", contender.Startup.Kind)
         Assert.Equal("DirectoryAlreadyInUse", contender.Startup.ErrorType)
@@ -60,7 +62,7 @@ let ``startup checks the lock before SQLite and releases it on initialization fa
     | Error rejected -> Assert.Fail($"A repaired workspace could not start: {rejected}")
     | Ok app ->
         use app = app
-        Assert.Equal<string list>([ "20261108000000_Initial" ], migrations workspace.Root)
+        Assert.Equal<string list>(currentMigrations, migrations workspace.Root)
 
 [<Fact; Trait("Task", "T010")>]
 let ``real host process restarts with its migrated database intact`` () =
@@ -68,7 +70,7 @@ let ``real host process restarts with its migrated database intact`` () =
     use first = HostProcess.Start(workspace.Root, [])
     Assert.Equal("ready", first.Startup.Kind)
     Assert.True(File.Exists(WorkspaceDb.databasePath workspace.Root))
-    Assert.Equal<string list>([ "20261108000000_Initial" ], migrations workspace.Root)
+    Assert.Equal<string list>(currentMigrations, migrations workspace.Root)
     do
         use connection = new SqliteConnection(WorkspaceDb.connectionString workspace.Root)
         connection.Open()
@@ -77,11 +79,11 @@ let ``real host process restarts with its migrated database intact`` () =
         command.ExecuteNonQuery() |> ignore
     use client = client first
     use response = client.GetAsync("/api/projects").GetAwaiter().GetResult()
-    Assert.Equal(HttpStatusCode.NotImplemented, response.StatusCode)
+    Assert.Equal(HttpStatusCode.OK, response.StatusCode)
     first.Stop()
     use second = HostProcess.Start(workspace.Root, [])
     Assert.Equal("ready", second.Startup.Kind)
-    Assert.Equal<string list>([ "20261108000000_Initial" ], migrations workspace.Root)
+    Assert.Equal<string list>(currentMigrations, migrations workspace.Root)
     use connection = new SqliteConnection(WorkspaceDb.connectionString workspace.Root)
     connection.Open()
     use command = connection.CreateCommand()

@@ -13,7 +13,7 @@ let ``subprocess handshake HTTP and graceful shutdown work`` () =
     Assert.NotEqual(Environment.ProcessId, host.Id)
     use browser = client host
     use response = browser.GetAsync("/api/projects").GetAwaiter().GetResult()
-    Assert.Equal(HttpStatusCode.NotImplemented, response.StatusCode)
+    Assert.Equal(HttpStatusCode.OK, response.StatusCode)
     host.Stop()
     Assert.True(host.HasExited)
 

@@ -30,7 +30,7 @@ let ``isolated host starts serves stub routes and cleans its database`` () =
         command.CommandText <- "SELECT 1"
         Assert.Equal(1L, command.ExecuteScalar() :?> int64)
         use response = harness.Client.GetAsync("/api/projects").GetAwaiter().GetResult()
-        Assert.Equal(HttpStatusCode.NotImplemented, response.StatusCode)
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode)
     finally
         (harness :> IDisposable).Dispose()
     Assert.False(Directory.Exists(root))
@@ -46,7 +46,7 @@ let ``concurrent harnesses own distinct isolated environments`` () =
     Assert.NotEqual(first.Client.BaseAddress, second.Client.BaseAddress)
 
 [<Fact>]
-let ``all contract routes are reachable and report unimplemented`` () =
+let ``all contract routes are reachable with expected behavior`` () =
     use harness = TestHarness.Start()
     let project = Guid.NewGuid().ToString()
     let document = Guid.NewGuid().ToString()
@@ -70,4 +70,9 @@ let ``all contract routes are reachable and report unimplemented`` () =
         if method <> HttpMethod.Get then
             request.Headers.Add("X-CSRF-TOKEN", token)
         use response = harness.Client.Send(request)
-        Assert.Equal(HttpStatusCode.NotImplemented, response.StatusCode)
+        let expected =
+            if path = "/api/projects" && method = HttpMethod.Get then HttpStatusCode.OK
+            elif path = "/api/projects" then HttpStatusCode.BadRequest
+            elif path.EndsWith("/active") then HttpStatusCode.NotFound
+            else HttpStatusCode.NotImplemented
+        Assert.Equal(expected, response.StatusCode)

@@ -9,6 +9,8 @@
   <ItemGroup>
     <Compile Include="../RunnerSmoke.fs" Link="RunnerSmoke.fs" />
     <Compile Include="WorkspaceDbTests.fs" />
+    <Compile Include="ProjectSchemaTests.fs" />
+    <Compile Include="ProjectPersistenceTests.fs" />
     <ProjectReference Include="../../src/LexScholar.Infrastructure/LexScholar.Infrastructure.fsproj" />
     <PackageReference Include="xunit.v3" />
   </ItemGroup>
