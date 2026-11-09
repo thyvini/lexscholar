@@ -33,7 +33,7 @@ Tests are required from the first increment. Establish the compile-ready scaffol
 - [X] T016 [US1] Implement project creation, list, selection and persisted restoration in `src/LexScholar.Application/Projects.fs` and `src/LexScholar.Infrastructure/ProjectRepository.fs` (depends on T015; see [GREEN evidence](evidence/t016-t017-green.md)).
 - [X] T017 [US1] Implement `/api/projects` and `/api/projects/{projectId}/active` according to `contracts/http-api.yaml` in `src/LexScholar.Server/ProjectEndpoints.fs` (depends on T016; see [GREEN evidence](evidence/t016-t017-green.md)).
 - [X] T018 [US1] Implement project creation/list, project selection and active-project display, duplicate feedback and project-list empty state in `src/LexScholar.Client/Projects.fs` (depends on T017; see [evidence](evidence/t018-project-ui.md)); T032 owns the associated-document list.
-- [ ] T019 [US1] Add Linux Firefox and Chromium project creation, selection, active-project display, project-list empty state and restart coverage in `tests/LexScholar.Browser.Tests/ProjectJourneyTests.fs` (depends on T018); T033 covers associated documents after switching.
+- [X] T019 [US1] Add Linux Firefox and Chromium project creation, selection, active-project display, project-list empty state and restart coverage in `tests/LexScholar.Browser.Tests/ProjectJourneyTests.fs` (depends on T018; see [evidence](evidence/t019-project-browser-journeys.md)); T033 covers associated documents after switching.
 
 **Checkpoint after T019**: Verify project-management functionality. Full US1 acceptance also depends on T032–T033 in US2, which display and verify the active project's associated documents.
 

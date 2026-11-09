@@ -8,8 +8,11 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../RunnerSmoke.fs" Link="RunnerSmoke.fs" />
+    <Compile Include="../LexScholar.Server.Tests/TestHarness.fs" Link="TestHarness.fs" />
     <Compile Include="ProjectStateTests.fs" />
+    <Compile Include="ProjectJourneyTests.fs" />
     <ProjectReference Include="../../src/LexScholar.Server/LexScholar.Server.fsproj" />
+    <PackageReference Include="Microsoft.Playwright" />
     <PackageReference Include="xunit.v3" />
   </ItemGroup>
 </Project>

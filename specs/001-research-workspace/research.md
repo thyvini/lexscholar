@@ -73,6 +73,11 @@ These sources inform the decision; the summaries below are not quotations. The c
 
 - **Decision**: xUnit.net v3, real temporary SQLite databases, temporary filesystem roots, in-memory ASP.NET Core integration tests, and browser end-to-end tests on Linux Firefox and Chromium. Cover UUID round trips, exact-byte deduplication, import limit boundaries, invalid configuration startup, recovery interruption points, process lock/multi-tab behavior, active selection restore, role isolation, integrity mismatch, HTTP errors, and range delivery.
 - **Browser test boundary**: Automate UI journeys where possible; native viewer internals may limit automation, so record manual reader usability evidence when needed.
+- **Browser automation (T019)**: Microsoft.Playwright for .NET drives Linux Chromium and Firefox from the xUnit suites. One API covers both engines; auto-waiting assertions handle WebAssembly boot without sleeps or polling; there are no per-browser driver binaries to keep in version lockstep. Journeys run against the in-process `TestHarness` serving the client, with a caller-owned temporary workspace so a host can be restarted over the same data directory.
+  - **Caveat**: Playwright drives its own pinned browser builds (Chrome for Testing / Chrome Headless Shell, and a patched Firefox), not the distribution's `chromium`/`firefox` packages. On distributions Playwright does not officially support (e.g. Arch/CachyOS) it installs Ubuntu fallback builds. Automated evidence records the Playwright build versions; stock-browser behavior is covered by manual evaluation (T046).
+  - **Install**: once per user, after building the browser tests, run `tests/LexScholar.Browser.Tests/bin/<Configuration>/net10.0/.playwright/node/linux-x64/node tests/LexScholar.Browser.Tests/bin/<Configuration>/net10.0/.playwright/package/cli.js install chromium firefox` (or `pwsh …/playwright.ps1 install chromium firefox`). Browsers are cached under `~/.cache/ms-playwright`, outside the repository. Browser tests run in the default suite and fail (not skip) when browsers are missing; exclude them with `--filter-not-trait 'Category=Browser'`.
+  - **Alternatives considered**: Selenium WebDriver with geckodriver/chromedriver drives stock distribution browsers but requires matching driver versions and hand-written waits. bUnit renders components without a real browser and cannot verify browser journeys.
+  - **Sources**: [Playwright for .NET](https://playwright.dev/dotnet/docs/intro); [Playwright browsers](https://playwright.dev/dotnet/docs/browsers).
 - **Sources**: [xUnit v3 getting started](https://xunit.net/docs/getting-started/v3/getting-started); [ASP.NET Core integration tests](https://learn.microsoft.com/en-us/aspnet/core/test/integration-tests).
 
 ## Security and privacy
@@ -90,4 +95,4 @@ These sources inform the decision; the summaries below are not quotations. The c
 
 ## Version notes
 
-As researched 2026-11-04: .NET 10 LTS, Bolero 0.25.x, EF Core 10, SQLite 3.46.1+, PdfPig 0.1.16 stable. Use latest compatible stable patches at implementation time and pin them. No implementation tasks or code are part of this research artifact.
+As researched 2026-11-04: .NET 10 LTS, Bolero 0.25.x, EF Core 10, SQLite 3.46.1+, PdfPig 0.1.16 stable. Microsoft.Playwright 1.64.1 was pinned for T019 on 2026-11-09. Use latest compatible stable patches at implementation time and pin them. No implementation tasks or code are part of this research artifact.

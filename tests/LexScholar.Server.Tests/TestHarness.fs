@@ -42,15 +42,17 @@ module HostSetup =
         builder.WebHost.UseUrls("http://127.0.0.1:0") |> ignore
         builder
 
-/// Each instance owns a private directory, database, server, and HTTP client.
-type TestHarness private (workspace: TemporaryWorkspace, app: WebApplication, client: HttpClient) =
+/// Each instance owns a server and HTTP client, and a private directory and
+/// database unless the caller supplies a workspace to reuse across restarts.
+type TestHarness private (workspace: TemporaryWorkspace, ownsWorkspace: bool, app: WebApplication, client: HttpClient) =
     member _.Root = workspace.Root
     member _.DatabasePath = workspace.DatabasePath
     member _.App = app
     member _.Client = client
 
-    static member Start(?settings: (string * string) list, ?serveClient: bool, ?configure: WebApplication -> unit, ?environment: string) =
-        let workspace = TemporaryWorkspace.Create()
+    static member Start(?settings: (string * string) list, ?serveClient: bool, ?configure: WebApplication -> unit, ?environment: string, ?workspace: TemporaryWorkspace) =
+        let ownsWorkspace = Option.isNone workspace
+        let workspace = match workspace with Some shared -> shared | None -> TemporaryWorkspace.Create()
         let mutable app: WebApplication option = None
         try
             let builder = HostSetup.builder workspace.Root (defaultArg settings [])
@@ -69,12 +71,12 @@ type TestHarness private (workspace: TemporaryWorkspace, app: WebApplication, cl
             let addresses = server.Features.Get<IServerAddressesFeature>().Addresses
             let address = addresses |> Seq.exactlyOne
             let client = new HttpClient(BaseAddress = Uri(address))
-            new TestHarness(workspace, host, client)
+            new TestHarness(workspace, ownsWorkspace, host, client)
         with _ ->
             match app with
             | Some host -> host.DisposeAsync().AsTask().GetAwaiter().GetResult()
             | None -> ()
-            (workspace :> IDisposable).Dispose()
+            if ownsWorkspace then (workspace :> IDisposable).Dispose()
             reraise()
 
     interface IDisposable with
@@ -84,4 +86,4 @@ type TestHarness private (workspace: TemporaryWorkspace, app: WebApplication, cl
                 app.StopAsync().GetAwaiter().GetResult()
             finally
                 try app.DisposeAsync().AsTask().GetAwaiter().GetResult()
-                finally (workspace :> IDisposable).Dispose()
+                finally if ownsWorkspace then (workspace :> IDisposable).Dispose()
