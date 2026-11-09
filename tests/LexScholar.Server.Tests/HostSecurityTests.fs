@@ -64,10 +64,10 @@ let ``forged host and foreign origin are rejected including port mismatches`` ()
         use response = send client HttpMethod.Get "/api/projects" None (Some supplied) None None
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode)
     use sameOrigin = send client HttpMethod.Get "/api/projects" None (Some (origin client)) None None
-    Assert.Equal(HttpStatusCode.NotImplemented, sameOrigin.StatusCode)
+    Assert.Equal(HttpStatusCode.OK, sameOrigin.StatusCode)
     let localhost = $"localhost:{port}"
     use localhostResponse = send client HttpMethod.Get "/api/projects" (Some localhost) (Some $"http://{localhost}") None None
-    Assert.Equal(HttpStatusCode.NotImplemented, localhostResponse.StatusCode)
+    Assert.Equal(HttpStatusCode.OK, localhostResponse.StatusCode)
     use aliasOrigin = send client HttpMethod.Get "/api/projects" (Some localhost) (Some (origin client)) None None
     Assert.Equal(HttpStatusCode.Forbidden, aliasOrigin.StatusCode)
     for supplied in [ $"{origin client}, http://evil.example"; $"{origin client}/path"; $"https://127.0.0.1:{port}" ] do
@@ -89,7 +89,7 @@ let ``forwarded headers cannot replace the actual host or allow foreign origins`
     forwarded.Headers.TryAddWithoutValidation("X-Forwarded-Proto", "https") |> ignore
     forwarded.Headers.TryAddWithoutValidation("Forwarded", "host=evil.example;proto=https") |> ignore
     use ignored = client.Send(forwarded)
-    Assert.Equal(HttpStatusCode.NotImplemented, ignored.StatusCode)
+    Assert.Equal(HttpStatusCode.OK, ignored.StatusCode)
     use preflight = new HttpRequestMessage(HttpMethod.Options, "/api/projects")
     preflight.Headers.TryAddWithoutValidation("Origin", "http://evil.example") |> ignore
     preflight.Headers.TryAddWithoutValidation("Access-Control-Request-Method", "POST") |> ignore
@@ -127,7 +127,11 @@ let ``same-origin token and cookie permit each contract mutation`` () =
         use content = new StringContent("test", Encoding.UTF8)
         content.Headers.ContentType <- System.Net.Http.Headers.MediaTypeHeaderValue.Parse(contentType)
         use response = send client method path None (Some (origin client)) (Some token) (Some content)
-        Assert.Equal(HttpStatusCode.NotImplemented, response.StatusCode)
+        let expected =
+            if path = "/api/projects" then HttpStatusCode.BadRequest
+            elif path.EndsWith("/active") then HttpStatusCode.NotFound
+            else HttpStatusCode.NotImplemented
+        Assert.Equal(expected, response.StatusCode)
 
 [<Fact; Trait("Task", "T009")>]
 let ``invalid tokens cookie mismatches and foreign origin are rejected`` () =
@@ -172,7 +176,7 @@ let ``independent hosts do not overwrite each other's antiforgery cookies`` () =
     use clientB = new HttpClient(handlerB, false, BaseAddress = addressB, Timeout = TimeSpan.FromSeconds(10.0))
     let assertAllowed (client: HttpClient) token =
         use response = send client HttpMethod.Post "/api/projects" None (Some (origin client)) (Some token) None
-        Assert.Equal(HttpStatusCode.NotImplemented, response.StatusCode)
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode)
     let assertRejected (client: HttpClient) token =
         use response = send client HttpMethod.Post "/api/projects" None (Some (origin client)) (Some token) None
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode)
@@ -206,7 +210,7 @@ let ``restarting a workspace replaces its stale antiforgery cookie`` () =
         use client = new HttpClient(handler, false, BaseAddress = address, Timeout = TimeSpan.FromSeconds(10.0))
         let token = getToken client
         use response = send client HttpMethod.Post "/api/projects" None (Some (origin client)) (Some token) None
-        Assert.Equal(HttpStatusCode.NotImplemented, response.StatusCode)
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode)
         let stored = cookies.GetCookies(address)
         Assert.Equal(1, stored.Count)
         token, stored.[0].Name
@@ -228,7 +232,7 @@ let ``restarting a workspace replaces its stale antiforgery cookie`` () =
     Assert.Equal(cookieName, stored.[0].Name)
     assertRejected oldToken
     use response = send client HttpMethod.Post "/api/projects" None (Some (origin client)) (Some newToken) None
-    Assert.Equal(HttpStatusCode.NotImplemented, response.StatusCode)
+    Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode)
 
 [<Fact; Trait("Task", "T009")>]
 let ``all mutation methods require tokens even with an empty body`` () =
@@ -336,7 +340,7 @@ let ``configured loopback ports are honored`` () =
     use harness = TestHarness.Start(settings = [ "LexScholar:Port", string port; "urls", "http://0.0.0.0:0" ])
     Assert.Equal(port, harness.Client.BaseAddress.Port)
     use response = harness.Client.GetAsync("/api/projects").GetAwaiter().GetResult()
-    Assert.Equal(HttpStatusCode.NotImplemented, response.StatusCode)
+    Assert.Equal(HttpStatusCode.OK, response.StatusCode)
     assertNoNonLoopbackConnection port
 
 [<Theory; Trait("Task", "T009")>]
@@ -392,7 +396,7 @@ let ``real server ignores wildcard environment and command-line listeners`` sour
         Assert.NotEqual(0, actual.Port)
         use client = new HttpClient(BaseAddress = actual)
         use response = client.GetAsync("/api/projects").GetAwaiter().GetResult()
-        Assert.Equal(HttpStatusCode.NotImplemented, response.StatusCode)
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode)
         use index = client.GetAsync("/index.html").GetAwaiter().GetResult()
         Assert.Equal(HttpStatusCode.OK, index.StatusCode)
         use script = client.GetAsync("/_framework/blazor.webassembly.js").GetAwaiter().GetResult()

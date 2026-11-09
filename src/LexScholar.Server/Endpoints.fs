@@ -10,11 +10,9 @@ module Endpoints =
     let private notImplemented () : IResult =
         Results.Problem(title = "Not implemented", statusCode = StatusCodes.Status501NotImplemented)
 
-    let map (app: WebApplication) =
+    let map (app: WebApplication) directory =
         let stub = Func<IResult>(notImplemented)
-        app.MapGet("/api/projects", stub) |> ignore
-        app.MapPost("/api/projects", stub) |> ignore
-        app.MapPut("/api/projects/{projectId}/active", stub) |> ignore
+        ProjectEndpoints.map app directory
         app.MapGet("/api/projects/{projectId}/documents", stub) |> ignore
         app.MapPost("/api/projects/{projectId}/documents", stub) |> ignore
         app.MapPatch("/api/projects/{projectId}/documents/{documentId}", stub) |> ignore

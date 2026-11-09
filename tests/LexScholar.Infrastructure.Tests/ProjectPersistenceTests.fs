@@ -113,3 +113,26 @@ let ``selection rejects unknown and cross-workspace projects`` () =
     seedProject directory.Path first project "First"
     assertResult (Error ProjectRepository.ProjectNotFound) (ProjectRepository.select directory.Path second project)
     assertResult (Error ProjectRepository.ProjectNotFound) (ProjectRepository.select directory.Path second (Guid.NewGuid()))
+
+[<Fact; Trait("Task", "T016")>]
+let ``concurrent workspace resolution creates one stable workspace`` () =
+    use directory = new WorkspaceDirectory()
+    let tasks = [| for _ in 1..12 -> System.Threading.Tasks.Task.Run(fun () -> ProjectRepository.resolveWorkspace directory.Path) |]
+    System.Threading.Tasks.Task.WaitAll(tasks |> Array.map (fun task -> task :> System.Threading.Tasks.Task))
+    let ids = tasks |> Array.map (fun task -> task.Result) |> Array.distinct
+    Assert.Single(ids) |> ignore
+    WorkspaceDb.initialize directory.Path
+    Assert.Equal(ids.[0], ProjectRepository.resolveWorkspace directory.Path)
+    use db = WorkspaceDb.create directory.Path
+    Assert.Equal(1, db.Set<WorkspaceRow>() |> Seq.length)
+
+[<Fact; Trait("Task", "T016")>]
+let ``concurrent duplicate creation commits exactly one project`` () =
+    use directory = new WorkspaceDirectory()
+    let workspace = ProjectRepository.resolveWorkspace directory.Path
+    let tasks = [| for _ in 1..8 -> System.Threading.Tasks.Task.Run(fun () -> ProjectRepository.create directory.Path workspace (Guid.NewGuid()) " Same Name " now) |]
+    System.Threading.Tasks.Task.WaitAll(tasks |> Array.map (fun task -> task :> System.Threading.Tasks.Task))
+    let results = tasks |> Array.map (fun task -> task.Result)
+    Assert.Equal(1, results |> Array.filter Result.isOk |> Array.length)
+    Assert.Equal(7, results |> Array.filter ((=) (Error DuplicateProjectName)) |> Array.length)
+    Assert.Single(stored directory.Path workspace) |> ignore

@@ -79,7 +79,7 @@ let ``real host process restarts with its migrated database intact`` () =
         command.ExecuteNonQuery() |> ignore
     use client = client first
     use response = client.GetAsync("/api/projects").GetAwaiter().GetResult()
-    Assert.Equal(HttpStatusCode.NotImplemented, response.StatusCode)
+    Assert.Equal(HttpStatusCode.OK, response.StatusCode)
     first.Stop()
     use second = HostProcess.Start(workspace.Root, [])
     Assert.Equal("ready", second.Startup.Kind)
