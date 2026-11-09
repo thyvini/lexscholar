@@ -18,6 +18,7 @@
     <Compile Include="ProcessLockTests.fs" />
     <Compile Include="HostSecurityTests.fs" />
     <Compile Include="WorkspaceStartupTests.fs" />
+    <Compile Include="ProjectContractTests.fs" />
     <CompileAfter Include="TestProgram.fs" />
     <ProjectReference Include="../../src/LexScholar.Server/LexScholar.Server.fsproj" />
     <PackageReference Include="xunit.v3" />

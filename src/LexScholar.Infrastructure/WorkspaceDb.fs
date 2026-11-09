@@ -38,12 +38,40 @@ type UtcDateTimeOffsetConverter() =
         LeafExpressionConverter.QuotationToLambdaExpression <@ Func<DateTimeOffset, string>(fun value -> UtcTimestamp.write value.UtcDateTime) @>,
         LeafExpressionConverter.QuotationToLambdaExpression <@ Func<string, DateTimeOffset>(fun value -> DateTimeOffset(UtcTimestamp.read value)) @>)
 
+// EF persistence shapes only; the immutable domain records remain independent.
+type WorkspaceRow() =
+    member val Id = Guid.Empty with get, set
+    member val ActiveProjectId = Nullable<Guid>() with get, set
+    member val CreatedUtc = DateTimeOffset.MinValue with get, set
+
+type ResearchProjectRow() =
+    member val Id = Guid.Empty with get, set
+    member val WorkspaceId = Guid.Empty with get, set
+    member val Name = "" with get, set
+    member val NormalizedName = "" with get, set
+    member val CreatedUtc = DateTimeOffset.MinValue with get, set
+
 type WorkspaceDb(options: DbContextOptions) =
     inherit DbContext(options)
     override _.ConfigureConventions(builder: ModelConfigurationBuilder) =
         builder.Properties<Guid>().HaveConversion<CanonicalGuidConverter>().HaveColumnType("TEXT") |> ignore
         builder.Properties<DateTime>().HaveConversion<UtcDateTimeConverter>().HaveColumnType("TEXT") |> ignore
         builder.Properties<DateTimeOffset>().HaveConversion<UtcDateTimeOffsetConverter>().HaveColumnType("TEXT") |> ignore
+    override _.OnModelCreating(model: ModelBuilder) =
+        let workspace = model.Entity<WorkspaceRow>()
+        workspace.ToTable("Workspaces") |> ignore
+        workspace.HasKey("Id") |> ignore
+        workspace.Property<Guid>("Id").ValueGeneratedNever() |> ignore
+        let project = model.Entity<ResearchProjectRow>()
+        project.ToTable("ResearchProjects") |> ignore
+        project.HasKey("Id") |> ignore
+        project.Property<Guid>("Id").ValueGeneratedNever() |> ignore
+        project.Property<string>("Name").IsRequired() |> ignore
+        project.Property<string>("NormalizedName").IsRequired() |> ignore
+        project.HasAlternateKey("WorkspaceId", "Id") |> ignore
+        project.HasIndex([| "WorkspaceId"; "NormalizedName" |]).IsUnique() |> ignore
+        project.HasOne<WorkspaceRow>().WithMany().HasForeignKey("WorkspaceId").OnDelete(DeleteBehavior.Restrict) |> ignore
+        workspace.HasOne<ResearchProjectRow>().WithMany().HasForeignKey("Id", "ActiveProjectId").HasPrincipalKey("WorkspaceId", "Id").OnDelete(DeleteBehavior.Restrict) |> ignore
 
 module WorkspaceDb =
     let databasePath dataDirectory = Path.Combine(dataDirectory, "workspace.sqlite")

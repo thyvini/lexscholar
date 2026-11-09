@@ -38,6 +38,7 @@ type SampleDb(options: DbContextOptions) =
 // A test-only follow-up migration proves an existing baseline can be upgraded.
 type UpgradeDb(options: DbContextOptions) =
     inherit WorkspaceDb(options)
+    override _.OnModelCreating(_model: ModelBuilder) = ()
 
 [<DbContext(typeof<UpgradeDb>); Migration("20261109000000_TestUpgrade")>]
 type TestUpgrade() =
@@ -91,6 +92,8 @@ let private applied directory =
     use db = WorkspaceDb.create directory
     db.Database.GetAppliedMigrations() |> Seq.toList
 
+let private currentMigrations = [ "20261108000000_Initial"; "20261110000000_Projects" ]
+
 let private databaseHandles databasePath =
     Directory.EnumerateFiles("/proc/self/fd")
     |> Seq.choose (fun fd ->
@@ -110,29 +113,29 @@ let ``fresh database applies a migration and records its history`` () =
     Assert.False(File.Exists(WorkspaceDb.databasePath directory.Path))
     WorkspaceDb.initialize directory.Path
     Assert.True(File.Exists(WorkspaceDb.databasePath directory.Path))
-    Assert.Equal<string list>([ "20261108000000_Initial" ], applied directory.Path)
+    Assert.Equal<string list>(currentMigrations, applied directory.Path)
     do
         use db = WorkspaceDb.create directory.Path
         Assert.Empty(db.Database.GetPendingMigrations())
         Assert.False(db.Database.HasPendingModelChanges())
     use connection = openConnection directory.Path
-    Assert.Equal(1L, unbox<int64> (scalar connection "SELECT count(*) FROM __EFMigrationsHistory"))
-    Assert.Equal(0L, unbox<int64> (scalar connection "SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__EF%'"))
+    Assert.Equal(2L, unbox<int64> (scalar connection "SELECT count(*) FROM __EFMigrationsHistory"))
+    Assert.Equal(2L, unbox<int64> (scalar connection "SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__EF%'"))
 
 [<Fact; Trait("Task", "T010")>]
 let ``reopening and repeated initialization preserve existing data and history`` () =
     use directory = new TemporaryDirectory()
     WorkspaceDb.initialize directory.Path
-    Assert.Equal<string list>([ "20261108000000_Initial" ], applied directory.Path)
+    Assert.Equal<string list>(currentMigrations, applied directory.Path)
     do
         use connection = openConnection directory.Path
         execute connection "CREATE TABLE test_marker (value TEXT NOT NULL); INSERT INTO test_marker VALUES ('preserve');"
     WorkspaceDb.initialize directory.Path
     WorkspaceDb.initialize directory.Path
-    Assert.Equal<string list>([ "20261108000000_Initial" ], applied directory.Path)
+    Assert.Equal<string list>(currentMigrations, applied directory.Path)
     use reopened = openConnection directory.Path
     Assert.Equal("preserve", unbox<string> (scalar reopened "SELECT value FROM test_marker"))
-    Assert.Equal(1L, unbox<int64> (scalar reopened "SELECT count(*) FROM __EFMigrationsHistory"))
+    Assert.Equal(2L, unbox<int64> (scalar reopened "SELECT count(*) FROM __EFMigrationsHistory"))
 
 [<Fact; Trait("Task", "T010")>]
 let ``an existing SQLite file without migration history is preserved`` () =
@@ -141,14 +144,16 @@ let ``an existing SQLite file without migration history is preserved`` () =
         use connection = openConnection directory.Path
         execute connection "CREATE TABLE test_marker (value TEXT); INSERT INTO test_marker VALUES ('existing');"
     WorkspaceDb.initialize directory.Path
-    Assert.Equal<string list>([ "20261108000000_Initial" ], applied directory.Path)
+    Assert.Equal<string list>(currentMigrations, applied directory.Path)
     use connection = openConnection directory.Path
     Assert.Equal("existing", unbox<string> (scalar connection "SELECT value FROM test_marker"))
 
 [<Fact; Trait("Task", "T010")>]
 let ``a later test migration upgrades the baseline without losing data`` () =
     use directory = new TemporaryDirectory()
-    WorkspaceDb.initialize directory.Path
+    do
+        use db = WorkspaceDb.create directory.Path
+        db.GetService<IMigrator>().Migrate("20261108000000_Initial")
     do
         use connection = openConnection directory.Path
         execute connection "CREATE TABLE test_marker (value TEXT); INSERT INTO test_marker VALUES ('preserve');"
@@ -173,8 +178,8 @@ let ``independent data directories use independent databases`` () =
     use second = new TemporaryDirectory()
     WorkspaceDb.initialize first.Path
     WorkspaceDb.initialize second.Path
-    Assert.Equal<string list>([ "20261108000000_Initial" ], applied first.Path)
-    Assert.Equal<string list>([ "20261108000000_Initial" ], applied second.Path)
+    Assert.Equal<string list>(currentMigrations, applied first.Path)
+    Assert.Equal<string list>(currentMigrations, applied second.Path)
     do
         use connection = openConnection first.Path
         execute connection "CREATE TABLE test_marker (value TEXT); INSERT INTO test_marker VALUES ('first');"
@@ -308,7 +313,7 @@ let ``initialization failure closes database handles and permits retry`` () =
     Assert.Empty(databaseHandles path)
     File.Delete(path)
     WorkspaceDb.initialize directory.Path
-    Assert.Equal<string list>([ "20261108000000_Initial" ], applied directory.Path)
+    Assert.Equal<string list>(currentMigrations, applied directory.Path)
     Assert.Empty(databaseHandles path)
 
 [<Fact; Trait("Task", "T010")>]
