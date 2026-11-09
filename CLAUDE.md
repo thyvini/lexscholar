@@ -14,7 +14,10 @@ dotnet build LexScholar.sln -c Release --no-restore -warnaserror
 dotnet test --solution LexScholar.sln --configuration Release                  # full suite
 dotnet test --project tests/LexScholar.Browser.Tests/LexScholar.Browser.Tests.fsproj --configuration Release --filter-trait 'Task=T018'   # one task
 dotnet run --project src/LexScholar.Server                                      # local host on 127.0.0.1:5000
+dotnet publish src/LexScholar.Server/LexScholar.Server.fsproj -c Release -o <dir> --no-restore -warnaserror
 ```
+
+The published app serves the client from `wwwroot` under its content root, which defaults to the current directory. Start it from the publish directory (`cd <dir> && dotnet LexScholar.Server.dll`) or pass `--contentRoot <dir>`. Started anywhere else, the API still works but every client asset returns 404.
 
 Browser tests (`tests/LexScholar.Browser.Tests`, trait `Category=Browser`) use Playwright's own Chromium and Firefox builds. Install them once per machine (cached in `~/.cache/ms-playwright`):
 
@@ -28,6 +31,9 @@ The full suite includes the browser tests, and they **fail** (not skip) when the
 
 - Work one task from `tasks.md` at a time, on its own branch. Branch from and open PRs against the active release branch (currently `release/0.1.0`), not `main`.
 - Plan first and wait for approval. Keep changes to what the task asks for; record new technology choices in `research.md` with rationale and alternatives (constitution VI).
+- If a task looks over-specified or conflicts with constitution Principle V (simplicity), say so and ask before implementing. Do not add requirements or safeguards beyond what the spec and task ask for.
+- Do not edit `.specify/memory/constitution.md` unless explicitly asked. This includes when a Spec Kit skill (constitution, analyze, converge) proposes an amendment: report the proposed change and wait for a decision.
+- Do not create, edit or close Codecks cards.
 - Test first: capture a meaningful RED (failing assertions, not just a compile error), then GREEN. Tag tests with `Trait("Task", "Txxx")`.
 - Record verification in `specs/001-research-workspace/evidence/txxx-<topic>.md`: commands run, RED and GREEN results, test counts, environment details, and limitations. Follow the existing evidence files. Then tick the task in `tasks.md` with a link to the evidence.
 - Before finishing: restore and build with `-warnaserror` (zero warnings), and the full suite passes with zero skips.
