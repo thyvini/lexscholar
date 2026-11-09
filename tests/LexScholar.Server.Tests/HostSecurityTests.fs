@@ -399,8 +399,13 @@ let ``real server ignores wildcard environment and command-line listeners`` sour
         Assert.Equal(HttpStatusCode.OK, response.StatusCode)
         use index = client.GetAsync("/index.html").GetAwaiter().GetResult()
         Assert.Equal(HttpStatusCode.OK, index.StatusCode)
+        let html = index.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+        Assert.Contains("id=\"app\"", html)
+        Assert.Contains("_framework/blazor.webassembly.js", html)
         use script = client.GetAsync("/_framework/blazor.webassembly.js").GetAwaiter().GetResult()
         Assert.Equal(HttpStatusCode.OK, script.StatusCode)
+        use stylesheet = client.GetAsync("/app.css").GetAwaiter().GetResult()
+        Assert.Equal(HttpStatusCode.OK, stylesheet.StatusCode)
         assertNoNonLoopbackConnection actual.Port
     finally
         if not child.HasExited then child.Kill(entireProcessTree = true)
