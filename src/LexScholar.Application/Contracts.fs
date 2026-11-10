@@ -2,12 +2,10 @@ namespace LexScholar.Application
 
 open System
 open System.IO
+open LexScholar.Domain
 
-// These types are scaffolding for the approved API; domain entities and storage
-// implementations belong to later tasks.
-type DocumentRole =
-    | FocusedSource
-    | ReferenceSource
+// These types are scaffolding for the approved API; storage implementations
+// belong to later tasks. DocumentRole is defined in LexScholar.Domain.
 
 type Project = { Id: Guid; Name: string; CreatedUtc: DateTimeOffset }
 type ProjectList = { ActiveProjectId: Guid option; Projects: Project list }
@@ -19,7 +17,8 @@ type Document =
       ImportedUtc: DateTimeOffset
       ContentUrl: string }
 type ImportResult = Imported of Document | Reused of Document
-type ProjectDocument =
+/// Serialized as the `ProjectDocument` schema in contracts/http-api.yaml.
+type ProjectDocumentView =
     { ProjectId: Guid
       Document: Document
       Role: DocumentRole
@@ -27,6 +26,13 @@ type ProjectDocument =
 
 type ImportLimits = { MaxBytes: int64; MaxPages: int }
 type ValidatedPdf = { Sha256: string; ByteLength: int64; PageCount: int }
+/// Why an upload is not an acceptable PDF under the limits current at import.
+type PdfRejection =
+    | NotPdf
+    | Corrupt
+    | Encrypted
+    | TooLarge of maxBytes: int64
+    | TooManyPages of maxPages: int
 type PendingImportStatus = Uploading | Validated | Promoted
 type PendingImport =
     { Id: Guid

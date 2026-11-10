@@ -5,6 +5,7 @@ open System.IO
 open System.Threading
 open System.Threading.Tasks
 open LexScholar.Application
+open LexScholar.Domain
 open LexScholar.Infrastructure
 open LexScholar.Server
 open Xunit
@@ -36,7 +37,6 @@ let ``functional capabilities fault explicitly without performing domain behavio
               (fun () -> library.Associate Guid.Empty Guid.Empty FocusedSource ct :> Task)
               (fun () -> library.ChangeRole Guid.Empty Guid.Empty ReferenceSource ct :> Task)
               (fun () -> library.RemoveAssociation Guid.Empty Guid.Empty ct :> Task)
-              (fun () -> PdfValidator.validate Stream.Null { MaxBytes = 1L; MaxPages = 1 } ct :> Task)
               (fun () -> journal.Create pending ct :> Task)
               (fun () -> journal.Update pending ct :> Task)
               (fun () -> journal.Remove Guid.Empty ct :> Task)

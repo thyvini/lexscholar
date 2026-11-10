@@ -14,7 +14,7 @@ let private migrations directory =
     use db = WorkspaceDb.create directory
     db.Database.GetAppliedMigrations() |> Seq.toList
 
-let private currentMigrations = [ "20261108000000_Initial"; "20261110000000_Projects" ]
+let private currentMigrations = [ "20261108000000_Initial"; "20261110000000_Projects"; "20261111000000_Documents" ]
 
 [<Fact; Trait("Task", "T010")>]
 let ``host construction applies migrations before it starts listening`` () =
