@@ -1,0 +1,26 @@
+{
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  },
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": [
+      "Bash(dotnet *)",
+      "Bash(git *)",
+      "Bash(gh *)",
+      "Bash(scripts/*)"
+    ],
+    "deny": [
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(git push * --force*)",
+      "Bash(git push * -f*)",
+      "Bash(git push origin main*)",
+      "Bash(git push origin release/*)",
+      "Bash(gh pr merge * --admin*)",
+      "Bash(gh repo delete*)",
+      "Edit(**/.specify/memory/constitution.md)",
+      "Write(**/.specify/memory/constitution.md)"
+    ]
+  }
+}
