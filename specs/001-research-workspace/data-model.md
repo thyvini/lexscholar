@@ -53,9 +53,9 @@ One shared library record for a byte-exact PDF. It can exist without project ass
 
 **Limit changes**: Limits apply to import requests, including re-imports. Lowering them does not invalidate, remove, or restrict reading previously accepted documents.
 
-**Identity**: Complete bytes determine equality. SHA-256 narrows candidates, then stored bytes are compared exactly. Different bytes are different documents even if hash candidate or filename matches. Every concurrent valid import of identical bytes succeeds and returns the same record; preserve the original bytes and existing associations, cleaning only operation-owned staging/journal artifacts. Safe internal contention retries are permitted.
+**Identity**: Complete bytes determine equality. SHA-256 narrows candidates, then stored bytes are compared exactly. Different bytes are different documents even if hash candidate or filename matches. Imports commit one at a time within the single process, so every concurrent valid import of identical bytes succeeds and returns the same record without retries; the original bytes and existing associations are preserved.
 
-**Storage invariants**: Preserve original bytes unchanged, store outside static web root, and resolve content only through UUID-to-record lookup. Verify SHA-256 against the original hash on every new document open without reparsing, and bind verification and delivery to the same opened file. Ensure bytes cannot change throughout verification and delivery; fail safely before delivery if this cannot be established. Reuse verification for range requests only when bytes are provably unchanged; otherwise rehash. File size and timestamps alone cannot prove integrity. Missing, unreadable, or hash-mismatched content returns HTTP 503 `document_unavailable` and does not modify this row or associations.
+**Storage invariants**: Originals are written once by promotion, never overwritten, and stored read-only, outside the static web root; content is resolved only through UUID-to-record lookup. On each open, the original must exist, be readable, and have exactly ByteLength bytes; otherwise HTTP 503 `document_unavailable` is returned and this row and its associations are not modified. Content is not rehashed on open, so same-length changes made outside LexScholar are not detected; Sha256 is kept for duplicate detection (see [research](research.md#document-availability-on-open)).
 
 ### ProjectDocument
 
@@ -70,23 +70,9 @@ Project-specific association and classification of a shared document.
 
 **Key/relationships**: Composite primary key `(ProjectId, DocumentId)`. Role is only on this association. Removing it does not delete the document.
 
-### PendingImport
+### Import staging and startup cleanup
 
-Internal recovery journal for the non-transactional filesystem/SQLite import boundary. Not exposed by the API or UI.
-
-| Field | Type | Rules |
-|---|---|---|
-| Id | UUID primary key | Identifies one import operation. |
-| Status | constrained text enum | `Uploading`, `Validated`, or `Promoted`; controls recovery action. |
-| StagingKey | generated owned key | References only this operation's staging artifact. |
-| DestinationKey | generated opaque key | Intended final storage key, unique. |
-| Sha256 | nullable 32-byte blob or lowercase hex text | Null while receiving; required after validation and verified before recovery finalizes import. |
-| ByteLength | nullable integer | Null while receiving; expected staged/promoted length after validation. |
-| OriginalFileName | text | Display metadata from upload, sanitized. |
-| PageCount | nullable integer | Set after successful parse and limit validation. |
-| CreatedUtc | UTC timestamp | Supports diagnostics and recovery ordering. |
-
-Create the `Uploading` journal row before streaming begins. Journal transition: `Uploading → Validated → Promoted → Document committed and journal cleared`. Recovery under the exclusive process lock can safely discard a partial staging file owned by an `Uploading` entry; it verifies journal-owned bytes before finalizing later states. Unknown or unjournaled artifacts are quarantined/reported, never automatically deleted.
+Not an entity: no import state is stored in SQLite. Each import streams to a request-owned staging file with a generated name in a private staging directory. After validation, imports commit one at a time inside the single process: identical bytes reuse the existing LibraryDocument and delete the staged file; new bytes are flushed to disk, atomically renamed without overwriting to their generated StorageKey on the same filesystem, and only then inserted as a LibraryDocument row. A crash normally leaves only a staging file or a stored original without a row. Flushing protects the staged bytes, but without a directory sync (deliberately not added) the rename itself may not survive a power loss; in that rare case a row can point to a missing original, which is handled as HTTP 503 `document_unavailable` (FR-017) with no other data lost. At startup, under the exclusive process lock and before serving, staging contents are deleted and stored originals that no row references are moved to `quarantine/` and logged as a warning at startup, never deleted. There is no report UI or endpoint.
 
 ## Constraints and indexes
 
@@ -105,11 +91,11 @@ Create the `Uploading` journal row before streaming begins. Journal transition: 
 | Select/restore project | Update Workspace.ActiveProjectId; read it on startup; fallback to no active selection if null. |
 | Project name normalization | Trim display name; normalize for unique comparison; preserve existing projects on conflict. |
 | Import | Validate signature, readability, encryption, byte limit, and page limit before creating visible LibraryDocument or association state. |
-| Deduplicate | Match SHA-256 candidates, then compare every byte; reuse UUID record only for exact match. |
+| Deduplicate | Inside the serialized import commit, match SHA-256 candidates, then compare every byte; reuse UUID record only for exact match. |
 | Role change | Update only the selected ProjectDocument.Role. |
 | Association removal | Delete only one ProjectDocument row; retain LibraryDocument and original file. |
 | Unknown document UUID | HTTP 404 `document_not_found`. |
-| Known record, unavailable/unreadable/hash-mismatched file | HTTP 503 `document_unavailable`; preserve metadata and associations; recovery UI is deferred in F001. |
+| Known record, missing/unreadable/wrong-length file | HTTP 503 `document_unavailable`; preserve metadata and associations; recovery UI is deferred in F001. |
 
 ## Spec traceability and pending spec clarifications
 
@@ -120,6 +106,6 @@ Create the `Uploading` journal row before streaming begins. Journal transition: 
 | FR-007, FR-009 | Role exists only on ProjectDocument. |
 | FR-010 | Association deletion leaves document and bytes intact. |
 | FR-011 | Projects/documents/associations and active selection persist. |
-| FR-012, FR-017 | Immutable original; unavailable file preserves record/associations. |
+| FR-012, FR-017 | Read-only original never overwritten; failed imports leave no visible state; unavailable file preserves record/associations. |
 | FR-015 | Encrypted file rejected before visible data changes. |
 | FR-003, SC-008 | Configurable byte/page limits and non-mutating rejection behavior. |
