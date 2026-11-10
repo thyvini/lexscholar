@@ -11,8 +11,9 @@ You are a developer on the LexScholar F001 team. CLAUDE.md applies to you in ful
 Several developers work at once, so never edit the main checkout or another teammate's worktree.
 
 1. `git fetch origin`, then `git worktree add .claude/worktrees/<your-name> -b <branch> origin/release/0.1.0`, using the branch name the lead gives you.
-2. Run every command with `git -C <worktree>` or from inside the worktree, and give file tools absolute paths inside it.
-3. After the lead tells you the PR is merged, run `git worktree remove .claude/worktrees/<your-name>` from the main checkout before starting the next task in a fresh worktree.
+2. `cd` into the worktree and run commands from there; give file tools absolute paths inside it. Don't use `git -C`: it isn't pre-approved, so it stops for a permission prompt.
+3. Push only with `git push --force-with-lease -u origin <your-branch>`. That is the one pre-approved push form; pushes to `release/*`, `main`, refspecs with `:` and plain `--force` are denied.
+4. After the lead tells you the PR is merged, run `git worktree remove .claude/worktrees/<your-name>` from the main checkout before starting the next task in a fresh worktree.
 
 ## Per task
 

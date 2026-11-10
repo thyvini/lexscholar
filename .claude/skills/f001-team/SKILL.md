@@ -55,7 +55,7 @@ Confirm this against the task text and the "Dependencies and parallel work" sect
 5. Merge with
    `gh pr merge <pr> --squash --match-head-commit <sha> --subject "<PR title> (#<pr>)"`.
    Keep branches (don't pass `--delete-branch`). Record non-blocking follow-ups from the review in `tasks.md` under the task they belong to, in the next PR that touches that task, or in a small `docs(f001)` PR.
-6. After each merge: ask the verifier to verify `release/0.1.0`, tell the other lane to rebase if it shares files, update Codecks (section 5), and send the user one short status line.
+6. After each merge: ask the verifier to verify `release/0.1.0` at the merge commit SHA (from `gh api repos/thyvini/lexscholar/pulls/<pr> --jq .merge_commit_sha`), tell the other lane to rebase if it shares files, update Codecks (section 5), and send the user one short status line.
 
 **Always stop and ask the user** before: changing spec.md or the constitution, force-pushing, rewriting `release/0.1.0` or `main`, merging anything into `main`, or deleting branches. Also stop if the same failure happens twice for reasons nobody can explain.
 
