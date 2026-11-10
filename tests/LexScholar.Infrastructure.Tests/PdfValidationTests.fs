@@ -119,3 +119,31 @@ let ``a cancelled validation stops with OperationCanceledException`` () =
     cancellation.Cancel()
     Assert.ThrowsAny<OperationCanceledException>(fun () ->
         (PdfValidator.validate input defaults cancellation.Token).GetAwaiter().GetResult() |> ignore) |> ignore
+
+/// Reads normally until the first end of stream (the measuring pass), then
+/// fails every later read, as a staged file can when the disk errors while
+/// PdfPig parses it.
+type private FailingSecondPassInput(bytes: byte array) =
+    inherit MemoryStream(bytes, false)
+    let mutable firstPassDone = false
+    member private this.Check() =
+        if firstPassDone then raise (IOException("Simulated read failure on the staged file."))
+    override this.Read(buffer: byte array, offset, count) =
+        this.Check()
+        let read = base.Read(buffer, offset, count)
+        if read = 0 then firstPassDone <- true
+        read
+    override this.ReadByte() =
+        this.Check()
+        base.ReadByte()
+
+[<Fact; Trait("Task", "T029")>]
+let ``an I/O failure while parsing propagates instead of reporting a corrupt PDF`` () =
+    use input = new FailingSecondPassInput(fixture "valid.pdf")
+    Assert.Throws<IOException>(fun () -> run defaults input |> ignore) |> ignore
+
+[<Fact; Trait("Task", "T029")>]
+let ``a PDF truncated mid-document is still rejected as corrupt`` () =
+    let bytes = fixture "valid.pdf"
+    use input = new TrackingInput(bytes.[.. bytes.Length / 2])
+    assertResult (Error Corrupt) (run defaults input)

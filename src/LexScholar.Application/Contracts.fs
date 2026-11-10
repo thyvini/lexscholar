@@ -33,17 +33,10 @@ type PdfRejection =
     | Encrypted
     | TooLarge of maxBytes: int64
     | TooManyPages of maxPages: int
-type PendingImportStatus = Uploading | Validated | Promoted
-type PendingImport =
-    { Id: Guid
-      Status: PendingImportStatus
-      StagingKey: string
-      DestinationKey: string
-      Sha256: string option
-      ByteLength: int64 option
-      OriginalFileName: string
-      PageCount: int option
-      CreatedUtc: DateTimeOffset }
+/// Identifies one import's private staging file. The workflow generates it;
+/// the document store derives the file name from the UUID alone, never from
+/// client input.
+type StagingKey = StagingKey of Guid
 
 // On a successful open, the caller owns and must dispose Stream, even if later
 // reads fail or are cancelled. Verification and delivery use the same read-only

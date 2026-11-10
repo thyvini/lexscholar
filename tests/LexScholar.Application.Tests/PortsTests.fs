@@ -23,16 +23,7 @@ type private TrackingReadStream(bytes: byte array) =
         if disposing then disposed <- true
         base.Dispose(disposing)
 
-let private pending () : PendingImport =
-    { Id = Guid.NewGuid()
-      Status = Uploading
-      StagingKey = "server-generated-stage"
-      DestinationKey = "server-generated-destination"
-      Sha256 = None
-      ByteLength = None
-      OriginalFileName = "example.pdf"
-      PageCount = None
-      CreatedUtc = DateTimeOffset.UtcNow }
+let private stagingKey () = StagingKey (Guid.NewGuid())
 
 let private notImplemented<'a> () = Task.FromException<'a>(NotImplementedException())
 
@@ -99,19 +90,19 @@ let ``caller streams verified content and owns the returned handle`` () =
 
 [<Fact; Trait("Task", "T011")>]
 let ``staging writer is caller-owned while the source remains borrowed`` () =
-    let entry = pending ()
+    let key = stagingKey ()
     use cancellation = new CancellationTokenSource()
     use source = new MemoryStream([| 4uy; 5uy; 6uy |])
     let writer = new TrackingStream()
     let mutable observed = false
     let openWrite : OpenStagedWrite = fun actual token ->
-        Assert.Equal(entry.Id, actual.Id)
+        Assert.Equal(key, actual)
         Assert.Equal(cancellation.Token, token)
         observed <- true
         Task.FromResult(writer :> Stream)
     let stage (openWriter: OpenStagedWrite) (input: Stream) =
         task {
-            let! output = openWriter entry cancellation.Token
+            let! output = openWriter key cancellation.Token
             use owned = output
             do! input.CopyToAsync(owned, 2, cancellation.Token)
         }
@@ -146,16 +137,16 @@ let ``validation and cancelled import leave caller-owned inputs open`` () =
 
 [<Fact; Trait("Task", "T011")>]
 let ``caller disposes an opened staging stream when a later read is cancelled`` () =
-    let entry = pending ()
+    let key = stagingKey ()
     use cancellation = new CancellationTokenSource()
     let stream = new TrackingReadStream([| 1uy |])
     let openRead : OpenStagedRead = fun actual token ->
-        Assert.Equal(entry.Id, actual.Id)
+        Assert.Equal(key, actual)
         Assert.Equal(cancellation.Token, token)
         Task.FromResult(stream :> Stream)
     let consume (openStaged: OpenStagedRead) =
         task {
-            let! opened = openStaged entry cancellation.Token
+            let! opened = openStaged key cancellation.Token
             use owned = opened
             Assert.False(owned.CanWrite)
             cancellation.Cancel()
@@ -168,12 +159,12 @@ let ``caller disposes an opened staging stream when a later read is cancelled`` 
 
 [<Fact; Trait("Task", "T011")>]
 let ``cancelled opening leaves acquired resources with the provider`` () =
-    let entry = pending ()
+    let key = stagingKey ()
     use cancellation = new CancellationTokenSource()
     let started = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
     let stream = new TrackingReadStream([| 1uy |])
     let openRead : OpenStagedRead = fun actual token ->
-        Assert.Equal(entry.Id, actual.Id)
+        Assert.Equal(key, actual)
         Assert.Equal(cancellation.Token, token)
         task {
             try
@@ -184,7 +175,7 @@ let ``cancelled opening leaves acquired resources with the provider`` () =
                 stream.Dispose()
                 return raise error
         }
-    let opening = openRead entry cancellation.Token
+    let opening = openRead key cancellation.Token
     started.Task.GetAwaiter().GetResult()
     cancellation.Cancel()
     Assert.ThrowsAny<OperationCanceledException>(fun () -> opening.GetAwaiter().GetResult() |> ignore) |> ignore
@@ -192,36 +183,30 @@ let ``cancelled opening leaves acquired resources with the provider`` () =
 
 [<Fact; Trait("Task", "T011")>]
 let ``successful open transfers ownership even if cancellation races`` () =
-    let entry = pending ()
+    let key = stagingKey ()
     use cancellation = new CancellationTokenSource()
     let stream = new TrackingReadStream([| 1uy |])
     let openRead : OpenStagedRead = fun _ token ->
         Assert.Equal(cancellation.Token, token)
         cancellation.Cancel()
         Task.FromResult(stream :> Stream)
-    use opened = openRead entry cancellation.Token |> fun result -> result.GetAwaiter().GetResult()
+    use opened = openRead key cancellation.Token |> fun result -> result.GetAwaiter().GetResult()
     Assert.True(cancellation.IsCancellationRequested)
     Assert.False(stream.Disposed)
     opened.Dispose()
     Assert.True(stream.Disposed)
 
 [<Fact; Trait("Task", "T011")>]
-let ``journal promotion and staging cleanup remain separately injectable`` () =
-    let entry = pending ()
+let ``promotion and staging cleanup remain separately injectable`` () =
+    let key = stagingKey ()
     use cancellation = new CancellationTokenSource()
-    let calls = ResizeArray<string * Guid * CancellationToken>()
-    let journal : ImportJournalOperations =
-        { Create = fun item token -> calls.Add("create", item.Id, token); Task.FromResult(())
-          Update = fun item token -> calls.Add("update", item.Id, token); Task.FromResult(())
-          Remove = fun id token -> calls.Add("remove", id, token); Task.FromResult(())
-          Recover = fun token -> calls.Add("recover", Guid.Empty, token); Task.FromResult(()) }
-    let promote : PromoteStagedContent = fun item token -> calls.Add("promote", item.Id, token); Task.FromResult(())
-    let discard : DiscardStagedContent = fun item token -> calls.Add("discard", item.Id, token); Task.FromResult(())
-    let useOne (operation: PendingImport -> CancellationToken -> Task<unit>) = operation entry cancellation.Token
-    useOne journal.Create |> fun operation -> operation.GetAwaiter().GetResult()
-    useOne promote |> fun operation -> operation.GetAwaiter().GetResult()
-    useOne discard |> fun operation -> operation.GetAwaiter().GetResult()
-    Assert.Equal<string list>([ "create"; "promote"; "discard" ], calls |> Seq.map (fun (name, _, _) -> name) |> Seq.toList)
-    Assert.All(calls, fun (_, id, token) ->
-        Assert.Equal(entry.Id, id)
+    let calls = ResizeArray<string * StagingKey * CancellationToken>()
+    let promote : PromoteStagedContent = fun item token -> calls.Add("promote", item, token); Task.FromResult("generated-storage-key")
+    let discard : DiscardStagedContent = fun item token -> calls.Add("discard", item, token); Task.FromResult(())
+    let storageKey = promote key cancellation.Token |> fun operation -> operation.GetAwaiter().GetResult()
+    discard key cancellation.Token |> fun operation -> operation.GetAwaiter().GetResult()
+    Assert.Equal("generated-storage-key", storageKey)
+    Assert.Equal<string list>([ "promote"; "discard" ], calls |> Seq.map (fun (name, _, _) -> name) |> Seq.toList)
+    Assert.All(calls, fun (_, item, token) ->
+        Assert.Equal(key, item)
         Assert.Equal(cancellation.Token, token))

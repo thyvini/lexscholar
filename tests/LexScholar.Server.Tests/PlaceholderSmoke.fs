@@ -15,18 +15,7 @@ let ``functional capabilities fault explicitly without performing domain behavio
     task {
         let projects = Projects.unimplemented
         let library = Library.unimplemented
-        let journal = ImportJournal.unimplemented
         let ct = CancellationToken.None
-        let pending =
-            { Id = Guid.Empty
-              Status = Uploading
-              StagingKey = "unused-stage"
-              DestinationKey = "unused-destination"
-              Sha256 = None
-              ByteLength = None
-              OriginalFileName = "unused.pdf"
-              PageCount = None
-              CreatedUtc = DateTimeOffset.MinValue }
         let operations : (unit -> Task) list =
             [ (fun () -> projects.List ct :> Task)
               (fun () -> projects.Create "unused" ct :> Task)
@@ -37,10 +26,6 @@ let ``functional capabilities fault explicitly without performing domain behavio
               (fun () -> library.Associate Guid.Empty Guid.Empty FocusedSource ct :> Task)
               (fun () -> library.ChangeRole Guid.Empty Guid.Empty ReferenceSource ct :> Task)
               (fun () -> library.RemoveAssociation Guid.Empty Guid.Empty ct :> Task)
-              (fun () -> journal.Create pending ct :> Task)
-              (fun () -> journal.Update pending ct :> Task)
-              (fun () -> journal.Remove Guid.Empty ct :> Task)
-              (fun () -> journal.Recover ct :> Task)
               (fun () -> VerifiedDocumentContent.openRead Guid.Empty ct :> Task) ]
         for invoke in operations do
             let! error = Assert.ThrowsAsync<NotImplementedException>(Func<Task>(invoke))
