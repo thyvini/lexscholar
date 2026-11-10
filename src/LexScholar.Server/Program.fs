@@ -4,6 +4,7 @@ open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.Hosting.StaticWebAssets
 open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.DependencyInjection
+open Microsoft.Extensions.Logging
 open LexScholar.Server
 open LexScholar.Infrastructure
 
@@ -40,6 +41,11 @@ let private createHost (builder: WebApplicationBuilder) (serveClient: bool) port
                 try
                     app.Services.GetRequiredService<DataDirectoryLease>() |> ignore
                     app.Lifetime.ApplicationStopped.Register(fun () -> lease.Release()) |> ignore
+                    // Under the lock, after migrations and before serving: discard
+                    // interrupted imports. Built first only so a logger exists.
+                    let cleanup = StorageCleanup.run configuration.DataDirectory
+                    for storageKey in cleanup.Quarantined do
+                        app.Logger.LogWarning("Moved unreferenced original {StorageKey} to quarantine.", storageKey)
                     HostSecurity.useSecurity app configuration.DataDirectory
                     if serveClient then
                         // Built applications use the development asset manifest;

@@ -14,6 +14,8 @@
     <Compile Include="ProjectPersistenceTests.fs" />
     <Compile Include="DocumentSchemaTests.fs" />
     <Compile Include="PdfValidationTests.fs" />
+    <Compile Include="LibraryTests.fs" />
+    <Compile Include="StorageCleanupTests.fs" />
     <ProjectReference Include="../../src/LexScholar.Infrastructure/LexScholar.Infrastructure.fsproj" />
     <PackageReference Include="xunit.v3" />
     <None Include="../Fixtures/*" LinkBase="Fixtures" CopyToOutputDirectory="PreserveNewest" />

@@ -37,20 +37,13 @@ module LibraryDocument =
     let private isSha256 (value: string) =
         not (isNull value) && value.Length = 64 && Seq.forall isLowercaseHex value
 
+    /// Validates a candidate document. Taking the record means every field is
+    /// named at the call site, so same-typed fields cannot be swapped silently.
     // Configured import limits are deliberately not checked here: lowering them
     // must not invalidate documents that were accepted earlier.
-    let create (id: Guid) (sha256: string) (storageKey: string) (originalFileName: string)
-               (byteLength: int64) (pageCount: int) (importedUtc: DateTimeOffset)
-               : Result<LibraryDocument, DocumentError> =
-        if not (isSha256 sha256) then Error InvalidSha256
-        elif String.IsNullOrWhiteSpace(storageKey) then Error InvalidStorageKey
-        elif byteLength <= 0L then Error NonPositiveByteLength
-        elif pageCount <= 0 then Error NonPositivePageCount
-        else
-            Ok { Id = id
-                 Sha256 = sha256
-                 StorageKey = storageKey
-                 OriginalFileName = originalFileName
-                 ByteLength = byteLength
-                 PageCount = pageCount
-                 ImportedUtc = importedUtc }
+    let create (candidate: LibraryDocument) : Result<LibraryDocument, DocumentError> =
+        if not (isSha256 candidate.Sha256) then Error InvalidSha256
+        elif String.IsNullOrWhiteSpace(candidate.StorageKey) then Error InvalidStorageKey
+        elif candidate.ByteLength <= 0L then Error NonPositiveByteLength
+        elif candidate.PageCount <= 0 then Error NonPositivePageCount
+        else Ok candidate

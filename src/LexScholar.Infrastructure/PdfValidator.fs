@@ -30,14 +30,18 @@ let private measure (input: Stream) (maxBytes: int64) cancellationToken = task {
             total <- total + int64 read
     return total, header, Convert.ToHexStringLower(hash.GetHashAndReset()) }
 
-/// PdfPig's Open(Stream) leaves the caller's stream open.
+/// PdfPig's Open(Stream) leaves the caller's stream open. Failures reading the
+/// input are I/O errors, not evidence of a corrupt PDF, so they propagate; none
+/// of PdfPig's own exceptions derive from IOException.
 let private pageCount (input: Stream) =
     try
         use document = PdfDocument.Open(input)
         Ok document.NumberOfPages
     with
     | :? PdfDocumentEncryptedException -> Error Encrypted
-    | :? OperationCanceledException -> reraise ()
+    | :? OperationCanceledException
+    | :? IOException
+    | :? UnauthorizedAccessException -> reraise ()
     | _ -> Error Corrupt
 
 let validate : ValidatePdf =

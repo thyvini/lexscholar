@@ -5,6 +5,7 @@ open System.IO
 open System.Net
 open Microsoft.Data.Sqlite
 open Microsoft.EntityFrameworkCore
+open Microsoft.Extensions.Logging
 open LexScholar.Infrastructure
 open LexScholar.Server
 open LexScholar.Server.Tests.ProcessHarness
@@ -15,6 +16,18 @@ let private migrations directory =
     db.Database.GetAppliedMigrations() |> Seq.toList
 
 let private currentMigrations = [ "20261108000000_Initial"; "20261110000000_Projects"; "20261111000000_Documents" ]
+
+/// Records every log entry the host writes, with its level.
+type private CapturingLoggerProvider() =
+    let entries = System.Collections.Concurrent.ConcurrentQueue<LogLevel * string>()
+    member _.Entries = entries |> Seq.toList
+    interface ILoggerProvider with
+        member _.CreateLogger(_category) =
+            { new ILogger with
+                member _.BeginScope(_state) = null
+                member _.IsEnabled(_level) = true
+                member _.Log(level, _eventId, state, error, formatter) = entries.Enqueue((level, formatter.Invoke(state, error))) }
+        member _.Dispose() = ()
 
 [<Fact; Trait("Task", "T010")>]
 let ``host construction applies migrations before it starts listening`` () =
@@ -89,3 +102,29 @@ let ``real host process restarts with its migrated database intact`` () =
     use command = connection.CreateCommand()
     command.CommandText <- "SELECT value FROM test_marker"
     Assert.Equal("preserve", unbox<string> (command.ExecuteScalar()))
+
+[<Fact; Trait("Task", "T022")>]
+let ``startup cleanup finishes before serving and logs each quarantined original as a warning`` () =
+    use workspace = TemporaryWorkspace.Create()
+    let staging = Path.Combine(workspace.Root, "staging")
+    let originals = Path.Combine(workspace.Root, "originals")
+    Directory.CreateDirectory(staging) |> ignore
+    Directory.CreateDirectory(originals) |> ignore
+    File.WriteAllBytes(Path.Combine(staging, Guid.NewGuid().ToString("N")), [| 1uy |])
+    let orphan = Guid.NewGuid().ToString("N")
+    File.WriteAllBytes(Path.Combine(originals, orphan), [| 2uy |])
+    let provider = new CapturingLoggerProvider()
+    let builder = HostSetup.builder workspace.Root []
+    builder.Logging.AddProvider(provider) |> ignore
+    match Program.create builder false with
+    | Error error -> Assert.Fail($"Host creation unexpectedly rejected: {error}")
+    | Ok app ->
+        use app = app
+        // The host has not started, so no request can have been served yet.
+        Assert.False(app.Lifetime.ApplicationStarted.IsCancellationRequested)
+        Assert.Empty(Directory.EnumerateFileSystemEntries(staging))
+        Assert.False(File.Exists(Path.Combine(originals, orphan)))
+        Assert.True(File.Exists(Path.Combine(workspace.Root, "quarantine", orphan)))
+        let warnings = provider.Entries |> List.filter (fun (level, _) -> level = LogLevel.Warning) |> List.map snd
+        Assert.Contains(warnings, fun message -> message.Contains(orphan))
+        Assert.DoesNotContain(warnings, fun message -> message.Contains(workspace.Root))

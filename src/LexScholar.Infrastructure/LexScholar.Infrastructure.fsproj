@@ -11,7 +11,9 @@
     <Compile Include="Migrations/Documents.fs" />
     <Compile Include="ProjectRepository.fs" />
     <Compile Include="PdfValidator.fs" />
-    <Compile Include="ImportJournal.fs" />
+    <Compile Include="DocumentStore.fs" />
+    <Compile Include="LibraryRepository.fs" />
+    <Compile Include="StorageCleanup.fs" />
     <Compile Include="VerifiedDocumentContent.fs" />
     <ProjectReference Include="../LexScholar.Domain/LexScholar.Domain.fsproj" />
     <ProjectReference Include="../LexScholar.Application/LexScholar.Application.fsproj" />

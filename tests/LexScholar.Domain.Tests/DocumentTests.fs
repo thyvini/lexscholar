@@ -9,7 +9,14 @@ let private sha = "0fcd00dc1ad92711575dfde326cda6c56b8fd83b0a01462cab6bfd012dcbe
 let private importedUtc = DateTimeOffset(2026, 11, 9, 12, 0, 0, TimeSpan.Zero)
 
 let private create sha256 storageKey byteLength pageCount =
-    LibraryDocument.create id sha256 storageKey "valid.pdf" byteLength pageCount importedUtc
+    LibraryDocument.create
+        { Id = id
+          Sha256 = sha256
+          StorageKey = storageKey
+          OriginalFileName = "valid.pdf"
+          ByteLength = byteLength
+          PageCount = pageCount
+          ImportedUtc = importedUtc }
 
 let private assertResult<'a when 'a: equality> (expected: 'a) (actual: 'a) =
     Assert.True((expected = actual), sprintf "Expected: %A\nActual: %A" expected actual)
