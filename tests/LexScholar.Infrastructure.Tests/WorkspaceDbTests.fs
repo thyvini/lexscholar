@@ -92,7 +92,7 @@ let private applied directory =
     use db = WorkspaceDb.create directory
     db.Database.GetAppliedMigrations() |> Seq.toList
 
-let private currentMigrations = [ "20261108000000_Initial"; "20261110000000_Projects" ]
+let private currentMigrations = [ "20261108000000_Initial"; "20261110000000_Projects"; "20261111000000_Documents" ]
 
 let private databaseHandles databasePath =
     Directory.EnumerateFiles("/proc/self/fd")
@@ -119,8 +119,9 @@ let ``fresh database applies a migration and records its history`` () =
         Assert.Empty(db.Database.GetPendingMigrations())
         Assert.False(db.Database.HasPendingModelChanges())
     use connection = openConnection directory.Path
-    Assert.Equal(2L, unbox<int64> (scalar connection "SELECT count(*) FROM __EFMigrationsHistory"))
-    Assert.Equal(2L, unbox<int64> (scalar connection "SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__EF%'"))
+    Assert.Equal(int64 currentMigrations.Length, unbox<int64> (scalar connection "SELECT count(*) FROM __EFMigrationsHistory"))
+    // Workspaces, ResearchProjects, LibraryDocuments, ProjectDocuments.
+    Assert.Equal(4L, unbox<int64> (scalar connection "SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__EF%'"))
 
 [<Fact; Trait("Task", "T010")>]
 let ``reopening and repeated initialization preserve existing data and history`` () =
@@ -135,7 +136,7 @@ let ``reopening and repeated initialization preserve existing data and history``
     Assert.Equal<string list>(currentMigrations, applied directory.Path)
     use reopened = openConnection directory.Path
     Assert.Equal("preserve", unbox<string> (scalar reopened "SELECT value FROM test_marker"))
-    Assert.Equal(2L, unbox<int64> (scalar reopened "SELECT count(*) FROM __EFMigrationsHistory"))
+    Assert.Equal(int64 currentMigrations.Length, unbox<int64> (scalar reopened "SELECT count(*) FROM __EFMigrationsHistory"))
 
 [<Fact; Trait("Task", "T010")>]
 let ``an existing SQLite file without migration history is preserved`` () =

@@ -5,6 +5,7 @@ open System.Globalization
 open System.IO
 open Microsoft.Data.Sqlite
 open Microsoft.EntityFrameworkCore
+open Microsoft.EntityFrameworkCore.Metadata.Builders
 open Microsoft.EntityFrameworkCore.Storage.ValueConversion
 open Microsoft.FSharp.Linq.RuntimeHelpers
 
@@ -88,6 +89,24 @@ type WorkspaceDb(options: DbContextOptions) =
         project.HasIndex([| "WorkspaceId"; "NormalizedName" |]).IsUnique() |> ignore
         project.HasOne<WorkspaceRow>().WithMany().HasForeignKey("WorkspaceId").OnDelete(DeleteBehavior.Restrict) |> ignore
         workspace.HasOne<ResearchProjectRow>().WithMany().HasForeignKey("Id", "ActiveProjectId").HasPrincipalKey("WorkspaceId", "Id").OnDelete(DeleteBehavior.Restrict) |> ignore
+        let document = model.Entity<LibraryDocumentRow>()
+        document.ToTable("LibraryDocuments", fun (table: TableBuilder<LibraryDocumentRow>) ->
+            table.HasCheckConstraint("CK_LibraryDocuments_ByteLength", "ByteLength > 0") |> ignore
+            table.HasCheckConstraint("CK_LibraryDocuments_PageCount", "PageCount > 0") |> ignore) |> ignore
+        document.HasKey("Id") |> ignore
+        document.Property<Guid>("Id").ValueGeneratedNever() |> ignore
+        document.Property<string>("Sha256").IsRequired() |> ignore
+        document.Property<string>("StorageKey").IsRequired() |> ignore
+        document.Property<string>("OriginalFileName").IsRequired() |> ignore
+        document.HasIndex([| "Sha256" |]) |> ignore
+        document.HasIndex([| "StorageKey" |]).IsUnique() |> ignore
+        let association = model.Entity<ProjectDocumentRow>()
+        association.ToTable("ProjectDocuments", fun (table: TableBuilder<ProjectDocumentRow>) ->
+            table.HasCheckConstraint("CK_ProjectDocuments_Role", "Role IN ('FocusedSource', 'ReferenceSource')") |> ignore) |> ignore
+        association.HasKey("ProjectId", "DocumentId") |> ignore
+        association.Property<string>("Role").IsRequired() |> ignore
+        association.HasOne<ResearchProjectRow>().WithMany().HasForeignKey("ProjectId").OnDelete(DeleteBehavior.Restrict) |> ignore
+        association.HasOne<LibraryDocumentRow>().WithMany().HasForeignKey("DocumentId").OnDelete(DeleteBehavior.Restrict) |> ignore
 
 module WorkspaceDb =
     let databasePath dataDirectory = Path.Combine(dataDirectory, "workspace.sqlite")
