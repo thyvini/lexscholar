@@ -4,5 +4,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="Projects.fs" />
+    <Compile Include="Documents.fs" />
   </ItemGroup>
 </Project>

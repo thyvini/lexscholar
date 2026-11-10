@@ -55,9 +55,9 @@ let ``existing project and library capabilities remain individually consumable``
     let library : LibraryOperations =
         { List = fun token -> libraryToken <- token; Task.FromResult([])
           Import = fun _ _ _ -> notImplemented<ImportResult>()
-          ListForProject = fun _ _ -> notImplemented<ProjectDocument list>()
-          Associate = fun _ _ _ _ -> notImplemented<ProjectDocument>()
-          ChangeRole = fun _ _ _ _ -> notImplemented<ProjectDocument>()
+          ListForProject = fun _ _ -> notImplemented<ProjectDocumentView list>()
+          Associate = fun _ _ _ _ -> notImplemented<ProjectDocumentView>()
+          ChangeRole = fun _ _ _ _ -> notImplemented<ProjectDocumentView>()
           RemoveAssociation = fun _ _ _ -> notImplemented<unit>() }
     let readProjects (list: CancellationToken -> Task<ProjectList>) = list cancellation.Token
     let readLibrary (list: CancellationToken -> Task<Document list>) = list cancellation.Token
@@ -130,7 +130,7 @@ let ``validation and cancelled import leave caller-owned inputs open`` () =
         Assert.Same(input, source)
         Assert.Equal(limits, actualLimits)
         Assert.Equal(cancellation.Token, token)
-        Task.FromResult({ Sha256 = "test"; ByteLength = 1L; PageCount = 1 })
+        Task.FromResult(Ok { Sha256 = "test"; ByteLength = 1L; PageCount = 1 })
     validate input limits cancellation.Token |> fun operation -> operation.GetAwaiter().GetResult() |> ignore
     Assert.False(input.Disposed)
     cancellation.Cancel()

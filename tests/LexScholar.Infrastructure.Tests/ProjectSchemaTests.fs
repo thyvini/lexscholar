@@ -1,34 +1,13 @@
 module LexScholar.Infrastructure.Tests.ProjectSchemaTests
 
 open System
-open System.IO
 open Microsoft.Data.Sqlite
 open Microsoft.EntityFrameworkCore
 open Microsoft.EntityFrameworkCore.Infrastructure
 open Microsoft.EntityFrameworkCore.Migrations
 open LexScholar.Infrastructure
+open LexScholar.Infrastructure.Tests.SchemaTestSupport
 open Xunit
-
-type private TemporaryDirectory() =
-    let path = Path.Combine(Path.GetTempPath(), "lexscholar-schema-tests", Guid.NewGuid().ToString("N"))
-    do Directory.CreateDirectory(path) |> ignore
-    member _.Path = path
-    interface IDisposable with member _.Dispose() = Directory.Delete(path, true)
-
-let private openConnection directory =
-    let connection = new SqliteConnection(WorkspaceDb.connectionString directory)
-    connection.Open()
-    connection
-
-let private execute (connection: SqliteConnection) sql =
-    use command = connection.CreateCommand()
-    command.CommandText <- sql
-    command.ExecuteNonQuery() |> ignore
-
-let private scalar (connection: SqliteConnection) sql =
-    use command = connection.CreateCommand()
-    command.CommandText <- sql
-    command.ExecuteScalar()
 
 let private requireSchema (connection: SqliteConnection) =
     for table in [ "Workspaces"; "ResearchProjects" ] do
@@ -42,16 +21,6 @@ let private initialized directory =
     with _ -> connection.Dispose(); reraise()
     connection
 
-let private addWorkspace (connection: SqliteConnection) (id: Guid) =
-    execute connection $"INSERT INTO Workspaces (Id, ActiveProjectId, CreatedUtc) VALUES ('{id:D}', NULL, '2026-05-17T12:34:56.0000000Z')"
-
-let private addProject (connection: SqliteConnection) (id: Guid) (workspace: Guid) name =
-    execute connection $"INSERT INTO ResearchProjects (Id, WorkspaceId, Name, NormalizedName, CreatedUtc) VALUES ('{id:D}', '{workspace:D}', '{name}', '{name}', '2026-05-17T12:34:56.0000000Z')"
-
-let private assertConstraint action =
-    let error = Assert.Throws<SqliteException>(Action(action))
-    Assert.Equal(19, error.SqliteErrorCode)
-
 [<Fact; Trait("Task", "T015")>]
 let ``fresh database applies project migration and snapshot matches`` () =
     use directory = new TemporaryDirectory()
@@ -59,7 +28,9 @@ let ``fresh database applies project migration and snapshot matches`` () =
     use connection = openConnection directory.Path
     requireSchema connection
     use db = WorkspaceDb.create directory.Path
-    Assert.Equal<string list>([ "20261108000000_Initial"; "20261110000000_Projects" ], db.Database.GetAppliedMigrations() |> Seq.toList)
+    let applied = db.Database.GetAppliedMigrations() |> Seq.toList
+    Assert.Contains("20261108000000_Initial", applied)
+    Assert.Contains("20261110000000_Projects", applied)
     Assert.Empty(db.Database.GetPendingMigrations())
     Assert.False(db.Database.HasPendingModelChanges())
 
@@ -77,7 +48,7 @@ let ``upgrade from T010 preserves data and initialization is idempotent`` () =
     use connection = openConnection directory.Path
     Assert.Equal("preserve", scalar connection "SELECT value FROM test_marker" :?> string)
     requireSchema connection
-    Assert.Equal(2L, scalar connection "SELECT count(*) FROM __EFMigrationsHistory" :?> int64)
+    Assert.Equal(2L, scalar connection "SELECT count(*) FROM __EFMigrationsHistory WHERE MigrationId IN ('20261108000000_Initial', '20261110000000_Projects')" :?> int64)
     use db = WorkspaceDb.create directory.Path
     Assert.Empty(db.Database.GetPendingMigrations())
     Assert.False(db.Database.HasPendingModelChanges())

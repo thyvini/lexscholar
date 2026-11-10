@@ -51,6 +51,22 @@ type ResearchProjectRow() =
     member val NormalizedName = "" with get, set
     member val CreatedUtc = DateTimeOffset.MinValue with get, set
 
+type LibraryDocumentRow() =
+    member val Id = Guid.Empty with get, set
+    member val Sha256 = "" with get, set
+    member val StorageKey = "" with get, set
+    member val OriginalFileName = "" with get, set
+    member val ByteLength = 0L with get, set
+    member val PageCount = 0 with get, set
+    member val ImportedUtc = DateTimeOffset.MinValue with get, set
+
+type ProjectDocumentRow() =
+    member val ProjectId = Guid.Empty with get, set
+    member val DocumentId = Guid.Empty with get, set
+    /// `FocusedSource` or `ReferenceSource`, enforced by a CHECK constraint.
+    member val Role = "" with get, set
+    member val AddedUtc = DateTimeOffset.MinValue with get, set
+
 type WorkspaceDb(options: DbContextOptions) =
     inherit DbContext(options)
     override _.ConfigureConventions(builder: ModelConfigurationBuilder) =

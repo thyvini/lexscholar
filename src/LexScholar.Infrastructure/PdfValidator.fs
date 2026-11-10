@@ -1,7 +1,7 @@
 module LexScholar.Infrastructure.PdfValidator
 
-open System
 open LexScholar.Application
 
+// RED stub: accepts everything without reading the input (T027).
 let validate : ValidatePdf =
-    fun _ _ _ -> task { return raise (NotImplementedException("PDF validation is not implemented.")) }
+    fun _ _ _ -> task { return Ok { Sha256 = ""; ByteLength = 0L; PageCount = 0 } }

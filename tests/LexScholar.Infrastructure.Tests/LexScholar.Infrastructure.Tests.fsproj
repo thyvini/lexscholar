@@ -8,10 +8,14 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../RunnerSmoke.fs" Link="RunnerSmoke.fs" />
+    <Compile Include="SchemaTestSupport.fs" />
     <Compile Include="WorkspaceDbTests.fs" />
     <Compile Include="ProjectSchemaTests.fs" />
     <Compile Include="ProjectPersistenceTests.fs" />
+    <Compile Include="DocumentSchemaTests.fs" />
+    <Compile Include="PdfValidationTests.fs" />
     <ProjectReference Include="../../src/LexScholar.Infrastructure/LexScholar.Infrastructure.fsproj" />
     <PackageReference Include="xunit.v3" />
+    <None Include="../Fixtures/*" LinkBase="Fixtures" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
