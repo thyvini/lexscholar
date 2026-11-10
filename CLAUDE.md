@@ -33,7 +33,9 @@ The full suite includes the browser tests, and they **fail** (not skip) when the
 - Plan first and wait for approval. Keep changes to what the task asks for; record new technology choices in `research.md` with rationale and alternatives (constitution VI).
 - If a task looks over-specified or conflicts with constitution Principle V (simplicity), say so and ask before implementing. Do not add requirements or safeguards beyond what the spec and task ask for.
 - Do not edit `.specify/memory/constitution.md` unless explicitly asked. This includes when a Spec Kit skill (constitution, analyze, converge) proposes an amendment: report the proposed change and wait for a decision.
-- Do not create, edit or close Codecks cards.
+- Codecks: only the agent-team lead updates the existing F001 cards (status and comments, per the `f001-team` skill). Never create, delete or archive cards.
+- Before a PR is merged, Greptile's review must have completed on the PR's current head commit (`scripts/wait-for-greptile.sh <pr>`), and every P0/P1 finding must be fixed or answered on its thread with evidence that it doesn't apply.
+- Agent team: start it with `claude --settings .claude/team-settings.json`, then run `/f001-team`. Roles are in `.claude/agents/`; teammates work in their own git worktrees under `.claude/worktrees/` (git-ignored).
 - Test first: capture a meaningful RED (failing assertions, not just a compile error), then GREEN. Tag tests with `Trait("Task", "Txxx")`.
 - Record verification in `specs/001-research-workspace/evidence/txxx-<topic>.md`: commands run, RED and GREEN results, test counts, environment details, and limitations. Follow the existing evidence files. Then tick the task in `tasks.md` with a link to the evidence.
 - Before finishing: restore and build with `-warnaserror` (zero warnings), and the full suite passes with zero skips.
