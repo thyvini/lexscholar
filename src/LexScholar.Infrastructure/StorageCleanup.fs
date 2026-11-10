@@ -4,8 +4,10 @@ module LexScholar.Infrastructure.StorageCleanup
 
 open System.IO
 
-/// What cleanup changed. Quarantined holds storage keys (file names), never paths.
-type CleanupReport = { DeletedStagingFiles: int; Quarantined: string list }
+/// What cleanup changed. Quarantined and Conflicting hold storage keys (file
+/// names), never paths. Conflicting keys are unreferenced originals left in place
+/// because quarantine already holds different bytes under the same key.
+type CleanupReport = { DeletedStagingFiles: int; Quarantined: string list; Conflicting: string list }
 
 /// Deletes all staging contents (no import is in progress at startup) and moves
 /// stored originals that no document row references to quarantine/, without
@@ -25,4 +27,4 @@ let run (dataDirectory: string) : CleanupReport =
             if not (referenced.Contains key) then
                 File.Move(path, Path.Combine(quarantine, key), false)
                 yield key ]
-    { DeletedStagingFiles = leftovers.Length; Quarantined = quarantined }
+    { DeletedStagingFiles = leftovers.Length; Quarantined = quarantined; Conflicting = [] }

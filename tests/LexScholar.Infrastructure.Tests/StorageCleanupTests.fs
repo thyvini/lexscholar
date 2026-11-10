@@ -113,3 +113,31 @@ let ``a second cleanup changes nothing`` () =
     Assert.Equal<string list>([ kept ], entries workspace.Originals)
     Assert.Equal<string list>([ orphan ], entries workspace.Quarantine)
     Assert.Empty(entries workspace.Staging)
+
+[<Fact; Trait("Task", "T022")>]
+let ``an interrupted quarantine move is completed on the next startup`` () =
+    use workspace = new Workspace()
+    let orphan = newKey ()
+    let bytes = [| 9uy; 8uy; 7uy |]
+    // A move interrupted between linking the quarantine name and unlinking the
+    // original leaves the same bytes under both names.
+    writeFile workspace.Originals orphan bytes UnixFileMode.UserRead |> ignore
+    writeFile workspace.Quarantine orphan bytes UnixFileMode.UserRead |> ignore
+    let report = StorageCleanup.run workspace.Path
+    Assert.Equal<string list>([ orphan ], report.Quarantined)
+    Assert.Empty(report.Conflicting)
+    Assert.Empty(entries workspace.Originals)
+    Assert.Equal<string list>([ orphan ], entries workspace.Quarantine)
+    Assert.Equal<byte array>(bytes, File.ReadAllBytes(Path.Combine(workspace.Quarantine, orphan)))
+
+[<Fact; Trait("Task", "T022")>]
+let ``a different file already in quarantine under the same key keeps both files`` () =
+    use workspace = new Workspace()
+    let orphan = newKey ()
+    writeFile workspace.Originals orphan [| 1uy; 2uy |] UnixFileMode.UserRead |> ignore
+    writeFile workspace.Quarantine orphan [| 3uy; 4uy |] UnixFileMode.UserRead |> ignore
+    let report = StorageCleanup.run workspace.Path
+    Assert.Empty(report.Quarantined)
+    Assert.Equal<string list>([ orphan ], report.Conflicting)
+    Assert.Equal<byte array>([| 1uy; 2uy |], File.ReadAllBytes(Path.Combine(workspace.Originals, orphan)))
+    Assert.Equal<byte array>([| 3uy; 4uy |], File.ReadAllBytes(Path.Combine(workspace.Quarantine, orphan)))
