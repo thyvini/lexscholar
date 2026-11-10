@@ -70,10 +70,14 @@ let ``caller streams verified content and owns the returned handle`` () =
         Assert.Equal(id, documentId)
         Assert.Equal(cancellation.Token, token)
         observed <- true
-        Task.FromResult({ Stream = stream :> Stream; ByteLength = int64 bytes.Length; OriginalFileName = "example.pdf" })
+        Task.FromResult(Ok { Stream = stream :> Stream; ByteLength = int64 bytes.Length; OriginalFileName = "example.pdf" })
     let consume (openRead: OpenVerifiedContent) =
         task {
-            let! content = openRead id cancellation.Token
+            let! opened = openRead id cancellation.Token
+            let content =
+                match opened with
+                | Ok content -> content
+                | Error failure -> failwithf "Expected content, got %A." failure
             Assert.False(stream.Disposed)
             use owned = content.Stream
             Assert.False(owned.CanWrite)

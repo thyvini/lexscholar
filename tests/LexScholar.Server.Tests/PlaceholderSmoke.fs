@@ -25,8 +25,7 @@ let ``functional capabilities fault explicitly without performing domain behavio
               (fun () -> library.ListForProject Guid.Empty ct :> Task)
               (fun () -> library.Associate Guid.Empty Guid.Empty FocusedSource ct :> Task)
               (fun () -> library.ChangeRole Guid.Empty Guid.Empty ReferenceSource ct :> Task)
-              (fun () -> library.RemoveAssociation Guid.Empty Guid.Empty ct :> Task)
-              (fun () -> VerifiedDocumentContent.openRead Guid.Empty ct :> Task) ]
+              (fun () -> library.RemoveAssociation Guid.Empty Guid.Empty ct :> Task) ]
         for invoke in operations do
             let! error = Assert.ThrowsAsync<NotImplementedException>(Func<Task>(invoke))
             Assert.Contains("not implemented", error.Message)
