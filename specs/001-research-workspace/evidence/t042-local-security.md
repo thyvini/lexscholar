@@ -21,7 +21,7 @@ Following Principle V and the lead's approval (2026-11-11), the file adds only w
 
 ## Environment
 
-CachyOS (Linux 7.3.3-1-cachyos), .NET SDK 10.0.114, Microsoft.Playwright 1.64.1. Base `b96caa4` (release/0.1.0 after #24). Tests ran as uid 1000.
+CachyOS (Linux 7.3.3-1-cachyos), .NET SDK 10.0.114, Microsoft.Playwright 1.64.1. Written on `b96caa4` (release/0.1.0 after #24) and rebased onto `21f1fde` (after #23); the full suite was re-run there with the same result. Tests ran as uid 1000.
 
 ## No committed RED
 
