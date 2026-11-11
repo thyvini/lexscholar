@@ -10,8 +10,8 @@ open LexScholar.Server.Tests
 
 // Real-browser reader and role journeys (T040) against an isolated in-process
 // host serving the WebAssembly client. These tests check the frame URL and PDF
-// delivery, not native viewer rendering or navigation. Manual navigation remains
-// outstanding; see the T040 evidence for its status and procedure.
+// delivery, not native viewer rendering or navigation. Navigation was checked
+// manually and accepted by the owner; see the T040 evidence for the procedure.
 // Only Playwright's auto-waiting assertions are used; there are no sleeps.
 
 let private withBrowser (name: string) (journey: IBrowser -> Task) : Task = task {

@@ -283,3 +283,9 @@ This is an **evidence-based documentation review**, not a fresh test run, releas
 | Outstanding scope and governance | Formal SC-001/006 researcher usability deferred to beta (T046); whole-library export/deletion remains tracked in F002 (Codecks $12y); unavailable-original repair UI remains deferred | Explicit limitations; full Principle II compliance is not claimed |
 
 **Conclusion:** The existing evidence supports treating F001 as a *technical development milestone candidate* with a disclosed usability-validation deferral. This is **not** proof that all F001 success criteria have passed. Before integrating `release/0.1.0` into `main` or cutting a release, rerun the Release restore/build and full solution suite on the final branch, separately check the out-of-solution SC-002 corpus if release policy requires a fresh corpus run, review any failing checks and obtain the usual human merge approval. This documentation change does not itself execute tests or authorize a merge.
+
+## Known issues after the milestone
+
+| Issue | Effect | Source | Status |
+|---|---|---|---|
+| Removing the document that is open in the reader leaves the reader open if the follow-up project list request fails. The reader follows the association list, which only updates when that request succeeds; a content check still in flight can also reopen the removed document. | The removal itself succeeds and is stored. The reader keeps showing a document that is no longer associated with the project until the list next loads (for example after **Refresh**). | Greptile, [PR #31](https://github.com/thyvini/lexscholar/pull/31) (P2, `src/LexScholar.Client/App.fs`) | Open. Suggested fix: on a successful removal, close the reader for that document and ignore pending content checks for it, without waiting for the list response. Needs a test-first client change. |

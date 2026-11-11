@@ -31,7 +31,7 @@ T040 combines these manually reported acceptance observations with the separatel
 ### Reproduction procedure
 
 1. On a Linux desktop, open LexScholar in Firefox and Chromium using each browser's native PDF viewer, not an external PDF application. Start LexScholar with an isolated workspace.
-2. Create a project, import `tests/Fixtures/valid.pdf` (two pages, SHA-256 `0fcd00dc1ad92711575dfde326cda6c56b8fd83b0e01462cab6bfd012dcbe93b`), associate it, and click **Open**.
+2. Create a project, import `tests/Fixtures/valid.pdf` (two pages, SHA-256 `0fcd00dc1ad92711575dfde326cda6c56b8fd83b0a01462cab6bfd012dcbe93b`), associate it, and click **Open**.
 3. Confirm PDF pages render, navigate from page 1 to page 2, and attempt navigating before page 1 and after page 2. The viewer must keep navigation within pages 1–2.
 4. Record the actual desktop browser versions and observed results separately from the Playwright/API results.
 
