@@ -81,15 +81,23 @@ let ``100 consecutive restarts keep every project, document, association and the
         let valid = upload client "valid.pdf"
         let distinct = upload client "distinct.pdf"
         for project, document, role in [ projectA, valid, "FocusedSource"; projectA, distinct, "ReferenceSource"
-                                         projectB, valid, "ReferenceSource"; projectB, distinct, "FocusedSource" ] do
+                                         projectB, valid, "FocusedSource"; projectB, distinct, "ReferenceSource" ] do
             use response = send client HttpMethod.Post $"/api/projects/{project}/documents" (Some $"""{{"documentId":"{document}","role":"{role}"}}""")
             expect HttpStatusCode.Created response |> ignore
         use changed = send client HttpMethod.Patch $"/api/projects/{projectA}/documents/{valid}" (Some """{"role":"ReferenceSource"}""")
         expect HttpStatusCode.OK changed |> ignore
-        use removed = send client HttpMethod.Delete $"/api/projects/{projectB}/documents/{distinct}" None
+        use removed = send client HttpMethod.Delete $"/api/projects/{projectA}/documents/{distinct}" None
         expect HttpStatusCode.NoContent removed |> ignore
         use selected = send client HttpMethod.Put $"/api/projects/{projectA}/active" None
         expect HttpStatusCode.NoContent selected |> ignore
+        // Both roles survive, and one document has a different role in each
+        // project, so a role reset in either direction would be detected.
+        let roles project =
+            use listing = JsonDocument.Parse(get client $"/api/projects/{project}/documents")
+            [ for item in listing.RootElement.EnumerateArray() ->
+                item.GetProperty("document").GetProperty("id").GetGuid(), item.GetProperty("role").GetString() ] |> set
+        Assert.Equal<Set<Guid * string>>(set [ valid, "ReferenceSource" ], roles projectA)
+        Assert.Equal<Set<Guid * string>>(set [ valid, "FocusedSource"; distinct, "ReferenceSource" ], roles projectB)
         projectA, projectB, observe client
     let _, projects, documents, associations, hashes = expected
     Assert.Equal(2, projects.Length)

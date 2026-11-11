@@ -63,6 +63,7 @@ let ``lowered limits keep an imported PDF readable and reject new over-limit imp
         Assert.Equal(listing, harness.Client.GetStringAsync("/api/documents").GetAwaiter().GetResult())
         use tooLarge = upload harness.Client "distinct.pdf"
         expectProblem HttpStatusCode.RequestEntityTooLarge "upload_too_large" tooLarge
+        Assert.Equal<byte array>(original, harness.Client.GetByteArrayAsync($"/api/documents/{id}/content").GetAwaiter().GetResult())
     Assert.True((storedRows = rows workspace.Root), "Library rows changed.")
     Assert.Equal<string list>(storedFiles, originals workspace.Root)
     // Default byte limit, page limit still 1: limits are checked on every
@@ -73,5 +74,6 @@ let ``lowered limits keep an imported PDF readable and reject new over-limit imp
         expectProblem HttpStatusCode.UnprocessableEntity "page_limit_exceeded" reimport
         use content = harness.Client.GetAsync($"/api/documents/{id}/content").GetAwaiter().GetResult()
         Assert.Equal(HttpStatusCode.OK, content.StatusCode)
+        Assert.Equal<byte array>(original, content.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult())
     Assert.True((storedRows = rows workspace.Root), "Library rows changed.")
     Assert.Equal<string list>(storedFiles, originals workspace.Root)

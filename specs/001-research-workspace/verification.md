@@ -194,7 +194,7 @@ These results come from the default automated suite (`dotnet test --solution Lex
 **Result: 100 of 100 consecutive restarts consistent.** Recorded on 2026-11-11, T041; see [evidence](evidence/t041-restart-cycles.md).
 
 The test `RestartTests` "100 consecutive restarts keep every project, document, association and the active project" (`tests/LexScholar.Server.Tests/RestartTests.fs`) works as follows:
-- **Setup:** over HTTP, on one temporary workspace, it creates 2 projects, imports 2 PDFs, makes 4 associations with different roles, changes one role, removes one association, and selects an active project.
+- **Setup:** over HTTP, on one temporary workspace, it creates 2 projects, imports 2 PDFs, makes 4 associations, changes one role, removes one association, and selects an active project. The three surviving associations include both roles, and one document has a different role in each project. These roles are asserted once before the snapshot, so a role reset in either direction is detected.
 - **Each of 100 cycles:** it stops the in-process host and starts a new one on the same workspace. It then checks, through the API, that these are unchanged:
   - the active project;
   - every project (id, name, creation time);
@@ -204,7 +204,7 @@ The test `RestartTests` "100 consecutive restarts keep every project, document, 
 - **Active project:** each cycle selects the other project, so restoring the last active project is checked on every restart, not just the same value 100 times.
 - **On failure,** the message names the first failing cycle.
 
-Run time: about 12 s for the 100 cycles. Real child-process restarts are covered separately, by the `ProcessHarness` lock and startup tests.
+Run time: about 12 s for the 100 cycles. Real child-process restarts are covered separately by the `ProcessHarness` tests, but only for lock release and startup, not for persistence.
 
 ### SC-008: import limits across configurations
 
@@ -212,7 +212,7 @@ Run time: about 12 s for the 100 cycles. Real child-process restarts are covered
 
 | Check | Test |
 |---|---|
-| After both limits are lowered below an imported PDF's size and page count (700 bytes, 1 page, for a 753-byte, 2-page PDF) and the host restarts, the existing PDF opens with identical bytes and the same listing. A new 753-byte PDF is rejected with 413 `upload_too_large`. Re-uploading the existing PDF with a 1-page limit is rejected with 422 `page_limit_exceeded`. Library rows and stored originals are unchanged. | `LimitRestartTests` "lowered limits keep an imported PDF readable and reject new over-limit imports" (T041) |
+| After both limits are lowered below an imported PDF's size and page count (700 bytes, 1 page, for a 753-byte, 2-page PDF) and the host restarts, the existing PDF opens with identical bytes and the same listing. A new 753-byte PDF is rejected with 413 `upload_too_large`. Re-uploading the existing PDF with a 1-page limit is rejected with 422 `page_limit_exceeded`. After each rejection the existing PDF's served bytes still equal the original, and library rows and stored originals are unchanged. | `LimitRestartTests` "lowered limits keep an imported PDF readable and reject new over-limit imports" (T041) |
 | Over-limit and invalid uploads over HTTP are rejected with contract codes and no changes, including re-imports under the current limits. | `LibraryContractTests` "POST rejects invalid or over-limit uploads safely and changes nothing" (T023) |
 | The byte and page boundaries: exactly at the limit is accepted, one over is rejected, and an oversized upload is read only up to MaxBytes + 1. | `PdfValidationTests` (T020) |
 | Default limits; positive overrides; malformed, zero or negative limits stop startup with a typed diagnostic. | `ConfigurationTests` (T005) |
