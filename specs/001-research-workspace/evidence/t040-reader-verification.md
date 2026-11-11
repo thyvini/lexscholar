@@ -15,11 +15,13 @@ Restore passed; build passed with **0 warnings and 0 errors**. The existing T040
 
 The journeys cover project-specific role changes and project isolation, reader frame open/close and closing on project switch, and clear missing, wrong-length and unreadable-file feedback with records preserved. The open journey checks frame attributes and independently requests exact original bytes. It does **not** establish native PDF rendering or page navigation. The unreadable test verifies that mode 000 actually prevents a read; it ran as an unprivileged user.
 
-## Native viewer navigation — not performed
+## Native viewer navigation — owner confirmation received; detailed record pending
 
-No interactive browser/computer-use tool was available in this session. No viewer navigation, page boundary or manual result was observed. Consequently T040 remains unchecked; passing the automated journeys is not evidence that either native viewer meets the navigation acceptance behavior. This is not T046 participant usability evidence.
+The original automated testing agent had no interactive browser/computer-use tool and did not observe native viewer navigation. **On 2026-11-11, the project owner subsequently reported manually testing Firefox and Chromium and confirmed that both work.** This is a human observation, separate from the 12 automated journeys, but the exact installed desktop browser versions, observed page indicators and out-of-range navigation outcomes were not supplied with that confirmation. Preserve this distinction: do not attribute the result to the agent or assume the installed Playwright test-browser versions match the user's interactive browsers.
 
-### Reproducible procedure for a future observer
+The recorded T040 requirement still calls for exact browser versions and page-boundary observations for both browsers. T040 stays unchecked pending those details. This report is not an unassisted-researcher T046 usability evaluation.
+
+### Reproducible procedure and details to capture
 
 1. On a Linux desktop with Firefox and Chromium, record browser names and exact versions. Use the default native PDF viewer in each browser, not an external PDF application. Start LexScholar using an isolated temporary data directory; for example, from the repository root, run `LexScholar__DataDirectory="$(mktemp -d)" dotnet run --project src/LexScholar.Server` and open the reported loopback URL. Do not use a research workspace for this check.
 2. Create and select a project, import `tests/Fixtures/valid.pdf`, associate it with the project, and select **Open**. The fixture has two pages and SHA-256 `0fcd00dc1ad92711575dfde326cda6c56b8fd83b0e01462cab6bfd012dcbe93b`.
