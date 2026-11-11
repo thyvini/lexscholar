@@ -1,4 +1,4 @@
-# T040 — reader verification (incomplete)
+# T040 — reader verification (complete with owner-reported manual acceptance)
 
 ## Automated results, 2026-11-11
 
@@ -35,6 +35,6 @@ T040 combines these manually reported acceptance observations with the separatel
 3. Confirm PDF pages render, navigate from page 1 to page 2, and attempt navigating before page 1 and after page 2. The viewer must keep navigation within pages 1–2.
 4. Record the actual desktop browser versions and observed results separately from the Playwright/API results.
 
-## Separate decision: T029 failure wording
+## Subsequent disposition: T029 failure wording
 
-T029 says failed imports add no stored originals, while historical [T021–T029 evidence](t021-t029-import-staging-and-cleanup.md) records owner approval to retain a promoted orphan until startup quarantine. Insert acknowledgement failure may also occur after a row has committed, so indiscriminate deletion could remove referenced bytes. Reconciliation of the wording and intended semantics requires project-owner approval. This verification does not change the approved import behavior or resolve that decision.
+At the time of the original T040 investigation, T029's literal wording conflicted with the already approved exception for post-promotion insert errors; see [historical decision](t021-t029-import-staging-and-cleanup.md) and [post-promotion regression evidence](fix-import-insert-failure-investigation.md). The project owner approved reconciliation on 2026-11-11 and PR #33 updated `tasks.md` and `plan.md` to match the safe recovery behavior. No runtime import behavior was changed by that documentation resolution.
