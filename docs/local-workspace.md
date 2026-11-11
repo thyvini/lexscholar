@@ -2,8 +2,6 @@
 
 This page explains where LexScholar keeps your research projects and PDFs, how it handles them, and which controls are not available yet.
 
-> **Status:** importing PDFs, the shared library and reading in the browser are still being built in this release (F001). This page describes how your data is stored and handled; some of that behavior becomes visible only once those parts are finished.
-
 ## Where your data is stored
 
 LexScholar keeps everything in one folder on your computer, the **data directory**:
@@ -17,6 +15,8 @@ LexScholar keeps everything in one folder on your computer, the **data directory
   ```
 
   The path must be absolute. It cannot be the filesystem root or an existing file. LexScholar refuses to start and says why if the path is not usable.
+
+  Run these commands from the folder LexScholar was published to, or add `--contentRoot <that folder>`. Started anywhere else, LexScholar still runs, but the browser app does not load: its files are not found.
 
 To see which folder a running LexScholar uses, look at its console output when it starts. One of the first messages names it:
 
