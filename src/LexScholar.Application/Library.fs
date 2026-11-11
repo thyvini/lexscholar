@@ -35,7 +35,8 @@ type Store =
 /// The content route for a document; derived from its UUID, never a storage path.
 let contentUrl (documentId: Guid) = $"/api/documents/{documentId:D}/content"
 
-let private documentView (document: LexScholar.Domain.LibraryDocument) : Document =
+/// The contract view of a library document.
+let documentView (document: LexScholar.Domain.LibraryDocument) : Document =
     { Id = document.Id
       OriginalFileName = document.OriginalFileName
       ByteLength = document.ByteLength
