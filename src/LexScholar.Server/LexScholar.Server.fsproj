@@ -8,6 +8,7 @@
     <Compile Include="Errors.fs" />
     <Compile Include="HostSecurity.fs" />
     <Compile Include="ProjectEndpoints.fs" />
+    <Compile Include="LibraryEndpoints.fs" />
     <Compile Include="Endpoints.fs" />
     <Compile Include="Program.fs" />
     <ProjectReference Include="../LexScholar.Client/LexScholar.Client.fsproj" />
