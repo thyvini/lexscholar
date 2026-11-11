@@ -6,6 +6,8 @@ open System
 open System.IO
 open System.Threading
 open System.Threading.Tasks
+open Microsoft.Data.Sqlite
+open Microsoft.EntityFrameworkCore
 open LexScholar.Application
 open LexScholar.Application.ImportDocument
 open LexScholar.Domain
@@ -538,3 +540,57 @@ let ``changing a role for an unknown project or an unassociated document is reje
     assertResult (Error DocumentRoles.RoleChangeError.AssociationNotFound) (changeRole project unassociated.Id ReferenceSource)
     assertResult before (associations workspace.Path)
     assertResult (set [ document; unassociated ]) (rows workspace.Path |> Set.ofList)
+
+/// Every column, including timestamps and active selection, not just roles.
+let private roleSnapshot directory =
+    use connection = openConnection directory
+    [ for table, order in [ "Workspaces", "Id"; "ResearchProjects", "Id"; "LibraryDocuments", "Id"; "ProjectDocuments", "ProjectId, DocumentId" ] do
+        use command = connection.CreateCommand()
+        command.CommandText <- $"SELECT * FROM {table} ORDER BY {order}"
+        use reader = command.ExecuteReader()
+        yield table, [ while reader.Read() do yield [ for i in 0 .. reader.FieldCount - 1 -> string (reader.GetValue(i)) ] ] ]
+
+[<Theory; InlineData(false); InlineData(true); Trait("Task", "T036")>]
+let ``an association deleted at the role update is not found and preserves unrelated data`` (abortUpdate: bool) =
+    use workspace = new Workspace()
+    let store = libraryStore workspace.Path
+    let document = importDocument workspace.Path "valid.pdf"
+    let unrelated = importDocument workspace.Path "distinct.pdf"
+    let projects = addProjects workspace.Path 2
+    let target = Library.associate store projects[0] document.Id FocusedSource |> associated
+    let other = Library.associate store projects[1] document.Id ReferenceSource |> associated
+    let sameProject = Library.associate store projects[0] unrelated.Id FocusedSource |> associated
+    let before = roleSnapshot workspace.Path
+    use connection = openConnection workspace.Path
+    // A BEFORE trigger gives deterministic read -> delete -> zero-row UPDATE
+    // ordering without a production hook or scheduling a competing request.
+    let body =
+        if abortUpdate then "SELECT RAISE(ABORT, 'role update denied');"
+        else $"DELETE FROM ProjectDocuments WHERE ProjectId = '{projects[0]:D}' AND DocumentId = '{document.Id:D}'; SELECT RAISE(IGNORE);"
+    execute connection $"CREATE TRIGGER remove_before_role_update BEFORE UPDATE OF Role ON ProjectDocuments WHEN OLD.ProjectId = '{projects[0]:D}' AND OLD.DocumentId = '{document.Id:D}' BEGIN {body} END"
+    let outcome =
+        try Choice1Of2 (DocumentRoles.changeRole (LibraryRepository.changeRole workspace.Path) projects[0] document.Id ReferenceSource)
+        with error -> Choice2Of2 error
+    // Verify deletion actually persisted, even when SaveChanges threw. Do not
+    // mistake a rolled-back trigger deletion for the missing-association race.
+    assertResult (Ok (if abortUpdate then [ target; sameProject ] |> List.sortBy (fun item -> item.AddedUtc, item.Document.Id) else [ sameProject ])) (Library.listForProject store projects[0])
+    assertResult (Ok [ other ]) (Library.listForProject store projects[1])
+    let after = roleSnapshot workspace.Path
+    assertResult (before |> List.take 3) (after |> List.take 3)
+    let expectedAssociations =
+        before |> List.last |> snd
+        |> List.filter (fun row -> abortUpdate || row[0] <> projects[0].ToString("D") || row[1] <> document.Id.ToString("D"))
+    assertResult expectedAssociations (after |> List.last |> snd)
+    assertStoredOriginal workspace.Path document (fixture "valid.pdf")
+    assertStoredOriginal workspace.Path unrelated (fixture "distinct.pdf")
+    if abortUpdate then
+        match outcome with
+        | Choice2Of2 (:? DbUpdateException as error) ->
+            let sqlite = Assert.IsType<SqliteException>(error.InnerException)
+            Assert.Equal(19, sqlite.SqliteErrorCode)
+            Assert.Contains("role update denied", sqlite.Message)
+        | other -> Assert.Fail(sprintf "Expected unrelated database failure to propagate, got %A" other)
+    else
+        match outcome with
+        | Choice1Of2 result -> assertResult (Error DocumentRoles.RoleChangeError.AssociationNotFound) result
+        | Choice2Of2 error -> Assert.Fail(sprintf "Expected AssociationNotFound, got %s: %s" (error.GetType().FullName) error.Message)

@@ -121,6 +121,15 @@ let changeRole (dataDirectory: string) : DocumentRoles.UpdateRole =
         if not (exists row) then Error DocumentRoles.RoleChangeError.AssociationNotFound
         else
             row.Role <- roleText newRole
-            db.SaveChanges() |> ignore
-            let document = db.Set<LibraryDocumentRow>().AsNoTracking().Single(fun document -> document.Id = documentId)
-            Ok (association row, domain document)
+            let saved =
+                try
+                    db.SaveChanges() |> ignore
+                    true
+                // This context modifies only the selected association. Removal
+                // after Find makes its UPDATE affect zero rows, just like a
+                // missing association at lookup. Other database failures escape.
+                with :? DbUpdateConcurrencyException -> false
+            if not saved then Error DocumentRoles.RoleChangeError.AssociationNotFound
+            else
+                let document = db.Set<LibraryDocumentRow>().AsNoTracking().Single(fun document -> document.Id = documentId)
+                Ok (association row, domain document)

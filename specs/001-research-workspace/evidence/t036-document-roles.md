@@ -70,3 +70,5 @@ dotnet test --project tests/LexScholar.Server.Tests/LexScholar.Server.Tests.fspr
 ## Limitations
 
 - Concurrent role changes on the same association are last-write-wins, which is acceptable for a single researcher. A role change racing with removal of the same association either reports `AssociationNotFound` or fails on save with EF Core's `DbUpdateConcurrencyException` (the update affects no row). Either way, no other project's data changes.
+
+Historical limitation superseded by the [PR #35 release-review fix](fix-f001-release-review.md#finding-3-deletion-during-role-update): a zero-row role save now maps `DbUpdateConcurrencyException` narrowly to `AssociationNotFound` / HTTP 404, with deterministic deletion-persistence and preservation regressions. The original results above remain historical; last-write-wins and same-role semantics are unchanged.

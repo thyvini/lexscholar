@@ -51,7 +51,13 @@ let private firstFileSection (request: HttpRequest) = task {
         if String.IsNullOrWhiteSpace(boundary) then return None
         else
             let reader = MultipartReader(boundary, request.Body)
-            let! section = reader.ReadNextSectionAsync(request.HttpContext.RequestAborted)
+            // Malformed or over-limit multipart headers are a bad upload, not
+            // a server failure. Keep this catch at the parser boundary: reading
+            // the file and all import/storage effects happen outside it.
+            let! section = task {
+                try
+                    return! reader.ReadNextSectionAsync(request.HttpContext.RequestAborted)
+                with :? System.IO.InvalidDataException -> return null }
             if isNull section then return None
             else
                 match ContentDispositionHeaderValue.TryParse(section.ContentDisposition) with

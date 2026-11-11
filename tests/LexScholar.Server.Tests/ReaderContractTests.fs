@@ -182,6 +182,49 @@ let ``PATCH with an invalid or missing role is rejected and changes nothing`` (b
 
 // Content delivery
 
+[<Theory; InlineData(false); InlineData(true); Trait("Task", "T034")>]
+let ``PATCH maps deletion during role update to 404 but unrelated database errors to safe 500`` (abortUpdate: bool) =
+    use harness = TestHarness.Start()
+    let library = arrange harness.Root
+    // Separate document and projects provide collateral-change sentinels.
+    let unrelated = arrange harness.Root
+    let documentsBefore, associationsBefore = snapshot harness.Root
+    let projectsBefore = readAll harness.Root "SELECT * FROM ResearchProjects ORDER BY Id"
+    let workspacesBefore = readAll harness.Root "SELECT * FROM Workspaces ORDER BY Id"
+    use connection = new SqliteConnection(WorkspaceDb.connectionString harness.Root)
+    connection.Open()
+    use command = connection.CreateCommand()
+    // Test-local deterministic ordering: the repository reads an existing row,
+    // then its UPDATE encounters deletion. No timing or production hooks.
+    let triggerBody =
+        if abortUpdate then "SELECT RAISE(ABORT, 'role update denied');"
+        else $"DELETE FROM ProjectDocuments WHERE ProjectId = '{library.ProjectA:D}' AND DocumentId = '{library.DocumentId:D}'; SELECT RAISE(IGNORE);"
+    command.CommandText <- $"CREATE TRIGGER remove_before_role_update BEFORE UPDATE OF Role ON ProjectDocuments WHEN OLD.ProjectId = '{library.ProjectA:D}' AND OLD.DocumentId = '{library.DocumentId:D}' BEGIN {triggerBody} END"
+    command.ExecuteNonQuery() |> ignore
+    use response = patch harness.Client $"/api/projects/{library.ProjectA:D}/documents/{library.DocumentId:D}" """{"role":"ReferenceSource"}"""
+    let documentsAfter, associationsAfter = snapshot harness.Root
+    let expectedAssociations =
+        associationsBefore
+        |> List.filter (fun row -> abortUpdate || row[0] <> library.ProjectA.ToString("D") || row[1] <> library.DocumentId.ToString("D"))
+    // Assert actual deletion persistence before checking HTTP mapping: EF must
+    // not have rolled the trigger's deletion back after the zero-row update.
+    Assert.Equal<string list list>(expectedAssociations, associationsAfter)
+    Assert.Equal<string list list>(documentsBefore, documentsAfter)
+    Assert.Equal<string list list>(projectsBefore, readAll harness.Root "SELECT * FROM ResearchProjects ORDER BY Id")
+    Assert.Equal<string list list>(workspacesBefore, readAll harness.Root "SELECT * FROM Workspaces ORDER BY Id")
+    for item in [ library; unrelated ] do
+        let path = originalPath harness.Root item
+        Assert.Equal<byte array>(item.Bytes, File.ReadAllBytes(path))
+        Assert.Equal(UnixFileMode.UserRead, File.GetUnixFileMode(path))
+    expectStatus (if abortUpdate then HttpStatusCode.InternalServerError else HttpStatusCode.NotFound) response
+    expectCode (if abortUpdate then "internal_error" else "not_found") response
+    let text = bodyText response
+    for secret in [ harness.Root; library.StorageKey; unrelated.StorageKey; "role update denied"; "DbUpdate"; "SqliteException" ] do
+        Assert.DoesNotContain(secret, text)
+    if abortUpdate then
+        use json = JsonDocument.Parse(text)
+        Assert.Equal("An unexpected error occurred.", json.RootElement.GetProperty("title").GetString())
+
 [<Fact; Trait("Task", "T034")>]
 let ``GET content returns the exact original inline`` () =
     use harness = TestHarness.Start()
