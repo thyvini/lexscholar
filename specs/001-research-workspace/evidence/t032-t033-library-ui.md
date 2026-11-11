@@ -65,11 +65,11 @@
 
 - CachyOS (Linux 7.3.3-1-cachyos), .NET SDK 10.0.114, uid 1000, with temporary directories under `/tmp` (tmpfs).
 - Microsoft.Playwright 1.64.1, with Playwright's own browsers: Chrome Headless Shell (chromium v1248) and Firefox (v1555), the same builds as in the T019 evidence.
-- The work was done on `release/0.1.0` at `8210007` and rebased onto `b96caa4` before the PR.
+- The work was done on `release/0.1.0` at `8210007`. It was rebased onto `b96caa4` before the PR, and onto `f651c5b` with the review fixes.
 
 ## RED
 
-**T032: commit `1819f1c`.** `Library.fs` had the final types, but `update` returned `model, None` and `parseFailure` always returned `RequestFailed`.
+**T032: commit `553852c`.** `Library.fs` had the final types, but `update` returned `model, None` and `parseFailure` always returned `RequestFailed`.
 
 ```sh
 dotnet test --project tests/LexScholar.Browser.Tests/LexScholar.Browser.Tests.fsproj -c Release --no-build --filter-trait 'Task=T032'
@@ -83,7 +83,7 @@ dotnet test --project tests/LexScholar.Browser.Tests/LexScholar.Browser.Tests.fs
 
 Three tests passed against the no-op, because they check that an action is ignored: the stale response, associating with no active project, and repeated actions while busy. The sensitivity checks below show that the isolation tests can fail.
 
-**T033: commit `5791741`.** The journeys ran against the UI as it stood at that commit: the T018 projects UI, with no library section. They were committed before the T032 implementation.
+**T033: commit `d3051bc`.** The journeys ran against the UI as it stood at that commit: the T018 projects UI, with no library section. They were committed before the T032 implementation.
 
 ```sh
 dotnet test --project tests/LexScholar.Browser.Tests/LexScholar.Browser.Tests.fsproj -c Release --no-build --filter-trait 'Task=T033'
@@ -97,7 +97,7 @@ On a first attempt, the upload helper called `SetInputFilesAsync` directly. Agai
 
 ## GREEN
 
-**Commit `6fef8ec`.** T032 passed 14/14.
+**Commit `7ecb768`.** T032 passed 14/14.
 
 The first browser run of the implementation failed all 6 T033 journeys. Logging the browser console in a temporary, uncommitted edit showed why: Bolero's `cond` was given an `option * bool` tuple. `cond` accepts only F# unions and booleans, so it threw `ArgumentException: … is not an F# union type` on the first render after an upload, and the client stopped. I replaced it with nested `cond`s. After that, the browser test project passed 35/35: 14 T032, 6 T033, and the existing T018 and T019 tests. T033 then passed 6/6 on 2 further runs.
 
@@ -115,7 +115,26 @@ dotnet test --solution LexScholar.sln --configuration Release --no-build
 
 Restore and build succeeded with 0 warnings and 0 errors. The full suite passed 311/311 (291 at `8210007`, plus 14 T032 and 6 T033 tests), 0 skipped, browser tests included.
 
-The branch was then rebased onto `release/0.1.0` at `b96caa4` (PR #24: T034, T036, T038) without conflicts. The commit ids above are the post-rebase ones. The same three commands were re-run on the rebased head: 0 warnings, and 326/326 passed (311 plus the 15 tests from #24), 0 skipped, browser tests included. No temporary test directories remained under `/tmp/lexscholar-tests` or `/tmp/lexscholar-schema-tests`.
+The branch was then rebased onto `release/0.1.0` at `b96caa4` (PR #24: T034, T036, T038) without conflicts. The same three commands were re-run on the rebased head: 0 warnings, and 326/326 passed (311 plus the 15 tests from #24), 0 skipped, browser tests included. The commit ids above are from the later rebase onto `f651c5b` (see Review fixes).
+
+## Review fixes (PR #26)
+
+Greptile raised two findings, and the lead chose the fixes.
+
+- **P1 "Older responses overwrite newer lists".** After an associate or remove, `Busy` clears before the refresh finishes, so a second change could start a second refresh. If the older response arrived last, it was accepted because its project id still matched.
+  - **Fix:** each list has a request counter, `LibraryRequest` and `ProjectRequest`. `FetchLibrary`, `FetchProject` and `FetchAll` carry the new number, and `LibraryLoaded` and `ProjectLoaded` are accepted only with the latest number (and, for projects, the active project id). This also covers switching A→B→A quickly, where the first request for A would otherwise still match.
+- **P2 "Failed lists lack a retry".**
+  - **Fix:** a new `Refresh` message reloads the library and, if a project is active, its documents with new request numbers (`FetchAll`), and clears the error. The page's existing Refresh button (`Projects.Reload`) now also dispatches it in `App.update`, so "Please try again" can be acted on.
+- **Tests** (Trait `Task=T032`, 4 new, 18 in total). The existing tests now take the request numbers from the effects.
+  - "an older library response arriving last does not overwrite the newer list";
+  - "an older project response arriving last does not overwrite the newer list" (two associations in a row, responses in reverse order);
+  - "switching away and back ignores the first request for the same project";
+  - "refresh reloads the library and the active project's documents after a failure" (with and without an active project).
+- **RED, commit `8bff739`:** the effects carried numbers, but responses were accepted whatever their number, and `Refresh` did nothing. 4 failed and 14 passed. The three ordering tests failed on `Expected`/`Actual` list assertions, with the stale list shown or, for A→B→A, `Actual: []`. The refresh test failed with "Expected both lists to be fetched, got None."
+- **GREEN, commit `940c9f0`:** 18/18.
+- **Sensitivity check:** both number checks removed again, so any number was accepted. The three ordering tests failed, and the other 15 passed.
+- **Not tested:** the Refresh button wiring in `App.update` has no state test of its own (the `Ui` module is private), and no journey triggers a failed load.
+- **Final verification after the rebase onto `f651c5b` (#27, T042):** restore and build had 0 warnings, and the full suite passed 350/350, 0 skipped, browser tests included. No temporary test directories remained under `/tmp/lexscholar-tests` or `/tmp/lexscholar-schema-tests`.
 
 ## Limitations
 
