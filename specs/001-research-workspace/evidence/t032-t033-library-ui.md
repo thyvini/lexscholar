@@ -65,11 +65,11 @@
 
 - CachyOS (Linux 7.3.3-1-cachyos), .NET SDK 10.0.114, uid 1000, with temporary directories under `/tmp` (tmpfs).
 - Microsoft.Playwright 1.64.1, with Playwright's own browsers: Chrome Headless Shell (chromium v1248) and Firefox (v1555), the same builds as in the T019 evidence.
-- The base was `release/0.1.0` at `8210007`.
+- The work was done on `release/0.1.0` at `8210007` and rebased onto `b96caa4` before the PR.
 
 ## RED
 
-**T032: commit `76f5e81`.** `Library.fs` had the final types, but `update` returned `model, None` and `parseFailure` always returned `RequestFailed`.
+**T032: commit `1819f1c`.** `Library.fs` had the final types, but `update` returned `model, None` and `parseFailure` always returned `RequestFailed`.
 
 ```sh
 dotnet test --project tests/LexScholar.Browser.Tests/LexScholar.Browser.Tests.fsproj -c Release --no-build --filter-trait 'Task=T032'
@@ -83,7 +83,7 @@ dotnet test --project tests/LexScholar.Browser.Tests/LexScholar.Browser.Tests.fs
 
 Three tests passed against the no-op, because they check that an action is ignored: the stale response, associating with no active project, and repeated actions while busy. The sensitivity checks below show that the isolation tests can fail.
 
-**T033: commit `b75d66a`.** The journeys ran against the UI as it stood at that commit: the T018 projects UI, with no library section. They were committed before the T032 implementation.
+**T033: commit `5791741`.** The journeys ran against the UI as it stood at that commit: the T018 projects UI, with no library section. They were committed before the T032 implementation.
 
 ```sh
 dotnet test --project tests/LexScholar.Browser.Tests/LexScholar.Browser.Tests.fsproj -c Release --no-build --filter-trait 'Task=T033'
@@ -97,7 +97,7 @@ On a first attempt, the upload helper called `SetInputFilesAsync` directly. Agai
 
 ## GREEN
 
-**Commit `0b369eb`.** T032 passed 14/14.
+**Commit `6fef8ec`.** T032 passed 14/14.
 
 The first browser run of the implementation failed all 6 T033 journeys. Logging the browser console in a temporary, uncommitted edit showed why: Bolero's `cond` was given an `option * bool` tuple. `cond` accepts only F# unions and booleans, so it threw `ArgumentException: … is not an F# union type` on the first render after an upload, and the client stopped. I replaced it with nested `cond`s. After that, the browser test project passed 35/35: 14 T032, 6 T033, and the existing T018 and T019 tests. T033 then passed 6/6 on 2 further runs.
 
@@ -113,7 +113,9 @@ dotnet build LexScholar.sln -c Release --no-restore -warnaserror
 dotnet test --solution LexScholar.sln --configuration Release --no-build
 ```
 
-Restore and build succeeded with 0 warnings and 0 errors. The full suite passed 311/311 (291 at `8210007`, plus 14 T032 and 6 T033 tests), 0 skipped, browser tests included. No temporary test directories remained under `/tmp/lexscholar-tests` or `/tmp/lexscholar-schema-tests`.
+Restore and build succeeded with 0 warnings and 0 errors. The full suite passed 311/311 (291 at `8210007`, plus 14 T032 and 6 T033 tests), 0 skipped, browser tests included.
+
+The branch was then rebased onto `release/0.1.0` at `b96caa4` (PR #24: T034, T036, T038) without conflicts. The commit ids above are the post-rebase ones. The same three commands were re-run on the rebased head: 0 warnings, and 326/326 passed (311 plus the 15 tests from #24), 0 skipped, browser tests included. No temporary test directories remained under `/tmp/lexscholar-tests` or `/tmp/lexscholar-schema-tests`.
 
 ## Limitations
 
