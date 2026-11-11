@@ -39,7 +39,15 @@ type PdfRejection =
 type StagingKey = StagingKey of Guid
 
 // On a successful open, the caller owns and must dispose Stream, even if later
-// reads fail or are cancelled. Verification and delivery use the same read-only
-// handle, protected from changes; no physical path or browser-specific
-// representation is exposed.
+// reads fail or are cancelled. Stream is a read-only handle on the stored
+// original, which existed, was readable and had its recorded byte length when
+// opened; it is not rehashed, so same-length changes made outside LexScholar are
+// not detected (see research.md, "Document availability on open"). No physical
+// path or browser-specific representation is exposed.
 type VerifiedContent = { Stream: Stream; ByteLength: int64; OriginalFileName: string }
+/// Why document content cannot be opened: no record has the UUID, or the
+/// record's original is missing, unreadable or of the wrong length. Neither
+/// case changes the record or its associations.
+type ContentFailure =
+    | DocumentNotFound
+    | DocumentUnavailable
