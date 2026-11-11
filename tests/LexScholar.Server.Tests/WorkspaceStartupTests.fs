@@ -128,3 +128,17 @@ let ``startup cleanup finishes before serving and logs each quarantined original
         let warnings = provider.Entries |> List.filter (fun (level, _) -> level = LogLevel.Warning) |> List.map snd
         Assert.Contains(warnings, fun message -> message.Contains(orphan))
         Assert.DoesNotContain(warnings, fun message -> message.Contains(workspace.Root))
+
+[<Fact; Trait("Task", "T043")>]
+let ``startup logs the effective data directory at Information level`` () =
+    use workspace = TemporaryWorkspace.Create()
+    let provider = new CapturingLoggerProvider()
+    let builder = HostSetup.builder workspace.Root []
+    builder.Logging.AddProvider(provider) |> ignore
+    match Program.create builder false with
+    | Error error -> Assert.Fail($"Host creation unexpectedly rejected: {error}")
+    | Ok app ->
+        use app = app
+        let expected = $"Using data directory {Path.GetFullPath(workspace.Root)}."
+        let information = provider.Entries |> List.filter (fun (level, _) -> level = LogLevel.Information) |> List.map snd
+        Assert.Contains(expected, information)

@@ -41,6 +41,9 @@ let private createHost (builder: WebApplicationBuilder) (serveClient: bool) port
                 try
                     app.Services.GetRequiredService<DataDirectoryLease>() |> ignore
                     app.Lifetime.ApplicationStopped.Register(fun () -> lease.Release()) |> ignore
+                    // Local log only, so users can find their data (plan.md, "Linux
+                    // local storage location"); never part of an API response.
+                    app.Logger.LogInformation("Using data directory {DataDirectory}.", configuration.DataDirectory)
                     // Under the lock, after migrations and before serving: discard
                     // interrupted imports. Built first only so a logger exists.
                     let cleanup = StorageCleanup.run configuration.DataDirectory
