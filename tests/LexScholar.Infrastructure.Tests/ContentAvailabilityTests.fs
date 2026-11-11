@@ -90,9 +90,13 @@ let private arrange condition (path: string) =
         File.SetUnixFileMode(path, UnixFileMode.UserRead ||| UnixFileMode.UserWrite)
         File.Delete(path)
     | "unreadable" ->
-        Assert.True(Environment.UserName <> "root",
-                    "Run these tests as a normal user: root can read a file with no permissions, so the unreadable case would not be exercised.")
         File.SetUnixFileMode(path, UnixFileMode.None)
+        let readable =
+            try
+                File.OpenRead(path).Dispose()
+                true
+            with :? UnauthorizedAccessException -> false
+        Assert.False(readable, "The original is still readable with mode 000 (running as root or with CAP_DAC_OVERRIDE), so the unreadable case would not be exercised. Run the tests as a normal user.")
     | "shorter" -> rewrite path (File.ReadAllBytes(path) |> Array.take 700)
     | "longer" -> rewrite path (Array.append (File.ReadAllBytes(path)) [| 0x0Auy |])
     | other -> failwithf "Unknown condition %s." other

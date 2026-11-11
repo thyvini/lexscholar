@@ -44,7 +44,7 @@ let documentView (document: LexScholar.Domain.LibraryDocument) : Document =
       ImportedUtc = document.ImportedUtc
       ContentUrl = contentUrl document.Id }
 
-let private associationView (association: LexScholar.Domain.ProjectDocument) document : ProjectDocumentView =
+let associationView (association: LexScholar.Domain.ProjectDocument) document : ProjectDocumentView =
     { ProjectId = association.ProjectId
       Document = documentView document
       Role = association.Role
