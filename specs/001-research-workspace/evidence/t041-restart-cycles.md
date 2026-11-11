@@ -20,7 +20,7 @@
 
 ## Environment
 
-CachyOS (Linux 7.3.3-1-cachyos), .NET SDK 10.0.114, Microsoft.Playwright 1.64.1. Base `21f1fde` (release/0.1.0 after #23). Tests ran as uid 1000.
+CachyOS (Linux 7.3.3-1-cachyos), .NET SDK 10.0.114, Microsoft.Playwright 1.64.1. Written on `21f1fde` (release/0.1.0 after #23) and rebased onto `f651c5b` (after #25 and #27). Tests ran as uid 1000.
 
 ## No committed RED
 
@@ -46,6 +46,7 @@ dotnet test --solution LexScholar.sln --configuration Release --no-build
 - T041 filter: 2/2 passed. `RestartTests` took 12.3 s and `LimitRestartTests` 2.2 s.
 - Full suite: 308/308 passed with 0 skipped, browser journeys included (306 on `21f1fde` plus 2 new), in 44 s.
 - The 100 cycles add about 12 s to the full suite.
+- After the rebase onto `f651c5b`: 328/328 passed with 0 skipped (326 plus the 2 new tests). Total suite times vary between runs on this machine (19 to 44 s) because test projects run in parallel.
 
 ## Limitations
 
