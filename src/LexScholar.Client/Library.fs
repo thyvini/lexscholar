@@ -78,9 +78,60 @@ let initial =
 
 /// Maps an HTTP problem response to a failure; anything unexpected is a generic failure.
 let parseFailure (status: int) (body: string) : Failure =
-    ignore (status, body)
-    RequestFailed
+    try
+        use json = System.Text.Json.JsonDocument.Parse(body)
+        let mutable code = Unchecked.defaultof<System.Text.Json.JsonElement>
+        if json.RootElement.ValueKind = System.Text.Json.JsonValueKind.Object
+           && json.RootElement.TryGetProperty("code", &code)
+           && code.ValueKind = System.Text.Json.JsonValueKind.String then
+            match status, code.GetString() with
+            | (400 | 422), "not_a_pdf" -> NotAPdf
+            | 422, "corrupt_pdf" -> CorruptPdf
+            | 422, "encrypted_pdf" -> EncryptedPdf
+            | 413, "upload_too_large" -> TooLarge
+            | 422, "page_limit_exceeded" -> TooManyPages
+            | 409, "duplicate_association" -> DuplicateAssociation
+            | 400, "invalid_role" -> InvalidRole
+            | 404, "not_found" -> NotFound
+            | 404, "document_not_found" -> DocumentNotFound
+            | _ -> RequestFailed
+        else RequestFailed
+    with _ -> RequestFailed
+
+/// Refreshes the active project after a successful mutation for it. A result
+/// for a project that is no longer active changes nothing that is shown.
+let private mutated (projectId: Guid) (result: Result<unit, Failure>) model =
+    let model = { model with Busy = None }
+    match result with
+    | _ when model.Project <> Some projectId -> model, None
+    | Ok () -> { model with LoadingProject = true }, Some (FetchProject projectId)
+    | Error error -> { model with Error = Some error }, None
 
 let update (message: Message) (model: Model) : Model * Effect option =
-    ignore message
-    model, None
+    match message with
+    | LoadLibrary -> { model with LoadingLibrary = true }, Some FetchLibrary
+    | LibraryLoaded (Ok documents) ->
+        { model with Documents = documents; HasLoadedLibrary = true; LoadingLibrary = false }, None
+    | LibraryLoaded (Error error) -> { model with LoadingLibrary = false; Error = Some error }, None
+    | ActiveProjectChanged project when project <> model.Project ->
+        // Clear at once so one project's documents never appear under another.
+        { model with Project = project; Associations = []; HasLoadedProject = false; LoadingProject = project.IsSome },
+        project |> Option.map FetchProject
+    | ProjectLoaded (projectId, result) when model.Project = Some projectId ->
+        match result with
+        | Ok associations -> { model with Associations = associations; HasLoadedProject = true; LoadingProject = false }, None
+        | Error error -> { model with LoadingProject = false; Error = Some error }, None
+    | Upload file when model.Busy.IsNone ->
+        { model with Busy = Some Uploading; Notice = None; Error = None }, Some (SendUpload file)
+    | Uploaded result when model.Busy = Some Uploading ->
+        match result with
+        | Ok notice -> { model with Busy = None; Notice = Some notice; LoadingLibrary = true }, Some FetchLibrary
+        | Error error -> { model with Busy = None; Error = Some error }, None
+    | Associate (documentId, role) when model.Busy.IsNone && model.Project.IsSome ->
+        { model with Busy = Some Associating; Notice = None; Error = None },
+        Some (SendAssociate (model.Project.Value, documentId, role))
+    | Associated (projectId, result) when model.Busy = Some Associating -> mutated projectId result model
+    | Remove documentId when model.Busy.IsNone && model.Project.IsSome ->
+        { model with Busy = Some Removing; Notice = None; Error = None }, Some (SendRemove (model.Project.Value, documentId))
+    | Removed (projectId, result) when model.Busy = Some Removing -> mutated projectId result model
+    | _ -> model, None
