@@ -8,7 +8,9 @@
 #   arxiv_id,version,set,url,license,license_url,bytes,pages,sha256
 # and no quoted fields. Files are named <arxiv_id><version>.pdf and fetched from
 # https://arxiv.org/pdf/<arxiv_id><version>, one request every 3 seconds, at most
-# 100,000,000 bytes each. Files already present are not downloaded again.
+# 100,000,000 bytes each. A file already present is kept only if its SHA-256
+# matches the manifest; otherwise it is deleted and downloaded again. Downloads
+# are written to <name>.part and verified before taking their final name.
 #
 # A row with an empty sha256 (candidate selection) prints the computed hash
 # instead of verifying it. The script only downloads and hashes: it never opens,
@@ -47,24 +49,37 @@ while IFS=, read -r arxiv_id version _set url _license _license_url _bytes _page
         failures=$((failures + 1)); continue
     fi
     target="$pdfs/$arxiv_id$version.pdf"
-    if [[ ! -f "$target" ]]; then
-        if [[ $first -eq 0 ]]; then sleep 3; fi
-        first=0
-        if ! curl --fail --silent --show-error --location --proto '=https' \
-                --user-agent "$user_agent" --max-filesize 100000000 \
-                --output "$target.part" "$expected_url"; then
-            rm -f "$target.part"
-            echo "FAIL $arxiv_id$version: download failed" >&2
-            failures=$((failures + 1)); continue
+    if [[ -f "$target" ]]; then
+        actual=$(sha256sum "$target" | cut -d ' ' -f 1)
+        if [[ -z "$sha256" ]]; then
+            echo "HASH $arxiv_id$version $actual"; continue
+        elif [[ "$actual" == "$sha256" ]]; then
+            echo "OK   $arxiv_id$version"; continue
         fi
-        mv "$target.part" "$target"
+        # A file that does not match the manifest is never kept: fetch it again.
+        echo "WARN $arxiv_id$version: existing file does not match the manifest; downloading again" >&2
+        rm -f "$target"
     fi
-    actual=$(sha256sum "$target" | cut -d ' ' -f 1)
+    if [[ $first -eq 0 ]]; then sleep 3; fi
+    first=0
+    if ! curl --fail --silent --show-error --location --proto '=https' \
+            --user-agent "$user_agent" --max-filesize 100000000 \
+            --output "$target.part" "$expected_url"; then
+        rm -f "$target.part"
+        echo "FAIL $arxiv_id$version: download failed" >&2
+        failures=$((failures + 1)); continue
+    fi
+    # Verify before the file takes its final name, so a bad download never
+    # becomes the target or blocks a rerun.
+    actual=$(sha256sum "$target.part" | cut -d ' ' -f 1)
+    if [[ -n "$sha256" && "$actual" != "$sha256" ]]; then
+        rm -f "$target.part"
+        echo "FAIL $arxiv_id$version: sha256 $actual does not match the manifest" >&2
+        failures=$((failures + 1)); continue
+    fi
+    mv "$target.part" "$target"
     if [[ -z "$sha256" ]]; then
         echo "HASH $arxiv_id$version $actual"
-    elif [[ "$actual" != "$sha256" ]]; then
-        echo "FAIL $arxiv_id$version: sha256 $actual does not match the manifest" >&2
-        failures=$((failures + 1))
     else
         echo "OK   $arxiv_id$version"
     fi

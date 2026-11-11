@@ -5,12 +5,15 @@
 - **Corpus**: 100 openly licensed arXiv PDFs (CC BY 4.0 or CC0 1.0). The user decided on 2026-11-10 that agents download the PDFs and never commit them; the lead approved the plan on 2026-11-11. The full selection, the corpus table and the result are in [verification.md](../verification.md#sc-002-import-corpus).
 - **New files**:
   - `specs/001-research-workspace/sc002-corpus.csv`, the manifest. It holds metadata only: arXiv id and version, set, PDF URL, license name and URL, bytes, `pdfinfo` page count and SHA-256.
-  - `scripts/fetch-sc002-corpus.sh`, the tool actually used for every download. It reads the manifest, builds file names and URLs from validated identifiers only (`^[0-9]{4}\.[0-9]{4,5}$`, `^v[0-9]+$`), and downloads over HTTPS with a 3-second gap, a generic user agent and `--max-filesize 100000000`. It skips files already present and verifies each SHA-256; rows with an empty hash print the computed one instead. It only downloads and hashes; it never opens or runs a PDF.
+  - `scripts/fetch-sc002-corpus.sh`, the tool actually used for every download. It reads the manifest, builds file names and URLs from validated identifiers only (`^[0-9]{4}\.[0-9]{4,5}$`, `^v[0-9]+$`), and downloads over HTTPS with a 3-second gap, a generic user agent and `--max-filesize 100000000`. A file already present is kept only if its SHA-256 matches the manifest; otherwise it is deleted and downloaded again. Each download goes to `<name>.part`, which is hashed before taking its final name and deleted on a mismatch. Rows with an empty hash print the computed one instead. It only downloads and hashes; it never opens or runs a PDF.
   - `tests/LexScholar.Corpus.Tests/` (project plus `CorpusImportTests.fs`, one test, Trait `Task=T044`), deliberately not added to `LexScholar.sln`. It reads the manifest, which is copied to the output directory, and the corpus directory named by `LEXSCHOLAR_SC002_CORPUS`. It:
     - asserts the manifest has 100 entries and that every file has the manifest's size and SHA-256;
     - imports each file through `ImportDocument.create` with the real `PdfValidator`, `DocumentStore` and `LibraryRepository` and the default limits, into one temporary workspace;
     - writes `results.csv` (name, bytes, SHA-256, manifest and imported page counts, outcome; for exceptions, the type name only);
-    - asserts at least 99 were imported. Without the variable it fails with instructions; it never skips.
+    - asserts at least 99 were imported;
+    - asserts that every imported document's page count equals the manifest's `pdfinfo` count, listing every mismatch.
+
+    Without the variable it fails with instructions; it never skips.
   - `specs/001-research-workspace/verification.md`, with the SC-002 section and two placeholder sections marked "not yet recorded": automated SC-003–005/007–008 results, and the usability evaluations (SC-001/006).
 - **`.gitignore`**: `/corpus/`. Every `git status` during the work, including `--untracked-files=all`, showed no PDF.
 - **`research.md`**: new decision "SC-002 import corpus" (Constitution VI), covering the source, the independent validity tools and the out-of-solution project, with the rejected alternatives: `Explicit` tests counted as skipped, a heavy `.fsx`, and a `Category` trait that would pass silently.
@@ -52,7 +55,7 @@ LEXSCHOLAR_SC002_CORPUS=$PWD/corpus/sc002 dotnet test --project tests/LexScholar
 
 ## Run
 
-Same commands, with the correct manifest: exit 0, 1/1 passed, 0 skipped, in 4.5 s. `results.csv` shows **100 Imported**, with no rejections, reuses or failures. For every file, the page count LexScholar recorded equals `pdfinfo`'s count.
+Same commands, with the correct manifest: exit 0, 1/1 passed, 0 skipped, in 4.5 s. `results.csv` shows **100 Imported**, with no rejections, reuses or failures. For every file, the page count LexScholar recorded equals `pdfinfo`'s count; since the PR #23 review, the test asserts this (see Review fixes).
 
 ## Final verification
 
@@ -66,6 +69,26 @@ After rebasing onto `8210007` (release/0.1.0 after #22):
 - Solution restore and build: 0 warnings, 0 errors.
 - Full suite: 291/291 passed with 0 skipped, browser journeys included. The suite is unchanged by this task, because the corpus project is outside the solution.
 - The corpus project, restored and built on its own with `-warnaserror`, also had 0 warnings. Its corpus run passed again: 1/1, 100 Imported.
+
+## Review fixes (PR #23)
+
+Two Greptile P2 findings, both valid, plus the reviewer's non-blocking request.
+
+- **Page counts:** `CorpusImportTests.fs` now asserts, from the test itself, that every `Imported` result's page count equals the manifest's `pdfinfo` count (`Assert.Empty` over all mismatches). Before this, that claim came only from the uncommitted `results.csv`.
+- **Fetch script:**
+  - each download is hashed as `<name>.part` before the `mv`, and deleted on a mismatch, so a bad download never becomes the target or blocks a rerun;
+  - an existing target that fails its hash is deleted and downloaded again;
+  - everything else in the script is unchanged.
+
+Checks, all temporary except the final runs (the manifest and test were restored byte-identical and rebuilt):
+- **Fetch script on the real manifest:** 100 `OK`, exit 0. It only verified the existing files and downloaded nothing.
+- **Fetch script mismatch paths,** in a scratch directory with a one-row manifest (the smallest corpus file, 2402.18384v2), never in `corpus/sc002`:
+  - a fresh download gives `OK`;
+  - after appending a byte to the target, it prints `WARN … downloading again` and then `OK`;
+  - with the manifest hash set to zeros, it prints `FAIL … does not match the manifest`, exits 1, and leaves no target and no `.part`.
+- **Page-count assertion:** with one manifest page count raised by one (2112.04539v3, 14 to 15), the test fails with `Assert.Empty() Failure`: `["2112.04539v3: imported 14 pages, manifest (pdfinfo) 15"]`.
+- **≥99 assertion:** with `MaxPages = 1` in the test, it fails with "SC-002 requires at least 99 of 100 imports; 0 imported. See …/corpus/sc002/results.csv."
+- **Final run** with the committed code and manifest: 1/1 passed, `results.csv` 100 Imported. The corpus project builds with `-warnaserror` and 0 warnings.
 
 ## Limitations
 

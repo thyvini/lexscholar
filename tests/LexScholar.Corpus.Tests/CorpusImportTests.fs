@@ -94,5 +94,11 @@ let ``at least 99 of the 100 SC-002 corpus PDFs import successfully`` () =
         File.WriteAllLines(resultsPath, lines)
         let imported = results |> List.filter (fun (_, result, _) -> result = "Imported") |> List.length
         Assert.True(imported >= 99, $"SC-002 requires at least 99 of 100 imports; {imported} imported. See {resultsPath}.")
+        // Every imported document records the page count pdfinfo reported.
+        let pageMismatches =
+            [ for entry, result, pageCount in results do
+                if result = "Imported" && pageCount <> entry.Pages then
+                    yield $"{entry.Name}: imported {pageCount} pages, manifest (pdfinfo) {entry.Pages}" ]
+        Assert.Empty(pageMismatches)
     finally
         Directory.Delete(workspace, true)

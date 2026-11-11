@@ -27,7 +27,7 @@ LEXSCHOLAR_SC002_CORPUS=$PWD/corpus/sc002 dotnet test --project tests/LexScholar
 The test does three things:
 1. It checks that every manifest file is present, with the manifest's size and SHA-256.
 2. It imports each file through the real `ImportDocument` workflow (PdfPig validator, document store, SQLite repository) into a temporary workspace.
-3. It writes `corpus/sc002/results.csv` with identifiers, sizes, hashes, page counts and outcomes only, never file contents, and fails unless at least 99 files were imported.
+3. It writes `corpus/sc002/results.csv` with identifiers, sizes, hashes, page counts and outcomes only, never file contents. It fails unless at least 99 files were imported and every imported document's page count equals the manifest's `pdfinfo` count.
 
 If `LEXSCHOLAR_SC002_CORPUS` is unset, the test fails; it never skips.
 
@@ -72,7 +72,7 @@ The four exclusions were qpdf warnings about structure, not encryption or limits
 
 ### Corpus and results
 
-`Pages` is the page count from `pdfinfo`. For every file, the page count LexScholar recorded on import was equal to it.
+`Pages` is the page count from `pdfinfo`. For every file, the page count LexScholar recorded on import was equal to it; the corpus test asserts this.
 
 | # | arXiv | Set | License | Bytes | Pages | SHA-256 | Result |
 |---|---|---|---|---|---|---|---|
