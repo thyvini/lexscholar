@@ -20,8 +20,8 @@ type private FakeFile(name: string) =
 let private step message model = update message model
 let private alpha = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 let private beta = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
-let private paper = { Id = Guid.Parse("11111111-1111-1111-1111-111111111111"); FileName = "paper.pdf"; PageCount = 2 }
-let private notes = { Id = Guid.Parse("22222222-2222-2222-2222-222222222222"); FileName = "notes.pdf"; PageCount = 5 }
+let private paper = { Id = Guid.Parse("11111111-1111-1111-1111-111111111111"); FileName = "paper.pdf"; PageCount = 2; ContentUrl = "/api/documents/11111111-1111-1111-1111-111111111111/content" }
+let private notes = { Id = Guid.Parse("22222222-2222-2222-2222-222222222222"); FileName = "notes.pdf"; PageCount = 5; ContentUrl = "/api/documents/22222222-2222-2222-2222-222222222222/content" }
 
 let private assertState<'a when 'a: equality> (expected: 'a) (actual: 'a) =
     Assert.True((expected = actual), sprintf "Expected: %A\nActual: %A" expected actual)
@@ -265,3 +265,16 @@ let ``refresh reloads the library and the active project's documents after a fai
     match effect with
     | Some (FetchAll (_, None)) -> ()
     | other -> failwithf "Expected only the library to be fetched, got %A." other
+
+[<Fact; Trait("Task", "T039")>]
+let ``reloading the project refetches only the active project's documents`` () =
+    let model = showing alpha [ { Document = paper; Role = FocusedSource } ] [ paper ]
+    let model, effect = step ReloadProject model
+    let projectId, request = projectRequest effect
+    assertState alpha projectId
+    Assert.True(model.LoadingProject)
+    let updated = [ { Document = paper; Role = ReferenceSource } ]
+    let model, _ = step (ProjectLoaded (alpha, request, Ok updated)) model
+    assertState updated model.Associations
+    let _, effect = step ReloadProject initial
+    assertState None effect

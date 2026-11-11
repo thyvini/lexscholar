@@ -5,6 +5,7 @@
   <ItemGroup>
     <Compile Include="Projects.fs" />
     <Compile Include="Library.fs" />
+    <Compile Include="Reader.fs" />
     <Compile Include="App.fs" />
     <Compile Include="Program.fs" />
     <ProjectReference Include="../LexScholar.Domain/LexScholar.Domain.fsproj" />

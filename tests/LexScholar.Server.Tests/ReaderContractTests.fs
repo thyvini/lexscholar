@@ -232,6 +232,11 @@ let ``GET content for an unavailable original is 503 with records unchanged and 
     expectStatus HttpStatusCode.ServiceUnavailable response
     expectCode "document_unavailable" response
     let body = bodyText response
+    // Contract wording: one title covers every unavailable condition (T039 review note).
+    do
+        use json = JsonDocument.Parse(body)
+        Assert.Equal("The document's stored file is missing, unreadable or not the recorded size. Its library record and associations are unchanged.",
+                     json.RootElement.GetProperty("title").GetString())
     Assert.DoesNotContain(harness.Root, body)
     Assert.DoesNotContain(library.StorageKey, body)
     Assert.Equal(before, snapshot harness.Root)

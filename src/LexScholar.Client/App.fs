@@ -67,7 +67,8 @@ module Api =
     let private libraryDocument (element: JsonElement) : Library.Document =
         { Id = element.GetProperty("id").GetGuid()
           FileName = element.GetProperty("originalFileName").GetString()
-          PageCount = element.GetProperty("pageCount").GetInt32() }
+          PageCount = element.GetProperty("pageCount").GetInt32()
+          ContentUrl = element.GetProperty("contentUrl").GetString() }
 
     let private role (value: string) =
         match value with
