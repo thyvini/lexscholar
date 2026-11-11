@@ -18,7 +18,14 @@ LexScholar keeps everything in one folder on your computer, the **data directory
 
   The path must be absolute. It cannot be the filesystem root or an existing file. LexScholar refuses to start and says why if the path is not usable.
 
-To see which folder a running LexScholar uses, look at its console output when it starts: it logs a line beginning with `Using data directory` followed by the full path. The path is only written to this local log; it is never sent to the browser.
+To see which folder a running LexScholar uses, look at its console output when it starts. One of the first messages names it:
+
+```text
+info: LexScholar.Server[0]
+      Using data directory /home/me/.local/share/lexscholar.
+```
+
+The path is only written to this local log; it is never sent to the browser.
 
 LexScholar creates the folder if it does not exist, readable only by your user account (mode `0700`). Inside it you will find:
 
