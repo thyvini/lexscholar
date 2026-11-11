@@ -144,3 +144,21 @@ let ``HTTP problem codes are mapped to understandable failures`` () =
           404, problem "document_unavailable", RequestFailed ]
     for status, body, expected in cases do
         assertState (status, expected) (status, parseFailure status body)
+
+[<Fact; Trait("Task", "T039")>]
+let ``a role failure from a previous visit to the same project is ignored`` () =
+    let model, _ = step (ChangeRole (paper.Id, ReferenceSource)) (inProject alpha)
+    let model, _ = step (ActiveProjectChanged (Some beta)) model
+    let model, _ = step (ActiveProjectChanged (Some alpha)) model
+    let model, effect = step (RoleChanged (alpha, Error AssociationNotFound)) model
+    assertState None model.Error
+    assertState None model.ChangingRole
+    assertState None effect
+
+[<Fact; Trait("Task", "T039")>]
+let ``a removed document cannot reopen from a pending availability response`` () =
+    let model, pending = step (Open paper) (inProject alpha)
+    let model, _ = step (AssociationsChanged []) model
+    let model, _ = step (ContentChecked (fst (check pending), Ok ())) model
+    assertState None model.Open
+    assertState None model.Opening

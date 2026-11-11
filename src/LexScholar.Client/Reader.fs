@@ -24,6 +24,8 @@ type Model =
       Open: Document option
       /// The document whose role is being changed; one change at a time.
       ChangingRole: Guid option
+      /// A pending mutation from a previous project visit must not update this visit.
+      RoleStale: bool
       Error: Failure option
       /// The latest content check; only its result is used.
       CheckRequest: int }
@@ -45,13 +47,47 @@ type Effect =
     | RefreshProject
 
 let initial =
-    { Project = None; Opening = None; Open = None; ChangingRole = None; Error = None; CheckRequest = 0 }
+    { Project = None; Opening = None; Open = None; ChangingRole = None; RoleStale = false; Error = None; CheckRequest = 0 }
 
 /// Maps an HTTP problem response to a failure; anything unexpected is a generic failure.
 let parseFailure (status: int) (body: string) : Failure =
-    ignore (status, body)
-    RequestFailed
+    try
+        use json = System.Text.Json.JsonDocument.Parse(body)
+        match status, json.RootElement.GetProperty("code").GetString() with
+        | 503, "document_unavailable" -> Unavailable
+        | 404, "document_not_found" -> DocumentNotFound
+        | 404, "not_found" -> AssociationNotFound
+        | 400, "invalid_role" -> InvalidRole
+        | _ -> RequestFailed
+    with _ -> RequestFailed
 
 let update (message: Message) (model: Model) : Model * Effect option =
-    ignore message
-    model, None
+    let close model =
+        { model with Open = None; Opening = None; CheckRequest = model.CheckRequest + 1; Error = None }
+    match message with
+    | ActiveProjectChanged project when project <> model.Project ->
+        { close model with Project = project; RoleStale = model.ChangingRole.IsSome }, None
+    | AssociationsChanged ids when
+        [ model.Open; model.Opening ] |> List.exists (Option.exists (fun document -> not (List.contains document.Id ids))) ->
+        close model, None
+    | Open document when model.Project.IsSome ->
+        let request = model.CheckRequest + 1
+        { model with Opening = Some document; Open = None; Error = None; CheckRequest = request },
+        Some (CheckContent (request, document.ContentUrl))
+    | ContentChecked (request, result) when request = model.CheckRequest && model.Opening.IsSome ->
+        match result with
+        | Ok () -> { model with Open = model.Opening; Opening = None }, None
+        | Error error -> { model with Opening = None; Error = Some error }, None
+    | Close -> close model, None
+    | ChangeRole (documentId, role) when model.Project.IsSome && model.ChangingRole.IsNone ->
+        { model with ChangingRole = Some documentId; RoleStale = false; Error = None },
+        Some (SendRole (model.Project.Value, documentId, role))
+    | RoleChanged (projectId, result) when model.ChangingRole.IsSome ->
+        let stale = model.RoleStale
+        let model = { model with ChangingRole = None; RoleStale = false }
+        if stale || model.Project <> Some projectId then model, None
+        else
+            match result with
+            | Ok () -> model, Some RefreshProject
+            | Error error -> { model with Error = Some error }, None
+    | _ -> model, None

@@ -29,7 +29,7 @@ let map (app: WebApplication) (configuration: WorkspaceConfiguration) =
         | Error DocumentNotFound -> return LibraryEndpoints.problem 404 "document_not_found" "Document not found"
         | Error DocumentUnavailable ->
             return LibraryEndpoints.problem 503 "document_unavailable"
-                       "The document's stored file is missing or unreadable. Its library record and associations are unchanged."
+                       "The document's stored file is missing, unreadable or not the recorded size. Its library record and associations are unchanged."
         | Ok content ->
             context.Response.Headers.ContentDisposition <- "inline"
             context.Response.Headers.XContentTypeOptions <- "nosniff"

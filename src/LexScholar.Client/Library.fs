@@ -160,6 +160,9 @@ let update (message: Message) (model: Model) : Model * Effect option =
         | Some projectId ->
             let model, project = nextProject model
             model, Some (FetchAll (library, Some (projectId, project)))
+    | ReloadProject when model.Project.IsSome ->
+        let model, request = nextProject model
+        model, Some (FetchProject (model.Project.Value, request))
     | Upload file when model.Busy.IsNone ->
         { model with Busy = Some Uploading; Notice = None; Error = None }, Some (SendUpload file)
     | Uploaded result when model.Busy = Some Uploading ->
