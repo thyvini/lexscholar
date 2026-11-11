@@ -67,7 +67,8 @@ module Api =
     let private libraryDocument (element: JsonElement) : Library.Document =
         { Id = element.GetProperty("id").GetGuid()
           FileName = element.GetProperty("originalFileName").GetString()
-          PageCount = element.GetProperty("pageCount").GetInt32() }
+          PageCount = element.GetProperty("pageCount").GetInt32()
+          ContentUrl = element.GetProperty("contentUrl").GetString() }
 
     let private role (value: string) =
         match value with
@@ -140,12 +141,34 @@ module Api =
         let! result = send http HttpMethod.Delete $"api/projects/{projectId:D}/documents/{documentId:D}" None
         return result |> Result.map ignore }
 
-/// The whole page: projects and the shared library.
-type State = { Projects: Model; Library: Library.Model }
+    /// Check availability without downloading the entire PDF before the native viewer opens it.
+    let checkContent (http: HttpClient) (url: string) = async {
+        try
+            use request = new HttpRequestMessage(HttpMethod.Get, url)
+            request.Headers.Range <- Headers.RangeHeaderValue(Nullable 0L, Nullable 0L)
+            use! response = http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead) |> Async.AwaitTask
+            if response.IsSuccessStatusCode then return Ok ()
+            else
+                let! body = response.Content.ReadAsStringAsync() |> Async.AwaitTask
+                return Error (Reader.parseFailure (int response.StatusCode) body)
+        with _ -> return Error Reader.RequestFailed }
+
+    let changeRole (http: HttpClient) (projectId: Guid) (documentId: Guid) documentRole = async {
+        let body = JsonSerializer.Serialize({| role = roleName documentRole |})
+        let content = new StringContent(body, Encoding.UTF8, "application/json") :> HttpContent
+        let! result = send http HttpMethod.Patch $"api/projects/{projectId:D}/documents/{documentId:D}" (Some content)
+        return result |> Result.map ignore |> Result.mapError (function
+            | Library.NotFound -> Reader.AssociationNotFound
+            | Library.InvalidRole -> Reader.InvalidRole
+            | _ -> Reader.RequestFailed) }
+
+/// The whole page: projects, shared library and native reader.
+type State = { Projects: Model; Library: Library.Model; Reader: Reader.Model }
 
 type Msg =
     | ProjectsMsg of Message
     | LibraryMsg of Library.Message
+    | ReaderMsg of Reader.Message
 
 module private Ui =
     let command http = function
@@ -177,7 +200,23 @@ module private Ui =
 
     let private updateLibrary http message state =
         let library, effect = Library.update message state.Library
-        { state with Library = library }, effect |> Option.map (libraryCommand http) |> Option.defaultValue Cmd.none
+        let reader, _ = Reader.update (Reader.ActiveProjectChanged library.Project) state.Reader
+        let reader, _ =
+            if library.HasLoadedProject then
+                Reader.update (Reader.AssociationsChanged (library.Associations |> List.map (fun item -> item.Document.Id))) reader
+            else reader, None
+        { state with Library = library; Reader = reader }, effect |> Option.map (libraryCommand http) |> Option.defaultValue Cmd.none
+
+    let private updateReader http message state =
+        let reader, effect = Reader.update message state.Reader
+        let state = { state with Reader = reader }
+        match effect with
+        | Some Reader.RefreshProject -> updateLibrary http Library.ReloadProject state
+        | Some (Reader.CheckContent (request, url)) ->
+            state, Cmd.OfAsync.perform (Api.checkContent http) url (fun result -> ReaderMsg (Reader.ContentChecked (request, result)))
+        | Some (Reader.SendRole (projectId, documentId, role)) ->
+            state, Cmd.OfAsync.perform (fun () -> Api.changeRole http projectId documentId role) () (fun result -> ReaderMsg (Reader.RoleChanged (projectId, result)))
+        | None -> state, Cmd.none
 
     let update http msg state =
         match msg with
@@ -199,6 +238,7 @@ module private Ui =
                 state, Cmd.batch [ projectCommand; libraryCommand ]
             else state, projectCommand
         | LibraryMsg message -> updateLibrary http message state
+        | ReaderMsg message -> updateReader http message state
 
     let errorText = function
         | InvalidName -> "Enter a project name that is not blank."
@@ -224,7 +264,7 @@ module private Ui =
 
     let pages count = if count = 1 then "1 page" else $"{count} pages"
 
-    let libraryView (library: Library.Model) dispatch =
+    let libraryView (library: Library.Model) (reader: Reader.Model) readerDispatch dispatch =
         let busy = library.Busy.IsSome
         let associated = library.Associations |> List.map (fun item -> item.Document.Id) |> Set.ofList
         concat {
@@ -298,6 +338,18 @@ module private Ui =
                                         strong { attr.``class`` "role"; text (roleLabel association.Role) }
                                         button {
                                             attr.``type`` "button"
+                                            on.click (fun _ -> readerDispatch (Reader.Open { Id = association.Document.Id; FileName = association.Document.FileName; ContentUrl = association.Document.ContentUrl }))
+                                            "Open"
+                                        }
+                                        button {
+                                            attr.``type`` "button"
+                                            attr.disabled (busy || reader.ChangingRole.IsSome)
+                                            let role = if association.Role = FocusedSource then ReferenceSource else FocusedSource
+                                            on.click (fun _ -> readerDispatch (Reader.ChangeRole (association.Document.Id, role)))
+                                            text $"Make {roleLabel role}"
+                                        }
+                                        button {
+                                            attr.``type`` "button"
                                             attr.disabled busy
                                             on.click (fun _ -> dispatch (Library.Remove association.Document.Id))
                                             "Remove"
@@ -358,7 +410,40 @@ module private Ui =
                 }
                 button { attr.``type`` "button"; attr.disabled busy; on.click (fun _ -> dispatch Reload); "Refresh" }
             }
-            libraryView state.Library (LibraryMsg >> dispatch')
+            libraryView state.Library state.Reader (ReaderMsg >> dispatch') (LibraryMsg >> dispatch')
+            cond state.Reader.Error <| function
+                | Some error ->
+                    p {
+                        "role" => "alert"
+                        attr.``class`` "error"
+                        text (match error with
+                              | Reader.Unavailable -> "This document's stored file is missing, unreadable or not the recorded size. Its library record and project associations are unchanged."
+                              | Reader.DocumentNotFound -> "That document is no longer in the library. Refresh and try again."
+                              | Reader.AssociationNotFound -> "That association is no longer available. Refresh and try again."
+                              | Reader.InvalidRole -> "Choose Focused Source or Reference Source."
+                              | Reader.RequestFailed -> "The request failed. Please try again.")
+                    }
+                | None -> empty ()
+            cond state.Reader.Opening <| function
+                | Some _ -> p { "role" => "status"; "Opening document…" }
+                | None -> empty ()
+            cond state.Reader.Open <| function
+                | Some document ->
+                    section {
+                        attr.``class`` "card reader"
+                        h2 { "Reader" }
+                        p { text document.FileName }
+                        p { "Use your browser's PDF viewer controls to navigate pages." }
+                        a { attr.href document.ContentUrl; "target" => "_blank"; "rel" => "noopener"; "Open in new tab" }
+                        button { attr.``type`` "button"; on.click (fun _ -> dispatch' (ReaderMsg Reader.Close)); "Close" }
+                        iframe {
+                            attr.``class`` "reader-frame"
+                            "title" => document.FileName
+                            "src" => document.ContentUrl
+                            "style" => "width:100%;height:75vh;border:0"
+                        }
+                    }
+                | None -> empty ()
         }
 
 type App() =
@@ -369,7 +454,7 @@ type App() =
         let http = new HttpClient(BaseAddress = Uri(this.Navigation.BaseUri))
         let start _ =
             let library, libraryEffect = Library.update Library.LoadLibrary Library.initial
-            { Projects = { initial with Busy = Some Loading }; Library = library },
+            { Projects = { initial with Busy = Some Loading }; Library = library; Reader = Reader.initial },
             Cmd.batch [ Ui.command http Fetch |> Cmd.map ProjectsMsg
                         libraryEffect |> Option.map (Ui.libraryCommand http) |> Option.defaultValue Cmd.none ]
         Program.mkProgram start (Ui.update http) Ui.view

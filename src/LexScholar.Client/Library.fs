@@ -6,7 +6,7 @@ open System
 open Microsoft.AspNetCore.Components.Forms
 open LexScholar.Domain
 
-type Document = { Id: Guid; FileName: string; PageCount: int }
+type Document = { Id: Guid; FileName: string; PageCount: int; ContentUrl: string }
 type Association = { Document: Document; Role: DocumentRole }
 
 type Failure =
@@ -57,6 +57,8 @@ type Message =
     | ProjectLoaded of projectId: Guid * request: int * Result<Association list, Failure>
     /// Reloads the library and the active project's documents, for example to retry after a failure.
     | Refresh
+    /// Reloads only the active project's documents, for example after a role change.
+    | ReloadProject
     | Upload of IBrowserFile
     | Uploaded of Result<UploadNotice, Failure>
     | Associate of documentId: Guid * DocumentRole
@@ -158,6 +160,9 @@ let update (message: Message) (model: Model) : Model * Effect option =
         | Some projectId ->
             let model, project = nextProject model
             model, Some (FetchAll (library, Some (projectId, project)))
+    | ReloadProject when model.Project.IsSome ->
+        let model, request = nextProject model
+        model, Some (FetchProject (model.Project.Value, request))
     | Upload file when model.Busy.IsNone ->
         { model with Busy = Some Uploading; Notice = None; Error = None }, Some (SendUpload file)
     | Uploaded result when model.Busy = Some Uploading ->

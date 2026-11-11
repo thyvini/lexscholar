@@ -5,6 +5,8 @@
   <ItemGroup>
     <Compile Include="Projects.fs" />
     <Compile Include="Library.fs" />
+    <!-- Reader state depends on domain roles; App wires its effects and rendering. -->
+    <Compile Include="Reader.fs" />
     <Compile Include="App.fs" />
     <Compile Include="Program.fs" />
     <ProjectReference Include="../LexScholar.Domain/LexScholar.Domain.fsproj" />
