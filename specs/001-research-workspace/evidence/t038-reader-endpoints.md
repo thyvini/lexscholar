@@ -34,7 +34,7 @@ CachyOS (Linux 7.3.3-1-cachyos), .NET SDK 10.0.114, Microsoft.Playwright 1.64.1 
 
 ## RED
 
-T034's tests are T038's RED (commit `53c59e8` after the rebase). I re-ran them on the rebased branch (`6415bfa`) before implementing:
+T034's tests are T038's RED (commit `a7b7e13` after the rebase). I re-ran them on the rebased branch (`6415bfa`) before implementing:
 
 ```sh
 dotnet test --project tests/LexScholar.Server.Tests/LexScholar.Server.Tests.fsproj --configuration Release --no-build --filter-trait 'Task=T034'

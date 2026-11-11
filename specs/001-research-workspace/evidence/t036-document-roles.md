@@ -32,11 +32,11 @@ The lead approved the shared-file changes (Application `.fsproj` line, `Library.
 
 ## Environment
 
-CachyOS (Linux 7.3.3-1-cachyos), .NET SDK 10.0.114. Branch based on `4e131a9`. Tests ran as uid 1000.
+CachyOS (Linux 7.3.3-1-cachyos), .NET SDK 10.0.114. Written on `4e131a9` and rebased onto `8210007`; the commit hashes below are the rebased ones. Tests ran as uid 1000.
 
 ## RED
 
-Commit `59637bb`. The repository `changeRole` was a stub that returned `Error AssociationNotFound` for every call.
+Commit `9ec490b`. The repository `changeRole` was a stub that returned `Error AssociationNotFound` for every call.
 
 ```sh
 dotnet build LexScholar.sln -c Release --no-restore -warnaserror
@@ -50,7 +50,7 @@ dotnet test --project tests/LexScholar.Infrastructure.Tests/LexScholar.Infrastru
 
 ## GREEN
 
-Commit `1de6b7e`. T036 filter: 2/2 passed.
+Commit `9b116be`. T036 filter: 2/2 passed.
 
 Sensitivity check (temporary, not committed; the file was restored and rebuilt afterwards): changing the update to set the role on every association of the document, ignoring the project, made "changing a role in one project leaves the other project's role unchanged" fail. The rejection test still passed.
 

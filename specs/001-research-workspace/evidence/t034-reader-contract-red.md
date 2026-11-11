@@ -33,16 +33,16 @@ The unreadable case checks its own precondition. After `chmod 000` it asserts th
 
 ### T037 review follow-ups (PR #19, recorded in tasks.md)
 
-- **(b)** `ContentAvailabilityTests.fs`: the `Environment.UserName <> "root"` precondition was replaced with the same `File.OpenRead`-throws check after `chmod 000`. Commit `4a509ad`.
-- **(a)** `VerifiedDocumentContent.fs`: `tryOpen` now takes the recorded length. It reads `stream.Length` inside the same `try`, and disposes the handle whenever it is not returned, including when reading the length throws. An fstat failure now returns `DocumentUnavailable` without leaking the handle. Commit `02cd3d6`. There is no test first: a failing `fstat` on an open handle can't be set up without a test-only seam, and adding one isn't justified (Principle V). The existing T035 cases cover both the length mismatch and the open failure.
+- **(b)** `ContentAvailabilityTests.fs`: the `Environment.UserName <> "root"` precondition was replaced with the same `File.OpenRead`-throws check after `chmod 000`. Commit `e1f0c08`.
+- **(a)** `VerifiedDocumentContent.fs`: `tryOpen` now takes the recorded length. It reads `stream.Length` inside the same `try`, and disposes the handle whenever it is not returned, including when reading the length throws. An fstat failure now returns `DocumentUnavailable` without leaking the handle. Commit `9c63148`. There is no test first: a failing `fstat` on an open handle can't be set up without a test-only seam, and adding one isn't justified (Principle V). The existing T035 cases cover both the length mismatch and the open failure.
 
 ## Environment
 
-CachyOS (Linux 7.3.3-1-cachyos), .NET SDK 10.0.114. Written on `fa32db6` (release/0.1.0 after #18 and #19) and rebased onto `4e131a9` (after #20 and #21); the commit hashes below are the rebased ones. Tests ran as uid 1000 (not root).
+CachyOS (Linux 7.3.3-1-cachyos), .NET SDK 10.0.114. Written on `fa32db6` (release/0.1.0 after #18 and #19) and rebased onto `4e131a9` (after #20 and #21) and then `8210007` (after #22); the commit hashes below are the final rebased ones. Tests ran as uid 1000 (not root).
 
 ## RED
 
-T034 commit `53c59e8`.
+T034 commit `a7b7e13`.
 
 ```sh
 dotnet restore LexScholar.sln -warnaserror
@@ -52,7 +52,7 @@ dotnet test --project tests/LexScholar.Server.Tests/LexScholar.Server.Tests.fspr
 ```
 
 - Restore and build succeeded with 0 warnings and 0 errors.
-- The suite without T034, run at `02cd3d6` (including both T037 follow-ups and browser journeys), passed 268/268 with 0 skipped.
+- The suite without T034, run at `9c63148` (including both T037 follow-ups and browser journeys), passed 268/268 with 0 skipped.
 - The T034 run intentionally exits 2: 13 total, 13 failed, 0 succeeded, 0 skipped.
   - Every failure is the status assertion: `Assert.Equal() Failure: Values differ`, with `Expected: OK / PartialContent / RequestedRangeNotSatisfiable / NotFound / BadRequest / ServiceUnavailable` and, in all 13 cases, `Actual: NotImplemented`. That is the T045 route stub's 501.
   - `expectStatus` first asserts the status is not 403, and every PATCH passed that check: the requests carried valid antiforgery tokens and reached the route stub.
