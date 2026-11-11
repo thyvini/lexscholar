@@ -44,11 +44,12 @@ Each statement was checked against `release/0.1.0` at `fa32db6`. If a claim depe
 | Local only, no cloud services | No outbound clients in `src/`; research.md "Security and privacy" |
 | Listens only on 127.0.0.1, port 5000, `LexScholar:Port` | `HostSecurity.configure` (`options.Listen(IPAddress.Loopback, port)`, configuration endpoints dropped); `Program.create` |
 | Rejects requests from other websites | `HostSecurity.useSecurity` Host/Origin checks and antiforgery |
-| Identical bytes stored once, even under a different filename; SHA-256 only narrows candidates, then byte comparison | `src/LexScholar.Application/ImportDocument.fs` (`contentEquals`); `LibraryTests.fs` (T021). Through the UI: depends on T031/T032 |
+| Identical bytes stored once, even under a different filename; SHA-256 only narrows candidates, then byte comparison | `src/LexScholar.Application/ImportDocument.fs` (`contentEquals`); `LibraryTests.fs` (T021); over HTTP `LibraryEndpoints.fs` and `LibraryContractTests.fs` (T031, merged in #22). The library UI is T032 |
 | Filename for display only | `ImportDocument.sanitizeFileName`; data-model.md `OriginalFileName` |
-| Removing a document from a project keeps it in the library | Depends on **T030** (not merged); data-model.md "Association removal" |
-| Unavailable on open (exists, readable, recorded size), records kept; same-size changes not detected | `src/LexScholar.Infrastructure/VerifiedDocumentContent.fs` and `ContentAvailabilityTests.fs` (T037, merged in #19); over HTTP depends on **T038** (not merged); research.md "Document availability on open" |
+| Removing a document from a project keeps it in the library | `Library.remove` and `LibraryRepository.removeAssociation`, `LibraryTests.fs` (T030, merged in #21); over HTTP `LibraryContractTests.fs` DELETE (T031, #22) |
+| Unavailable on open (exists, readable, recorded size), records kept; same-size changes not detected | `src/LexScholar.Infrastructure/VerifiedDocumentContent.fs` and `ContentAvailabilityTests.fs` (T037, merged in #19); over HTTP `ReaderEndpoints.fs` 503 `document_unavailable` and `ReaderContractTests.fs` (T034/T038, merged in #24); research.md "Document availability on open" |
 | Startup log line `Using data directory <path>.` (Information, local log only) | `Program.createHost` `LogInformation`; `WorkspaceStartupTests.fs` (T043) |
+| Run from the publish directory or with `--contentRoot`, otherwise the browser app's files are not found | CLAUDE.md ("Commands"); `Program.createHost` serves the client from the content root (`StaticWebAssetsLoader`, `MapStaticAssets`) |
 | Linux with Firefox and Chromium; browser's own viewer | research.md "Runtime, UI, hosting, and support" and "Document delivery and native viewer boundary" |
 | Limits 100,000,000 bytes and 2,000 pages, keys `LexScholar:ImportLimits:MaxBytes`/`MaxPages` | `Configuration.MaxBytesKey`, `MaxPagesKey`, `Configuration.load` defaults |
 | Non-integer, zero or negative limit stops startup with the setting named | `Configuration.limit`; `describeStartupError` (`InvalidLimit`, `NonPositiveLimit`) |
@@ -90,7 +91,19 @@ dotnet test --solution LexScholar.sln --configuration Release --no-build
 
 Restore and build succeeded with 0 warnings and 0 errors. The full suite passed 269/269, including the new T043 test, with 0 skipped, browser journeys included.
 
+## Recheck after T038 (2026-11-11)
+
+Commit `e04546b` ("recheck local workspace doc after T038") updated the claim rows below for T030, T031 and T038; the PR #25 review fix followed.
+
+As planned when T038 merged (#24, `b96caa4`):
+- the broad status line was replaced by a narrower one (PR #25 review). It now says the screens cover projects, and that importing, the shared library and reading are implemented in the server while their screens are still being built (T032, T039);
+- the page now says to start LexScholar from the publish directory or with `--contentRoot` (PR #20 review follow-up);
+- the T030, T031 and T038 claims now cite merged code;
+- the recheck note under T043 in `tasks.md` was retargeted: after T032 and T039 merge, remove the status line and recheck the user-facing sentences against the screens.
+
+Docs only: the full suite was re-run to confirm nothing changed (see the PR description).
+
 ## Limitations
 
 - The environment-variable and command-line forms were checked once by hand (see GREEN). The test covers only the log entry, not console formatting.
-- Claims marked as depending on T030 or T038 describe the specified behavior, which is not yet observable through the app. The page must be rechecked when T038 merges.
+- The library and reader screens (T032, T039) are not built yet. The server implements the storage and data handling this page describes, and the status line says the screens are still in progress. The page must be rechecked against the screens after T032 and T039 merge.
