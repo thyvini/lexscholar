@@ -71,8 +71,12 @@ let ``all contract routes are reachable with expected behavior`` () =
             request.Headers.Add("X-CSRF-TOKEN", token)
         use response = harness.Client.Send(request)
         let expected =
-            if path = "/api/projects" && method = HttpMethod.Get then HttpStatusCode.OK
-            elif path = "/api/projects" then HttpStatusCode.BadRequest
+            if (path = "/api/projects" || path = "/api/documents") && method = HttpMethod.Get then HttpStatusCode.OK
+            elif path = "/api/projects" || path = "/api/documents" then HttpStatusCode.BadRequest
             elif path.EndsWith("/active") then HttpStatusCode.NotFound
+            // Library and association routes (T031); unknown ids and empty bodies.
+            elif path.EndsWith("/documents") && method = HttpMethod.Get then HttpStatusCode.NotFound
+            elif path.EndsWith("/documents") then HttpStatusCode.BadRequest
+            elif method = HttpMethod.Delete then HttpStatusCode.NotFound
             else HttpStatusCode.NotImplemented
         Assert.Equal(expected, response.StatusCode)

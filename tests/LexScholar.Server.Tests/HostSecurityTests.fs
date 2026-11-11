@@ -130,6 +130,9 @@ let ``same-origin token and cookie permit each contract mutation`` () =
         let expected =
             if path = "/api/projects" then HttpStatusCode.BadRequest
             elif path.EndsWith("/active") then HttpStatusCode.NotFound
+            // Library and association routes (T031): invalid bodies and unknown ids.
+            elif path = "/api/documents" || (path.EndsWith("/documents") && method = HttpMethod.Post) then HttpStatusCode.BadRequest
+            elif method = HttpMethod.Delete then HttpStatusCode.NotFound
             else HttpStatusCode.NotImplemented
         Assert.Equal(expected, response.StatusCode)
 
