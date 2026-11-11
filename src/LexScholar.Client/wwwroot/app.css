@@ -13,3 +13,8 @@ button:disabled { cursor: default; opacity: .55; }
 .projects { padding: 0; list-style: none; }
 .projects li { display: flex; align-items: center; justify-content: space-between; gap: 1rem; border-bottom: 1px solid #e5e9ee; padding: .65rem 0; }
 .active { color: #175c42; }
+.documents, .project-documents { padding: 0; list-style: none; }
+.documents li, .project-documents li { display: flex; align-items: center; justify-content: space-between; gap: 1rem; border-bottom: 1px solid #e5e9ee; padding: .65rem 0; }
+.actions { display: flex; gap: .5rem; }
+.role { color: #175c42; margin-left: auto; }
+small { color: #596778; }
