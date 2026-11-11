@@ -128,6 +128,9 @@ let create (dependencies: ImportDependencies) : Import =
             match document with
             | Error error -> return invalidOp $"The validated PDF produced an invalid document: {error}."
             | Ok document ->
+                // An insertion error does not establish whether SQLite committed.
+                // Preserve promoted bytes; startup quarantines only unreferenced
+                // originals, and never removes bytes a committed row references.
                 do! dependencies.Insert document CancellationToken.None
                 return { Document = document; Reused = false } }
 

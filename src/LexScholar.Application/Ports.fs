@@ -56,4 +56,6 @@ type OpenStoredOriginal = string -> CancellationToken -> Task<Stream>
 type FindDocumentsBySha256 = string -> CancellationToken -> Task<LibraryDocument list>
 
 /// Insert a new library document row.
+/// A fault does not prove the row was not committed. Callers must not delete
+/// promoted bytes on that assumption; startup checks actual row references.
 type InsertDocument = LibraryDocument -> CancellationToken -> Task<unit>
