@@ -133,7 +133,8 @@ let ``same-origin token and cookie permit each contract mutation`` () =
             // Library and association routes (T031): invalid bodies and unknown ids.
             elif path = "/api/documents" || (path.EndsWith("/documents") && method = HttpMethod.Post) then HttpStatusCode.BadRequest
             elif method = HttpMethod.Delete then HttpStatusCode.NotFound
-            else HttpStatusCode.NotImplemented
+            // Role change (T038): the body is not a valid role.
+            else HttpStatusCode.BadRequest
         Assert.Equal(expected, response.StatusCode)
 
 [<Fact; Trait("Task", "T009")>]
@@ -302,7 +303,8 @@ let ``document GET needs no antiforgery token and accepts ranges`` () =
     use request = new HttpRequestMessage(HttpMethod.Get, $"/api/documents/{Guid.NewGuid()}/content")
     request.Headers.TryAddWithoutValidation("Range", "bytes=0-7") |> ignore
     use response = harness.Client.Send(request)
-    Assert.Equal(HttpStatusCode.NotImplemented, response.StatusCode)
+    // Reaches the content route without a token (T038): an unknown id is 404, not 403.
+    Assert.Equal(HttpStatusCode.NotFound, response.StatusCode)
 
 [<Theory; Trait("Task", "T009")>]
 [<InlineData("Testing")>]

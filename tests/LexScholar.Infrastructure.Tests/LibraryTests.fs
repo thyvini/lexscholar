@@ -448,3 +448,35 @@ let ``listing an unknown project is rejected and an empty project lists nothing`
     let project = addProjects workspace.Path 1 |> List.head
     assertResult (Error Library.AssociationError.ProjectNotFound) (Library.listForProject store (Guid.NewGuid()))
     assertResult (Ok []) (Library.listForProject store project)
+
+// Project-scoped role changes (T036), through the DocumentRoles workflow over
+// the real repository.
+
+[<Fact; Trait("Task", "T036")>]
+let ``changing a role in one project leaves the other project's role unchanged`` () =
+    use workspace = new Workspace()
+    let store = libraryStore workspace.Path
+    let document = importDocument workspace.Path "valid.pdf"
+    let projects = addProjects workspace.Path 2
+    let changed = Library.associate store projects[0] document.Id FocusedSource |> associated
+    let other = Library.associate store projects[1] document.Id FocusedSource |> associated
+    let expected = { changed with Role = ReferenceSource }
+    assertResult (Ok expected) (DocumentRoles.changeRole (LibraryRepository.changeRole workspace.Path) projects[0] document.Id ReferenceSource)
+    assertResult (Ok [ expected ]) (Library.listForProject store projects[0])
+    assertResult (Ok [ other ]) (Library.listForProject store projects[1])
+    assertResult [ document ] (rows workspace.Path)
+
+[<Fact; Trait("Task", "T036")>]
+let ``changing a role for an unknown project or an unassociated document is rejected without changes`` () =
+    use workspace = new Workspace()
+    let store = libraryStore workspace.Path
+    let document = importDocument workspace.Path "valid.pdf"
+    let unassociated = importDocument workspace.Path "distinct.pdf"
+    let project = addProjects workspace.Path 1 |> List.head
+    Library.associate store project document.Id FocusedSource |> associated |> ignore
+    let before = associations workspace.Path
+    let changeRole = DocumentRoles.changeRole (LibraryRepository.changeRole workspace.Path)
+    assertResult (Error DocumentRoles.RoleChangeError.AssociationNotFound) (changeRole (Guid.NewGuid()) document.Id ReferenceSource)
+    assertResult (Error DocumentRoles.RoleChangeError.AssociationNotFound) (changeRole project unassociated.Id ReferenceSource)
+    assertResult before (associations workspace.Path)
+    assertResult (set [ document; unassociated ]) (rows workspace.Path |> Set.ofList)

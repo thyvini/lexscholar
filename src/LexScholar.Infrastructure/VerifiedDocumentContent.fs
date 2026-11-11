@@ -9,9 +9,20 @@ open System.IO
 open Microsoft.EntityFrameworkCore
 open LexScholar.Application
 
-let private tryOpen (path: string) : Stream option =
-    try Some (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 81_920, FileOptions.Asynchronous) :> Stream)
-    with :? IOException | :? UnauthorizedAccessException -> None
+/// Opens the original read-only and returns it only if the opened handle's
+/// length equals the recorded byte length. The handle is disposed whenever it is
+/// not returned, including when reading its length fails.
+let private tryOpen (path: string) (byteLength: int64) : Stream option =
+    let mutable stream : FileStream = null
+    try
+        stream <- new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 81_920, FileOptions.Asynchronous)
+        if stream.Length = byteLength then Some (stream :> Stream)
+        else
+            stream.Dispose()
+            None
+    with :? IOException | :? UnauthorizedAccessException ->
+        if not (isNull stream) then stream.Dispose()
+        None
 
 let openRead (dataDirectory: string) : OpenVerifiedContent =
     fun documentId cancellationToken -> task {
@@ -23,10 +34,7 @@ let openRead (dataDirectory: string) : OpenVerifiedContent =
             return Error DocumentNotFound
         else
             // The storage key comes only from the record, never from the request.
-            match tryOpen (Path.Combine(DocumentStore.originalsDirectory dataDirectory, row.StorageKey)) with
+            match tryOpen (Path.Combine(DocumentStore.originalsDirectory dataDirectory, row.StorageKey)) row.ByteLength with
             | None -> return Error DocumentUnavailable
-            | Some stream when stream.Length <> row.ByteLength ->
-                stream.Dispose()
-                return Error DocumentUnavailable
             | Some stream ->
                 return Ok { Stream = stream; ByteLength = row.ByteLength; OriginalFileName = row.OriginalFileName } }
