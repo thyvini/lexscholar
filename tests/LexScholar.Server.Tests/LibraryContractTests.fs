@@ -205,6 +205,70 @@ let ``POST accepts bodies above the server's default request size up to the conf
     Assert.Empty(documentIds harness.Client)
     Assert.Empty(files (Path.Combine(harness.Root, "staging")))
 
+[<Theory; Trait("Task", "T023")>]
+[<InlineData("missing-colon")>]
+[<InlineData("header-count")>]
+[<InlineData("header-length")>]
+let ``POST rejects malformed multipart headers with 400 and preserves existing data`` (kind: string) =
+    use harness = TestHarness.Start()
+    let csrf = token harness.Client
+    let project = seedProjects harness.Root 1 |> List.head
+    let existing = imported harness.Client csrf "valid.pdf"
+    use association = associate harness.Client csrf project existing "FocusedSource"
+    expectStatus HttpStatusCode.Created association
+    let originals = files (Path.Combine(harness.Root, "originals"))
+    let original = Path.Combine(harness.Root, "originals", List.exactlyOne originals)
+    let before = File.ReadAllBytes(original)
+    let mode = File.GetUnixFileMode(original)
+    let disposition = "Content-Disposition: form-data; name=\"file\"; filename=\"private.pdf\"\r\n"
+    let headers =
+        match kind with
+        | "missing-colon" -> disposition + "Malformed private header\r\n"
+        | "header-count" -> disposition + String.concat "" [ for index in 1 .. 16 -> $"X-Header-{index}: value\r\n" ]
+        | "header-length" -> disposition + "X-Long: " + String('x', 16_385) + "\r\n"
+        | _ -> failwith "Unknown multipart case"
+    use content = new ByteArrayContent(Encoding.UTF8.GetBytes("--upload-boundary\r\n" + headers + "\r\nignored\r\n--upload-boundary--\r\n"))
+    content.Headers.ContentType <- MediaTypeHeaderValue.Parse("multipart/form-data; boundary=upload-boundary")
+    use message = request harness.Client HttpMethod.Post "/api/documents" csrf (Some content)
+    use response = harness.Client.Send(message)
+    // Include the actual safe problem in RED output, not only the status.
+    Assert.True(response.StatusCode = HttpStatusCode.BadRequest,
+                $"Expected 400 for {kind}; actual {int response.StatusCode}: {body response}")
+    expectProblem HttpStatusCode.BadRequest "not_a_pdf" harness.Root response
+    Assert.DoesNotContain("private", body response)
+    Assert.Contains("multipart form field 'file'", body response)
+    Assert.Equal<Guid list>([ existing ], documentIds harness.Client)
+    Assert.Equal<(Guid * Guid * string) list>([ project, existing, "FocusedSource" ], projectDocuments harness.Client project)
+    Assert.Equal<string list>(originals, files (Path.Combine(harness.Root, "originals")))
+    Assert.Equal<byte>(before, File.ReadAllBytes(original))
+    Assert.Equal(mode, File.GetUnixFileMode(original))
+    Assert.Empty(files (Path.Combine(harness.Root, "staging")))
+
+[<Fact; Trait("Task", "T023")>]
+let ``POST storage failure remains a safe 500 rather than malformed multipart`` () =
+    use harness = TestHarness.Start()
+    let csrf = token harness.Client
+    let existing = imported harness.Client csrf "valid.pdf"
+    let original = Path.Combine(harness.Root, "originals", files (Path.Combine(harness.Root, "originals")) |> List.exactlyOne)
+    let before = File.ReadAllBytes(original)
+    let mode = File.GetUnixFileMode(original)
+    // Arrange a genuine filesystem error after startup, without production hooks.
+    let staging = Path.Combine(harness.Root, "staging")
+    Directory.Delete(staging)
+    File.WriteAllText(staging, "not a directory")
+    try
+        use response = upload harness.Client csrf (fixture "distinct.pdf") "private.pdf"
+        expectProblem HttpStatusCode.InternalServerError "internal_error" harness.Root response
+        Assert.DoesNotContain("private.pdf", body response)
+        Assert.Equal<Guid list>([ existing ], documentIds harness.Client)
+        Assert.Equal<byte>(before, File.ReadAllBytes(original))
+        Assert.Equal(mode, File.GetUnixFileMode(original))
+        Assert.Single(files (Path.Combine(harness.Root, "originals"))) |> ignore
+        Assert.Equal("not a directory", File.ReadAllText(staging))
+    finally
+        File.Delete(staging)
+        Directory.CreateDirectory(staging) |> ignore
+
 [<Fact; Trait("Task", "T023")>]
 let ``simultaneous uploads of the same PDF all succeed with the same document`` () =
     use harness = TestHarness.Start()
