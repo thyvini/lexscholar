@@ -93,15 +93,17 @@ Restore and build succeeded with 0 warnings and 0 errors. The full suite passed 
 
 ## Recheck after T038 (2026-11-11)
 
+Commit `e04546b` ("recheck local workspace doc after T038") updated the claim rows below for T030, T031 and T038; the PR #25 review fix followed.
+
 As planned when T038 merged (#24, `b96caa4`):
-- the status line was removed from the page;
+- the broad status line was replaced by a narrower one (PR #25 review). It now says the screens cover projects, and that importing, the shared library and reading are implemented in the server while their screens are still being built (T032, T039);
 - the page now says to start LexScholar from the publish directory or with `--contentRoot` (PR #20 review follow-up);
 - the T030, T031 and T038 claims now cite merged code;
-- the recheck note under T043 in `tasks.md` was removed.
+- the recheck note under T043 in `tasks.md` was retargeted: after T032 and T039 merge, remove the status line and recheck the user-facing sentences against the screens.
 
 Docs only: the full suite was re-run to confirm nothing changed (see the PR description).
 
 ## Limitations
 
 - The environment-variable and command-line forms were checked once by hand (see GREEN). The test covers only the log entry, not console formatting.
-- The library and reader UI (T032, T039) are not part of this page. It describes storage and data handling, which the server now implements in full.
+- The library and reader screens (T032, T039) are not built yet. The server implements the storage and data handling this page describes, and the status line says the screens are still in progress. The page must be rechecked against the screens after T032 and T039 merge.
