@@ -74,6 +74,10 @@ let ``a PDF of exactly the configured byte limit is accepted`` () =
     assertResult validPdf (validate { defaults with MaxBytes = 753L } "valid.pdf")
 
 [<Fact; Trait("Task", "T020")>]
+let ``a valid PDF is accepted at the largest configurable byte limit`` () =
+    assertResult validPdf (validate { defaults with MaxBytes = Int64.MaxValue } "valid.pdf")
+
+[<Fact; Trait("Task", "T020")>]
 let ``a PDF one byte over the configured byte limit is rejected as too large`` () =
     assertResult (Error (TooLarge 752L)) (validate { defaults with MaxBytes = 752L } "valid.pdf")
 

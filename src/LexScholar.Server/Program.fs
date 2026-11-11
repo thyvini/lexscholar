@@ -46,6 +46,8 @@ let private createHost (builder: WebApplicationBuilder) (serveClient: bool) port
                     let cleanup = StorageCleanup.run configuration.DataDirectory
                     for storageKey in cleanup.Quarantined do
                         app.Logger.LogWarning("Moved unreferenced original {StorageKey} to quarantine.", storageKey)
+                    for storageKey in cleanup.Conflicting do
+                        app.Logger.LogWarning("Left unreferenced original {StorageKey} in place: quarantine already holds different content under that key.", storageKey)
                     HostSecurity.useSecurity app configuration.DataDirectory
                     if serveClient then
                         // Built applications use the development asset manifest;

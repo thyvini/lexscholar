@@ -18,7 +18,7 @@ let private measure (input: Stream) (maxBytes: int64) cancellationToken = task {
     let mutable total = 0L
     let mutable finished = false
     while not finished && total <= maxBytes do
-        let wanted = int (min (int64 buffer.Length) (maxBytes + 1L - total))
+        let wanted = int (min (int64 buffer.Length - 1L) (maxBytes - total) + 1L)
         let! read = input.ReadAsync(buffer.AsMemory(0, wanted), cancellationToken)
         if read = 0 then
             finished <- true
