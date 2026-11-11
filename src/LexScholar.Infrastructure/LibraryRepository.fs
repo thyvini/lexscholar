@@ -115,4 +115,12 @@ let removeAssociation (dataDirectory: string) (projectId: Guid) (documentId: Gui
 /// Sets the role of only this project's association with the document; other
 /// projects' associations and the document row are never changed.
 let changeRole (dataDirectory: string) : DocumentRoles.UpdateRole =
-    fun _ _ _ -> Error DocumentRoles.RoleChangeError.AssociationNotFound
+    fun projectId documentId newRole ->
+        use db = WorkspaceDb.create dataDirectory
+        let row = db.Set<ProjectDocumentRow>().Find(projectId, documentId)
+        if not (exists row) then Error DocumentRoles.RoleChangeError.AssociationNotFound
+        else
+            row.Role <- roleText newRole
+            db.SaveChanges() |> ignore
+            let document = db.Set<LibraryDocumentRow>().AsNoTracking().Single(fun document -> document.Id = documentId)
+            Ok (association row, domain document)
