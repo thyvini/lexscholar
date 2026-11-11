@@ -217,10 +217,69 @@ Run time: about 12 s for the 100 cycles. Real child-process restarts are covered
 | The byte and page boundaries: exactly at the limit is accepted, one over is rejected, and an oversized upload is read only up to MaxBytes + 1. | `PdfValidationTests` (T020) |
 | Default limits; positive overrides; malformed, zero or negative limits stop startup with a typed diagnostic. | `ConfigurationTests` (T005) |
 
-### SC-003, SC-004, SC-007
+### SC-003: identical-byte re-import and distinct content
 
-_Not yet recorded._ These are covered by the automated suite (T021/T023, T030/T034/T036, T034/T035/T042). They will be summarized here at the end of F001.
+**Automated evidence recorded; not a new test execution for this documentation change.** The following assertions cover the specified cases:
+
+| Behavior asserted | Source tests |
+|---|---|
+| Re-importing the same PDF, including with a different filename, returns the original document ID; the library has one row, one stored original and no staged files. | `tests/LexScholar.Infrastructure.Tests/LibraryTests.fs` (T021: identical-byte reuse); `tests/LexScholar.Server.Tests/LibraryContractTests.fs` (T023: POST import/reuse) |
+| Distinct bytes are stored as a separate document even if the display filename is the same; candidate identity is checked with byte-by-byte comparison, not only SHA-256. | `LibraryTests.fs` (T021: different bytes and seven direct equality cases) |
+| Eight concurrent imports of the same bytes return the same single document, without altering pre-existing project associations. | `LibraryTests.fs` (T021: concurrent identical imports); `LibraryContractTests.fs` (T023: simultaneous uploads) |
+| The actual UI reuses an import under a renamed file and shows one library row in both supported browsers. | `tests/LexScholar.Browser.Tests/LibraryJourneyTests.fs` (T033) |
+
+**Assessment:** SC-003's specified cases have automated assertion coverage. This statement reports what the existing suite tests; it does not claim unlimited possible inputs were tested.
+
+### SC-004: per-project role and association isolation
+
+**Automated evidence recorded; not a new test execution for this documentation change.**
+
+| Behavior asserted | Source tests |
+|---|---|
+| One shared document can belong to two projects with different roles, with each project's list returning its own association. | `LibraryTests.fs` (T030); `LibraryContractTests.fs` (T023) |
+| Updating a role in one project leaves the other project's role unchanged, including through PATCH. | `LibraryTests.fs` (T036); `tests/LexScholar.Server.Tests/ReaderContractTests.fs` (T034) |
+| Removing an association from one project leaves other projects' associations unchanged; removal of the final association retains the shared document and original. | `LibraryTests.fs` (T030); `LibraryContractTests.fs` (T023) |
+| Switching projects refreshes the project-specific UI; removing an association or changing a role does not leak into the other project, in Firefox and Chromium. | `LibraryJourneyTests.fs` (T033); `tests/LexScholar.Browser.Tests/ReaderJourneyTests.fs` (T040) |
+
+**Assessment:** SC-004's specified isolation cases have automated assertion coverage.
+
+### SC-007: import/open errors and data preservation
+
+**Automated evidence recorded; not a new test execution for this documentation change.**
+
+| Behavior asserted | Source tests |
+|---|---|
+| Non-PDF, corrupt, encrypted, oversize and over-page-limit uploads return the expected HTTP problem codes; rejected imports leave existing documents, stored originals and staging unchanged in the tested cases. | `LibraryContractTests.fs` (T023); `LibraryTests.fs` (T021); `PdfValidationTests.fs` (T020) |
+| The client maps import error codes to specific failures; both browser journeys display the actionable non-PDF message. | `tests/LexScholar.Browser.Tests/LibraryStateTests.fs` (T032); `LibraryJourneyTests.fs` (T033) |
+| Missing, unreadable or wrong-length originals return 503 `document_unavailable`; records and associations remain intact, including after restart. | `ReaderContractTests.fs` (T034); `tests/LexScholar.Infrastructure.Tests/ContentAvailabilityTests.fs` (T035) |
+| Both browser journeys show the unavailable-document message without opening a viewer and retain the shared library and project associations. | `ReaderJourneyTests.fs` (T040); `ReaderStateTests.fs` (T039) |
+| Safe error responses use contract codes and do not disclose private storage paths or keys. | `tests/LexScholar.Server.Tests/LocalSecurityTests.fs` (T042); `ReaderContractTests.fs` (T034) |
+
+**Assessment and limitation:** The tests assert defined response codes, specific UI messages in selected journeys, and preservation of existing data in the tested failures. They do not measure whether a first-time researcher understands every message. Also, a *post-promotion* insertion exception has the documented T029 exception: an unreferenced original may be quarantined at the next startup, or a row may already have committed despite a reported failure; neither case authorizes deletion of referenced bytes. See [post-promotion regression evidence](evidence/fix-import-insert-failure-investigation.md). Do not generalize the rejection tests into a guarantee that every exceptional failed request created no row.
 
 ## Usability evaluations (SC-001, SC-006)
 
-_Not yet recorded._ T046 is waiting for the user to run unassisted researcher evaluations. Automated browser checks are not participant evidence and are not recorded here.
+**Status: deferred, not passed or waived (T046; project-owner decision on 2026-11-11).** Formal unassisted researcher usability evaluation is postponed to a beta-validation milestone. No participant count, success rate or research-session result has been reported. Both original success thresholds remain in force:
+
+- **SC-001:** At least 90% of unassisted researcher participants create two projects, switch between them and identify the active project.
+- **SC-006:** At least 90% of unassisted researcher participants using supported Linux Firefox or Chromium open an associated PDF and navigate to a specified page.
+
+When the beta evaluation is conducted, record each participant with a pseudonymous ID, browser/version, the tasks attempted, whether assistance was needed, pass/fail per criterion, and aggregate successes/total and percentages separately for SC-001 and SC-006. Document how participants were recruited and the evaluation conditions. Do not substitute automated Playwright journeys or the owner's successful T040 manual viewer check for unassisted researcher evidence.
+
+Until then, `tasks.md` keeps T046 unchecked and formal SC-001/SC-006 usability acceptance **unverified**.
+
+## F001 technical development milestone review — 2026-11-11
+
+This is an **evidence-based documentation review**, not a fresh test run, release deployment or formal acceptance sign-off.
+
+| Technical area | Existing evidence | Status for technical milestone |
+|---|---|---|
+| Full Release solution suite | T040 evidence records a clean Release restore/build with `-warnaserror` and **386/386 tests passed, 0 failed, 0 skipped**, including Linux Firefox and Chromium Playwright journeys; [T040 evidence](evidence/t040-reader-verification.md) | Previously reported pass; not independently re-executed for this review |
+| Import corpus (SC-002) | **100/100** supported PDFs imported with manifest/hash/page-count verification; [T044 evidence](evidence/t044-sc002-corpus.md) | Previously reported pass; corpus project is separate from `LexScholar.sln` |
+| Persistence and limits (SC-005/008) | **100/100** in-process restart cycles; import-limit behavior across configuration changes, as documented above | Previously reported pass |
+| Import identity, project isolation and failure handling (SC-003/004/007) | Existing assertion-level tests mapped in the sections above | Automated coverage documented; no fresh targeted test execution |
+| Native browser PDF navigation (T040) | Owner-reported page navigation and boundaries passed on Firefox 159.0.1 and Chromium 156.0.8078.79; [T040 evidence](evidence/t040-reader-verification.md) | Manual developer acceptance recorded; not researcher usability evidence |
+| Approved post-promotion import recovery (T029) | Task/plan contract reconciled in PR #33; preserving bytes until reference-safe startup cleanup; [investigation](evidence/fix-import-insert-failure-investigation.md) | Documented exception, no runtime change |
+| Outstanding scope and governance | Formal SC-001/006 researcher usability deferred to beta (T046); whole-library export/deletion remains tracked in F002 (Codecks $12y); unavailable-original repair UI remains deferred | Explicit limitations; full Principle II compliance is not claimed |
+
+**Conclusion:** The existing evidence supports treating F001 as a *technical development milestone candidate* with a disclosed usability-validation deferral. This is **not** proof that all F001 success criteria have passed. Before integrating `release/0.1.0` into `main` or cutting a release, rerun the Release restore/build and full solution suite on the final branch, separately check the out-of-solution SC-002 corpus if release policy requires a fresh corpus run, review any failing checks and obtain the usual human merge approval. This documentation change does not itself execute tests or authorize a merge.
