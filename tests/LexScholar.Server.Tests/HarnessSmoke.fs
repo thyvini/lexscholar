@@ -78,5 +78,7 @@ let ``all contract routes are reachable with expected behavior`` () =
             elif path.EndsWith("/documents") && method = HttpMethod.Get then HttpStatusCode.NotFound
             elif path.EndsWith("/documents") then HttpStatusCode.BadRequest
             elif method = HttpMethod.Delete then HttpStatusCode.NotFound
-            else HttpStatusCode.NotImplemented
+            // Reader routes (T038): an empty role body, and content for an unknown id.
+            elif method = HttpMethod.Patch then HttpStatusCode.BadRequest
+            else HttpStatusCode.NotFound
         Assert.Equal(expected, response.StatusCode)

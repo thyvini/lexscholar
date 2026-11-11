@@ -13,7 +13,7 @@ open LexScholar.Domain
 open LexScholar.Application
 open LexScholar.Infrastructure
 
-let private problem (status: int) code title : IResult =
+let problem (status: int) code title : IResult =
     Results.Problem(statusCode = Nullable(status), title = title, extensions = dict [ "code", box code ])
 
 let private roleName role =
@@ -28,7 +28,7 @@ let private parseRole (value: string) =
     | _ -> None
 
 /// The `ProjectDocument` schema; the role is serialized by name.
-let private associationDto (view: ProjectDocumentView) =
+let associationDto (view: ProjectDocumentView) =
     {| projectId = view.ProjectId; document = view.Document; role = roleName view.Role; addedUtc = view.AddedUtc |}
 
 let private rejection reason =
@@ -65,7 +65,7 @@ let private firstFileSection (request: HttpRequest) = task {
     | _ -> return None }
 
 /// The role and document id of an association request, if present and valid.
-let private associationRequest (request: HttpRequest) = task {
+let associationRequest (request: HttpRequest) = task {
     try
         use! json = JsonDocument.ParseAsync(request.Body, cancellationToken = request.HttpContext.RequestAborted)
         let root = json.RootElement
