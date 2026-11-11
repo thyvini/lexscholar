@@ -187,7 +187,39 @@ Successful imports: **100 / 100**. No import was rejected or failed. Because no 
 
 ## Automated results (SC-003, SC-004, SC-005, SC-007, SC-008)
 
-_Not yet recorded._ These criteria are covered by the automated suite. Their results are recorded here with T041 and T042 at the end of F001.
+These results come from the default automated suite (`dotnet test --solution LexScholar.sln --configuration Release`). They are not participant evidence.
+
+### SC-005: persistence across restarts
+
+**Result: 100 of 100 consecutive restarts consistent.** Recorded on 2026-11-11, T041; see [evidence](evidence/t041-restart-cycles.md).
+
+The test `RestartTests` "100 consecutive restarts keep every project, document, association and the active project" (`tests/LexScholar.Server.Tests/RestartTests.fs`) works as follows:
+- **Setup:** over HTTP, on one temporary workspace, it creates 2 projects, imports 2 PDFs, makes 4 associations with different roles, changes one role, removes one association, and selects an active project.
+- **Each of 100 cycles:** it stops the in-process host and starts a new one on the same workspace. It then checks, through the API, that these are unchanged:
+  - the active project;
+  - every project (id, name, creation time);
+  - every library document;
+  - every project's associations and roles;
+  - each document's served content (SHA-256).
+- **Active project:** each cycle selects the other project, so restoring the last active project is checked on every restart, not just the same value 100 times.
+- **On failure,** the message names the first failing cycle.
+
+Run time: about 12 s for the 100 cycles. Real child-process restarts are covered separately, by the `ProcessHarness` lock and startup tests.
+
+### SC-008: import limits across configurations
+
+**Result: all tested configurations behave as specified.** The PDFs over the configured limits were rejected with an understandable problem response, and nothing in the library changed.
+
+| Check | Test |
+|---|---|
+| After both limits are lowered below an imported PDF's size and page count (700 bytes, 1 page, for a 753-byte, 2-page PDF) and the host restarts, the existing PDF opens with identical bytes and the same listing. A new 753-byte PDF is rejected with 413 `upload_too_large`. Re-uploading the existing PDF with a 1-page limit is rejected with 422 `page_limit_exceeded`. Library rows and stored originals are unchanged. | `LimitRestartTests` "lowered limits keep an imported PDF readable and reject new over-limit imports" (T041) |
+| Over-limit and invalid uploads over HTTP are rejected with contract codes and no changes, including re-imports under the current limits. | `LibraryContractTests` "POST rejects invalid or over-limit uploads safely and changes nothing" (T023) |
+| The byte and page boundaries: exactly at the limit is accepted, one over is rejected, and an oversized upload is read only up to MaxBytes + 1. | `PdfValidationTests` (T020) |
+| Default limits; positive overrides; malformed, zero or negative limits stop startup with a typed diagnostic. | `ConfigurationTests` (T005) |
+
+### SC-003, SC-004, SC-007
+
+_Not yet recorded._ These are covered by the automated suite (T021/T023, T030/T034/T036, T034/T035/T042). They will be summarized here at the end of F001.
 
 ## Usability evaluations (SC-001, SC-006)
 
