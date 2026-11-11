@@ -35,3 +35,15 @@ let insert (dataDirectory: string) : InsertDocument =
 let storageKeys (dataDirectory: string) : Set<string> =
     use db = WorkspaceDb.create dataDirectory
     query { for row in db.Set<LibraryDocumentRow>().AsNoTracking() do select row.StorageKey } |> Set.ofSeq
+
+// RED stubs (T030): no behavior yet.
+let list (dataDirectory: string) : LibraryDocument list = ignore dataDirectory; []
+
+let listForProject (dataDirectory: string) (projectId: System.Guid) : Result<(ProjectDocument * LibraryDocument) list, Library.AssociationError> =
+    ignore (dataDirectory, projectId); Ok []
+
+let associate (dataDirectory: string) (association: ProjectDocument) : Result<LibraryDocument, Library.AssociationError> =
+    ignore (dataDirectory, association); Error Library.AssociationError.DocumentNotFound
+
+let removeAssociation (dataDirectory: string) (projectId: System.Guid) (documentId: System.Guid) : Result<unit, Library.RemovalError> =
+    ignore (dataDirectory, projectId, documentId); Error Library.RemovalError.AssociationNotFound
