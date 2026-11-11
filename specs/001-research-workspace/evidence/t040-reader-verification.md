@@ -15,18 +15,25 @@ Restore passed; build passed with **0 warnings and 0 errors**. The existing T040
 
 The journeys cover project-specific role changes and project isolation, reader frame open/close and closing on project switch, and clear missing, wrong-length and unreadable-file feedback with records preserved. The open journey checks frame attributes and independently requests exact original bytes. It does **not** establish native PDF rendering or page navigation. The unreadable test verifies that mode 000 actually prevents a read; it ran as an unprivileged user.
 
-## Native viewer navigation — owner confirmation received; detailed record pending
+## Native viewer navigation — owner-reported manual PASS, 2026-11-11
 
-The original automated testing agent had no interactive browser/computer-use tool and did not observe native viewer navigation. **On 2026-11-11, the project owner subsequently reported manually testing Firefox and Chromium and confirmed that both work.** This is a human observation, separate from the 12 automated journeys, and the detailed page indicators and out-of-range navigation outcomes were not supplied with that initial confirmation. Preserve this distinction: do not attribute the result to the agent or assume the installed Playwright test-browser versions match the user's interactive browsers.
+The automated testing agent did **not** have interactive browser/computer-use capability; its 12 browser journeys check page integration and PDF delivery, not native rendering or navigation. The project owner separately performed manual desktop checks and confirmed the required reader interaction succeeded in **both** supported browsers:
 
-The project owner supplied the **desktop browser versions**: Mozilla Firefox **159.0.1** and Chromium **156.0.8078.79 Arch Linux**. These are distinct from the Playwright browser versions used in the automated runs above. Exact page-indicator and out-of-range navigation observations have not yet been separately recorded; T040 stays unchecked pending those details. This report is not an unassisted-researcher T046 usability evaluation.
+| Desktop browser | Version reported by owner | Page 1 → page 2 | Out-of-range navigation | Result |
+|---|---|---|---|---|
+| Mozilla Firefox | 159.0.1 | Successful | Could not navigate before page 1 or beyond page 2 | PASS (owner-reported) |
+| Chromium (Arch Linux) | 156.0.8078.79 | Successful | Could not navigate before page 1 or beyond page 2 | PASS (owner-reported) |
 
-### Reproducible procedure and details to capture
+The owner first confirmed both viewers worked, then explicitly confirmed successful navigation from page 1 to page 2 **and** that navigation stays within the first/last page bounds. This record reflects the owner's testimony, not observations made by an AI agent. A screenshot, exact page-indicator text, display environment, and step-by-step per-browser logs were not supplied; they are not claimed as evidence. The automated test-browser versions above differ from the installed desktop browsers.
 
-1. On a Linux desktop with Firefox and Chromium, record browser names and exact versions. Use the default native PDF viewer in each browser, not an external PDF application. Start LexScholar using an isolated temporary data directory; for example, from the repository root, run `LexScholar__DataDirectory="$(mktemp -d)" dotnet run --project src/LexScholar.Server` and open the reported loopback URL. Do not use a research workspace for this check.
-2. Create and select a project, import `tests/Fixtures/valid.pdf`, associate it with the project, and select **Open**. The fixture has two pages and SHA-256 `0fcd00dc1ad92711575dfde326cda6c56b8fd83b0e01462cab6bfd012dcbe93b`.
-3. In the embedded native viewer, visually confirm page 1 renders. Navigate using the viewer controls to page 2, and confirm page 2 renders and the page indicator reflects it. Attempt navigation before page 1 and past page 2 using the viewer's available controls; record the actual resulting page/indicator and whether navigation remains within 1–2. Record any inability to interact with or see the viewer rather than assuming success.
-4. Repeat from a fresh isolated workspace for the other browser. Record exact versions, date, display mode, actions, observed rendering and boundary behavior, and pass/fail for each. Preserve evidence separately from API and automated-test results. Do not mark T040 complete unless both supported browsers meet the acceptance behavior.
+T040 combines these manually reported acceptance observations with the separately recorded 12/12 automated journeys. **T040 is complete on that basis.** The observation was performed by the project owner, not by unassisted researcher participants, and **does not satisfy T046**.
+
+### Reproduction procedure
+
+1. On a Linux desktop, open LexScholar in Firefox and Chromium using each browser's native PDF viewer, not an external PDF application. Start LexScholar with an isolated workspace.
+2. Create a project, import `tests/Fixtures/valid.pdf` (two pages, SHA-256 `0fcd00dc1ad92711575dfde326cda6c56b8fd83b0e01462cab6bfd012dcbe93b`), associate it, and click **Open**.
+3. Confirm PDF pages render, navigate from page 1 to page 2, and attempt navigating before page 1 and after page 2. The viewer must keep navigation within pages 1–2.
+4. Record the actual desktop browser versions and observed results separately from the Playwright/API results.
 
 ## Separate decision: T029 failure wording
 
