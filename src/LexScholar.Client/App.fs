@@ -157,10 +157,18 @@ module private Ui =
 
     let libraryCommand http effect : Cmd<Msg> =
         let perform work toMessage = Cmd.OfAsync.perform work () (toMessage >> LibraryMsg)
+        let fetchLibrary request =
+            perform (fun () -> Api.libraryDocuments http) (fun result -> Library.LibraryLoaded (request, result))
+        let fetchProject projectId request =
+            perform (fun () -> Api.projectDocuments http projectId) (fun result -> Library.ProjectLoaded (projectId, request, result))
         match effect with
-        | Library.FetchLibrary -> perform (fun () -> Api.libraryDocuments http) Library.LibraryLoaded
-        | Library.FetchProject projectId ->
-            perform (fun () -> Api.projectDocuments http projectId) (fun result -> Library.ProjectLoaded (projectId, result))
+        | Library.FetchLibrary request -> fetchLibrary request
+        | Library.FetchProject (projectId, request) -> fetchProject projectId request
+        | Library.FetchAll (library, project) ->
+            Cmd.batch [ fetchLibrary library
+                        match project with
+                        | Some (projectId, request) -> fetchProject projectId request
+                        | None -> Cmd.none ]
         | Library.SendUpload file -> perform (fun () -> Api.upload http file) Library.Uploaded
         | Library.SendAssociate (projectId, documentId, role) ->
             perform (fun () -> Api.associate http projectId documentId role) (fun result -> Library.Associated (projectId, result))
@@ -177,6 +185,14 @@ module private Ui =
             let projects, effect = Projects.update message state.Projects
             let state = { state with Projects = projects }
             let projectCommand = effect |> Option.map (command http >> Cmd.map ProjectsMsg) |> Option.defaultValue Cmd.none
+            // The page's Refresh button also reloads both library lists, so a
+            // failed load can be retried.
+            let state, projectCommand =
+                match message with
+                | Reload ->
+                    let state, libraryCommand = updateLibrary http Library.Refresh state
+                    state, Cmd.batch [ projectCommand; libraryCommand ]
+                | _ -> state, projectCommand
             // Follow the active project once the project list has loaded.
             if projects.HasLoaded && projects.Snapshot.Active <> state.Library.Project then
                 let state, libraryCommand = updateLibrary http (Library.ActiveProjectChanged projects.Snapshot.Active) state
@@ -352,6 +368,8 @@ type App() =
     override this.Program =
         let http = new HttpClient(BaseAddress = Uri(this.Navigation.BaseUri))
         let start _ =
-            { Projects = { initial with Busy = Some Loading }; Library = { Library.initial with LoadingLibrary = true } },
-            Cmd.batch [ Ui.command http Fetch |> Cmd.map ProjectsMsg; Ui.libraryCommand http Library.FetchLibrary ]
+            let library, libraryEffect = Library.update Library.LoadLibrary Library.initial
+            { Projects = { initial with Busy = Some Loading }; Library = library },
+            Cmd.batch [ Ui.command http Fetch |> Cmd.map ProjectsMsg
+                        libraryEffect |> Option.map (Ui.libraryCommand http) |> Option.defaultValue Cmd.none ]
         Program.mkProgram start (Ui.update http) Ui.view

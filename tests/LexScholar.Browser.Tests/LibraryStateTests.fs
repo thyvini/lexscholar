@@ -26,20 +26,37 @@ let private notes = { Id = Guid.Parse("22222222-2222-2222-2222-222222222222"); F
 let private assertState<'a when 'a: equality> (expected: 'a) (actual: 'a) =
     Assert.True((expected = actual), sprintf "Expected: %A\nActual: %A" expected actual)
 
-/// A model showing project Alpha with the given associations and library.
+/// The request number of a library fetch effect.
+let private libraryRequest effect =
+    match effect with
+    | Some (FetchLibrary request) -> request
+    | other -> failwithf "Expected a library fetch, got %A." other
+
+/// The project and request number of a project fetch effect.
+let private projectRequest effect =
+    match effect with
+    | Some (FetchProject (projectId, request)) -> projectId, request
+    | other -> failwithf "Expected a project fetch, got %A." other
+
+/// Delivers a project response for the given fetch effect.
+let private projectLoaded effect result model =
+    let projectId, request = projectRequest effect
+    step (ProjectLoaded (projectId, request, result)) model
+
+/// A model showing the given project with the given associations and library.
 let private showing project associations documents =
-    let model, _ = step (ActiveProjectChanged (Some project)) initial
-    let model, _ = step (ProjectLoaded (project, Ok associations)) model
-    let model, _ = step LoadLibrary model
-    let model, _ = step (LibraryLoaded (Ok documents)) model
+    let model, effect = step (ActiveProjectChanged (Some project)) initial
+    let model, _ = projectLoaded effect (Ok associations) model
+    let model, effect = step LoadLibrary model
+    let model, _ = step (LibraryLoaded (libraryRequest effect, Ok documents)) model
     model
 
 [<Fact; Trait("Task", "T032")>]
 let ``loading the library requests it and shows the documents`` () =
     let model, effect = step LoadLibrary initial
-    assertState (Some FetchLibrary) effect
+    let request = libraryRequest effect
     Assert.True(model.LoadingLibrary)
-    let model, effect = step (LibraryLoaded (Ok [ paper; notes ])) model
+    let model, effect = step (LibraryLoaded (request, Ok [ paper; notes ])) model
     assertState None effect
     assertState [ paper; notes ] model.Documents
     Assert.True(model.HasLoadedLibrary)
@@ -49,28 +66,28 @@ let ``loading the library requests it and shows the documents`` () =
 let ``switching projects clears the previous project's documents and loads the new one`` () =
     let model = showing alpha [ { Document = paper; Role = FocusedSource } ] [ paper ]
     let model, effect = step (ActiveProjectChanged (Some beta)) model
-    assertState (Some (FetchProject beta)) effect
+    assertState beta (fst (projectRequest effect))
     assertState (Some beta) model.Project
     Assert.Empty(model.Associations)
     Assert.False(model.HasLoadedProject)
     Assert.True(model.LoadingProject)
-    let model, _ = step (ProjectLoaded (beta, Ok [ { Document = paper; Role = ReferenceSource } ])) model
+    let model, _ = projectLoaded effect (Ok [ { Document = paper; Role = ReferenceSource } ]) model
     assertState [ { Document = paper; Role = ReferenceSource } ] model.Associations
     Assert.True(model.HasLoadedProject)
 
 [<Fact; Trait("Task", "T032")>]
 let ``a late response for a previously active project is ignored`` () =
-    let model, _ = step (ActiveProjectChanged (Some alpha)) initial
+    let model, alphaFetch = step (ActiveProjectChanged (Some alpha)) initial
     let model, _ = step (ActiveProjectChanged (Some beta)) model
-    let after, effect = step (ProjectLoaded (alpha, Ok [ { Document = paper; Role = FocusedSource } ])) model
+    let after, effect = projectLoaded alphaFetch (Ok [ { Document = paper; Role = FocusedSource } ]) model
     assertState None effect
     assertState model after
     Assert.Empty(after.Associations)
 
 [<Fact; Trait("Task", "T032")>]
 let ``an empty project is loaded with no documents and no project shows nothing`` () =
-    let model, _ = step (ActiveProjectChanged (Some alpha)) initial
-    let model, _ = step (ProjectLoaded (alpha, Ok [])) model
+    let model, effect = step (ActiveProjectChanged (Some alpha)) initial
+    let model, _ = projectLoaded effect (Ok []) model
     Assert.True(model.HasLoadedProject)
     Assert.Empty(model.Associations)
     let same, effect = step (ActiveProjectChanged (Some alpha)) model
@@ -89,7 +106,7 @@ let ``an imported upload is reported and refreshes the library`` () =
     assertState (Some (SendUpload file)) effect
     assertState (Some Uploading) model.Busy
     let model, effect = step (Uploaded (Ok (Imported paper))) model
-    assertState (Some FetchLibrary) effect
+    libraryRequest effect |> ignore
     assertState (Some (Imported paper)) model.Notice
     assertState None model.Busy
 
@@ -97,7 +114,7 @@ let ``an imported upload is reported and refreshes the library`` () =
 let ``a reused upload is reported as already in the library`` () =
     let model, _ = step (Upload (FakeFile("copy.pdf"))) initial
     let model, effect = step (Uploaded (Ok (Reused paper))) model
-    assertState (Some FetchLibrary) effect
+    libraryRequest effect |> ignore
     assertState (Some (Reused paper)) model.Notice
 
 [<Fact; Trait("Task", "T032")>]
@@ -117,14 +134,14 @@ let ``associating sends the chosen role for the active project and refreshes it`
     assertState (Some (SendAssociate (alpha, paper.Id, ReferenceSource))) effect
     assertState (Some Associating) model.Busy
     let model, effect = step (Associated (alpha, Ok ())) model
-    assertState (Some (FetchProject alpha)) effect
+    assertState alpha (fst (projectRequest effect))
     assertState None model.Busy
     Assert.True(model.LoadingProject)
 
 [<Fact; Trait("Task", "T032")>]
 let ``associating needs an active project`` () =
-    let model, _ = step LoadLibrary initial
-    let model, _ = step (LibraryLoaded (Ok [ paper ])) model
+    let model, effect = step LoadLibrary initial
+    let model, _ = step (LibraryLoaded (libraryRequest effect, Ok [ paper ])) model
     let same, effect = step (Associate (paper.Id, FocusedSource)) model
     assertState None effect
     assertState model same
@@ -145,7 +162,7 @@ let ``removing an association refreshes the active project`` () =
     assertState (Some (SendRemove (alpha, paper.Id))) effect
     assertState (Some Removing) model.Busy
     let model, effect = step (Removed (alpha, Ok ())) model
-    assertState (Some (FetchProject alpha)) effect
+    assertState alpha (fst (projectRequest effect))
     assertState None model.Busy
 
 [<Fact; Trait("Task", "T032")>]
@@ -186,3 +203,65 @@ let ``HTTP problem codes are mapped to understandable failures`` () =
           409, problem "not_a_pdf", RequestFailed ]
     for status, body, expected in cases do
         assertState (status, expected) (status, parseFailure status body)
+
+// Review follow-ups (PR #26): only the latest response for each list is shown,
+// and Refresh reloads both lists.
+
+[<Fact; Trait("Task", "T032")>]
+let ``an older library response arriving last does not overwrite the newer list`` () =
+    let model, first = step LoadLibrary initial
+    let model, second = step (Uploaded (Ok (Imported notes))) { model with Busy = Some Uploading }
+    let model, _ = step (LibraryLoaded (libraryRequest second, Ok [ paper; notes ])) model
+    let model, effect = step (LibraryLoaded (libraryRequest first, Ok [ paper ])) model
+    assertState None effect
+    assertState [ paper; notes ] model.Documents
+
+[<Fact; Trait("Task", "T032")>]
+let ``an older project response arriving last does not overwrite the newer list`` () =
+    let model = showing alpha [] [ paper; notes ]
+    // Two changes in a row: the first refresh is still in flight when the second starts.
+    let model, _ = step (Associate (paper.Id, FocusedSource)) model
+    let model, first = step (Associated (alpha, Ok ())) model
+    let model, _ = step (Associate (notes.Id, ReferenceSource)) model
+    let model, second = step (Associated (alpha, Ok ())) model
+    let both = [ { Document = paper; Role = FocusedSource }; { Document = notes; Role = ReferenceSource } ]
+    let model, _ = projectLoaded second (Ok both) model
+    let model, effect = projectLoaded first (Ok [ { Document = paper; Role = FocusedSource } ]) model
+    assertState None effect
+    assertState both model.Associations
+
+[<Fact; Trait("Task", "T032")>]
+let ``switching away and back ignores the first request for the same project`` () =
+    let model, firstAlpha = step (ActiveProjectChanged (Some alpha)) initial
+    let model, _ = step (ActiveProjectChanged (Some beta)) model
+    let model, secondAlpha = step (ActiveProjectChanged (Some alpha)) model
+    let current = [ { Document = paper; Role = ReferenceSource } ]
+    let model, _ = projectLoaded secondAlpha (Ok current) model
+    let model, effect = projectLoaded firstAlpha (Ok []) model
+    assertState None effect
+    assertState current model.Associations
+    Assert.True(model.HasLoadedProject)
+
+[<Fact; Trait("Task", "T032")>]
+let ``refresh reloads the library and the active project's documents after a failure`` () =
+    let model, effect = step (ActiveProjectChanged (Some alpha)) initial
+    let model, _ = projectLoaded effect (Error RequestFailed) model
+    let model, effect = step LoadLibrary model
+    let model, _ = step (LibraryLoaded (libraryRequest effect, Error RequestFailed)) model
+    let model, effect = step Refresh model
+    match effect with
+    | Some (FetchAll (library, Some (projectId, project))) ->
+        assertState alpha projectId
+        Assert.True(model.LoadingLibrary)
+        Assert.True(model.LoadingProject)
+        assertState None model.Error
+        let model, _ = step (LibraryLoaded (library, Ok [ paper ])) model
+        let model, _ = step (ProjectLoaded (alpha, project, Ok [ { Document = paper; Role = FocusedSource } ])) model
+        assertState [ paper ] model.Documents
+        assertState [ { Document = paper; Role = FocusedSource } ] model.Associations
+    | other -> failwithf "Expected both lists to be fetched, got %A." other
+    // Without an active project only the library is reloaded.
+    let _, effect = step Refresh initial
+    match effect with
+    | Some (FetchAll (_, None)) -> ()
+    | other -> failwithf "Expected only the library to be fetched, got %A." other
