@@ -3,8 +3,10 @@
 .env.*
 !.env.example
 *.secret
-*credentials*
-*token*
+*.credentials
+credentials.json
+*.token
+token.json
 *.pem
 *.key
 *.p12
