@@ -2,8 +2,6 @@
 
 This page explains where LexScholar keeps your research projects and PDFs, how it handles them, and which controls are not available yet.
 
-> **Status:** the app's screens currently cover projects. Importing, the shared library and reading are implemented in the server, but their screens are still being built in this release (F001).
-
 ## Where your data is stored
 
 LexScholar keeps everything in one folder on your computer, the **data directory**:
