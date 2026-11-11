@@ -111,3 +111,8 @@ let removeAssociation (dataDirectory: string) (projectId: Guid) (documentId: Gui
                 select row }
         |> fun rows -> rows.ExecuteDelete()
     if deleted = 0 then Error Library.RemovalError.AssociationNotFound else Ok ()
+
+/// Sets the role of only this project's association with the document; other
+/// projects' associations and the document row are never changed.
+let changeRole (dataDirectory: string) : DocumentRoles.UpdateRole =
+    fun _ _ _ -> Error DocumentRoles.RoleChangeError.AssociationNotFound

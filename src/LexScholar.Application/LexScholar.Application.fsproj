@@ -9,6 +9,7 @@
     <Compile Include="ImportDocument.fs" />
     <Compile Include="Projects.fs" />
     <Compile Include="Library.fs" />
+    <Compile Include="DocumentRoles.fs" />
     <ProjectReference Include="../LexScholar.Domain/LexScholar.Domain.fsproj" />
   </ItemGroup>
 </Project>
