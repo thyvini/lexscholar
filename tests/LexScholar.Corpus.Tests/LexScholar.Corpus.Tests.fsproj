@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- SC-002 corpus run (T044). Deliberately not in LexScholar.sln: the corpus
+       is downloaded, never committed, so this runs only on request. See
+       specs/001-research-workspace/verification.md. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <IsTestProject>true</IsTestProject>
+    <IsPackable>false</IsPackable>
+    <GenerateProgramFile>false</GenerateProgramFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="CorpusImportTests.fs" />
+    <ProjectReference Include="../../src/LexScholar.Infrastructure/LexScholar.Infrastructure.fsproj" />
+    <PackageReference Include="xunit.v3" />
+    <None Include="../../specs/001-research-workspace/sc002-corpus.csv" Link="sc002-corpus.csv" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

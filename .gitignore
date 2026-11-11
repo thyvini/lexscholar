@@ -53,3 +53,6 @@ packages/
 
 # Spec Kit project configuration, specifications, templates, workflows,
 # and shared .agents/skills are intentionally kept under version control.
+
+# SC-002 import corpus (T044): downloaded PDFs, never committed
+/corpus/
