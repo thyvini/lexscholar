@@ -316,3 +316,135 @@ let ``an import cancelled while staging discards the staged file`` () =
 [<InlineData("", "document.pdf")>]
 let ``the stored filename is a display-only basename`` (fileName: string, expected: string) =
     Assert.Equal(expected, sanitizeFileName fileName)
+
+// Shared library listing and per-project associations (T030), through the
+// Library workflows over the real repository.
+
+let private libraryStore directory : Library.Store =
+    { ListDocuments = fun () -> LibraryRepository.list directory
+      ListForProject = LibraryRepository.listForProject directory
+      Associate = LibraryRepository.associate directory
+      Remove = LibraryRepository.removeAssociation directory }
+
+/// Adds one workspace with the given number of projects; returns their ids.
+let private addProjects workspace count =
+    use connection = openConnection workspace
+    let workspaceId = Guid.NewGuid()
+    addWorkspace connection workspaceId
+    [ for index in 1 .. count do
+        let id = Guid.NewGuid()
+        addProject connection id workspaceId $"project-{index}"
+        yield id ]
+
+let private importDocument workspace name =
+    (importBytes (create (dependencies workspace defaults)) (fixture name) name |> imported).Document
+
+let private expectedView (document: LibraryDocument) : Document =
+    { Id = document.Id
+      OriginalFileName = document.OriginalFileName
+      ByteLength = document.ByteLength
+      PageCount = document.PageCount
+      ImportedUtc = document.ImportedUtc
+      ContentUrl = $"/api/documents/{document.Id:D}/content" }
+
+let private associated result =
+    match result with
+    | Ok view -> view
+    | Error error -> failwithf "Expected the association to succeed, got %A." error
+
+[<Fact; Trait("Task", "T030")>]
+let ``the library lists every document, including unassociated ones`` () =
+    use workspace = new Workspace()
+    let store = libraryStore workspace.Path
+    let first = importDocument workspace.Path "valid.pdf"
+    let second = importDocument workspace.Path "distinct.pdf"
+    let project = addProjects workspace.Path 1 |> List.head
+    Library.associate store project first.Id FocusedSource |> associated |> ignore
+    assertResult [ expectedView first; expectedView second ] (Library.list store)
+
+[<Fact; Trait("Task", "T030")>]
+let ``one document associated with two projects keeps each project's own role`` () =
+    use workspace = new Workspace()
+    let store = libraryStore workspace.Path
+    let document = importDocument workspace.Path "valid.pdf"
+    let projects = addProjects workspace.Path 2
+    let focused = Library.associate store projects[0] document.Id FocusedSource |> associated
+    let reference = Library.associate store projects[1] document.Id ReferenceSource |> associated
+    assertResult (projects[0], expectedView document, FocusedSource) (focused.ProjectId, focused.Document, focused.Role)
+    assertResult (projects[1], expectedView document, ReferenceSource) (reference.ProjectId, reference.Document, reference.Role)
+    assertResult (Ok [ focused ]) (Library.listForProject store projects[0])
+    assertResult (Ok [ reference ]) (Library.listForProject store projects[1])
+    assertResult [ document ] (rows workspace.Path)
+
+[<Fact; Trait("Task", "T030")>]
+let ``a duplicate association is rejected and keeps the existing role`` () =
+    use workspace = new Workspace()
+    let store = libraryStore workspace.Path
+    let document = importDocument workspace.Path "valid.pdf"
+    let project = addProjects workspace.Path 1 |> List.head
+    let existing = Library.associate store project document.Id FocusedSource |> associated
+    assertResult (Error Library.AssociationError.DuplicateAssociation) (Library.associate store project document.Id ReferenceSource)
+    assertResult (Ok [ existing ]) (Library.listForProject store project)
+
+[<Fact; Trait("Task", "T030")>]
+let ``associating an unknown project or document is rejected without changes`` () =
+    use workspace = new Workspace()
+    let store = libraryStore workspace.Path
+    let document = importDocument workspace.Path "valid.pdf"
+    let project = addProjects workspace.Path 1 |> List.head
+    assertResult (Error Library.AssociationError.ProjectNotFound) (Library.associate store (Guid.NewGuid()) document.Id FocusedSource)
+    assertResult (Error Library.AssociationError.DocumentNotFound) (Library.associate store project (Guid.NewGuid()) FocusedSource)
+    Assert.Empty(associations workspace.Path)
+    assertResult [ document ] (rows workspace.Path)
+
+[<Fact; Trait("Task", "T030")>]
+let ``removing one association keeps the document, its original and other projects' associations`` () =
+    use workspace = new Workspace()
+    let store = libraryStore workspace.Path
+    let document = importDocument workspace.Path "valid.pdf"
+    let projects = addProjects workspace.Path 2
+    Library.associate store projects[0] document.Id FocusedSource |> associated |> ignore
+    let kept = Library.associate store projects[1] document.Id ReferenceSource |> associated
+    assertResult (Ok ()) (Library.remove store projects[0] document.Id)
+    assertResult (Ok []) (Library.listForProject store projects[0])
+    assertResult (Ok [ kept ]) (Library.listForProject store projects[1])
+    assertResult [ document ] (rows workspace.Path)
+    assertStoredOriginal workspace.Path document (fixture "valid.pdf")
+
+[<Fact; Trait("Task", "T030")>]
+let ``removing a document's final association keeps its row and stored original`` () =
+    use workspace = new Workspace()
+    let store = libraryStore workspace.Path
+    let document = importDocument workspace.Path "valid.pdf"
+    let projects = addProjects workspace.Path 2
+    Library.associate store projects[0] document.Id FocusedSource |> associated |> ignore
+    assertResult (Ok ()) (Library.remove store projects[0] document.Id)
+    Assert.Empty(associations workspace.Path)
+    assertResult [ document ] (rows workspace.Path)
+    Assert.Equal<string list>([ document.StorageKey ], originals workspace.Path)
+    assertStoredOriginal workspace.Path document (fixture "valid.pdf")
+    assertResult [ expectedView document ] (Library.list store)
+    // Still available for later association with any project.
+    let again = Library.associate store projects[1] document.Id ReferenceSource |> associated
+    assertResult (Ok [ again ]) (Library.listForProject store projects[1])
+
+[<Fact; Trait("Task", "T030")>]
+let ``removing a missing association is rejected and changes nothing`` () =
+    use workspace = new Workspace()
+    let store = libraryStore workspace.Path
+    let document = importDocument workspace.Path "valid.pdf"
+    let projects = addProjects workspace.Path 2
+    let kept = Library.associate store projects[0] document.Id FocusedSource |> associated
+    assertResult (Error Library.RemovalError.AssociationNotFound) (Library.remove store projects[1] document.Id)
+    assertResult (Error Library.RemovalError.AssociationNotFound) (Library.remove store projects[0] (Guid.NewGuid()))
+    assertResult (Ok [ kept ]) (Library.listForProject store projects[0])
+    assertResult [ document ] (rows workspace.Path)
+
+[<Fact; Trait("Task", "T030")>]
+let ``listing an unknown project is rejected and an empty project lists nothing`` () =
+    use workspace = new Workspace()
+    let store = libraryStore workspace.Path
+    importDocument workspace.Path "valid.pdf" |> ignore
+    let project = addProjects workspace.Path 1 |> List.head
+    assertResult (Error Library.AssociationError.ProjectNotFound) (Library.listForProject store (Guid.NewGuid()))
+    assertResult (Ok []) (Library.listForProject store project)
