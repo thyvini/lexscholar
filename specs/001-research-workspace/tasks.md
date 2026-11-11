@@ -69,7 +69,7 @@ Tests are required from the first increment. Establish the compile-ready scaffol
 - [X] T038 [US3] Implement role PATCH and inline range-capable content endpoint with 404/503 safe problem responses in `src/LexScholar.Server/ReaderEndpoints.fs` (depends on T034, T036–T037; see [evidence](evidence/t038-reader-endpoints.md)).
 - [X] T039 [US3] Implement native browser reader and role controls with clear unavailable-document feedback in `src/LexScholar.Client/Reader.fs` (depends on T032, T038; see [RED/GREEN evidence and limitations](evidence/t039-native-reader.md)).
   - Review note (PR #24, non-blocking): the 503 `document_unavailable` title says 'missing or unreadable' but also covers a wrong-length original; align the server title and the T039 UI message with the contract ('missing, unreadable or not the recorded size').
-- [ ] T040 [US3] Add Linux Firefox and Chromium reader/role journeys in `tests/LexScholar.Browser.Tests/ReaderJourneyTests.fs`, recording manual viewer navigation evidence where browser internals prevent automation (depends on T039).
+- [X] T040 [US3] Add Linux Firefox and Chromium reader/role journeys in `tests/LexScholar.Browser.Tests/ReaderJourneyTests.fs`, recording manual viewer navigation evidence where browser internals prevent automation (depends on T039; see [automated results and owner-reported native viewer acceptance](evidence/t040-reader-verification.md)).
 
 ## Phase 6: Cross-cutting verification
 
