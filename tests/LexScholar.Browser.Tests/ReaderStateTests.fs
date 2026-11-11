@@ -162,3 +162,20 @@ let ``a removed document cannot reopen from a pending availability response`` ()
     let model, _ = step (ContentChecked (fst (check pending), Ok ())) model
     assertState None model.Open
     assertState None model.Opening
+
+[<Fact; Trait("Task", "T039")>]
+let ``a successful role change after returning to its project refreshes without replacing the new reader state`` () =
+    let model, _ = step (ChangeRole (paper.Id, ReferenceSource)) (inProject alpha)
+    let model, _ = step (ActiveProjectChanged (Some beta)) model
+    let model, _ = step (ActiveProjectChanged (Some alpha)) model
+    // The return visit can load associations before the pending PATCH commits.
+    let model, _ = step (AssociationsChanged [ paper.Id; notes.Id ]) model
+    let model, pending = step (Open notes) model
+    let model, _ = step (ContentChecked (fst (check pending), Ok ())) model
+    let refreshed, effect = step (RoleChanged (alpha, Ok ())) model
+    assertState (Some RefreshProject) effect
+    assertState (Some notes) refreshed.Open
+    assertState model.Project refreshed.Project
+    assertState model.CheckRequest refreshed.CheckRequest
+    assertState model.Error refreshed.Error
+    assertState None refreshed.ChangingRole

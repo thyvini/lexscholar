@@ -24,7 +24,7 @@ type Model =
       Open: Document option
       /// The document whose role is being changed; one change at a time.
       ChangingRole: Guid option
-      /// A pending mutation from a previous project visit must not update this visit.
+      /// Errors from a pending mutation on a previous project visit must not update this visit.
       RoleStale: bool
       Error: Failure option
       /// The latest content check; only its result is used.
@@ -85,9 +85,12 @@ let update (message: Message) (model: Model) : Model * Effect option =
     | RoleChanged (projectId, result) when model.ChangingRole.IsSome ->
         let stale = model.RoleStale
         let model = { model with ChangingRole = None; RoleStale = false }
-        if stale || model.Project <> Some projectId then model, None
+        if model.Project <> Some projectId then model, None
         else
             match result with
+            // A return visit may have fetched associations before this PATCH committed.
+            // Reload authoritative state rather than applying the old response to this visit.
             | Ok () -> model, Some RefreshProject
+            | Error _ when stale -> model, None
             | Error error -> { model with Error = Some error }, None
     | _ -> model, None
