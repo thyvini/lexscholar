@@ -135,9 +135,10 @@ let update (message: Message) (model: Model) : Model * Effect option =
     | LoadLibrary ->
         let model, request = nextLibrary model
         model, Some (FetchLibrary request)
-    | LibraryLoaded (_, Ok documents) ->
-        { model with Documents = documents; HasLoadedLibrary = true; LoadingLibrary = false }, None
-    | LibraryLoaded (_, Error error) -> { model with LoadingLibrary = false; Error = Some error }, None
+    | LibraryLoaded (request, result) when request = model.LibraryRequest ->
+        match result with
+        | Ok documents -> { model with Documents = documents; HasLoadedLibrary = true; LoadingLibrary = false }, None
+        | Error error -> { model with LoadingLibrary = false; Error = Some error }, None
     | ActiveProjectChanged project when project <> model.Project ->
         // Clear at once so one project's documents never appear under another.
         let model = { model with Project = project; Associations = []; HasLoadedProject = false; LoadingProject = false }
@@ -146,10 +147,17 @@ let update (message: Message) (model: Model) : Model * Effect option =
         | Some projectId ->
             let model, request = nextProject model
             model, Some (FetchProject (projectId, request))
-    | ProjectLoaded (projectId, _, result) when model.Project = Some projectId ->
+    | ProjectLoaded (projectId, request, result) when model.Project = Some projectId && request = model.ProjectRequest ->
         match result with
         | Ok associations -> { model with Associations = associations; HasLoadedProject = true; LoadingProject = false }, None
         | Error error -> { model with LoadingProject = false; Error = Some error }, None
+    | Refresh ->
+        let model, library = nextLibrary { model with Error = None }
+        match model.Project with
+        | None -> model, Some (FetchAll (library, None))
+        | Some projectId ->
+            let model, project = nextProject model
+            model, Some (FetchAll (library, Some (projectId, project)))
     | Upload file when model.Busy.IsNone ->
         { model with Busy = Some Uploading; Notice = None; Error = None }, Some (SendUpload file)
     | Uploaded result when model.Busy = Some Uploading ->
