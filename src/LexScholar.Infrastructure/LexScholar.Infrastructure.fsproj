@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="DataDirectoryLock.fs" />
+    <Compile Include="WorkspaceDb.fs" />
+    <Compile Include="Migrations/Initial.fs" />
+    <Compile Include="Migrations/WorkspaceDbModelSnapshot.fs" />
+    <Compile Include="Migrations/Projects.fs" />
+    <Compile Include="Migrations/Documents.fs" />
+    <Compile Include="ProjectRepository.fs" />
+    <Compile Include="PdfValidator.fs" />
+    <Compile Include="DocumentStore.fs" />
+    <Compile Include="LibraryRepository.fs" />
+    <Compile Include="StorageCleanup.fs" />
+    <Compile Include="VerifiedDocumentContent.fs" />
+    <ProjectReference Include="../LexScholar.Domain/LexScholar.Domain.fsproj" />
+    <ProjectReference Include="../LexScholar.Application/LexScholar.Application.fsproj" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
+    <PackageReference Include="PdfPig" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,20 @@
+:root { font-family: system-ui, sans-serif; color: #202b37; background: #f3f5f7; }
+body { margin: 0; }
+.container { max-width: 48rem; margin: 3rem auto; padding: 0 1rem; }
+h1 { margin-bottom: .15rem; }
+.subtitle { color: #596778; margin-top: 0; }
+.card { background: white; border: 1px solid #d9e0e7; border-radius: .5rem; padding: 1.25rem; margin: 1rem 0; }
+h2 { font-size: 1.2rem; margin-top: 0; }
+label { display: block; margin-bottom: .4rem; }
+input { font: inherit; padding: .55rem; width: min(100%, 24rem); box-sizing: border-box; margin-right: .5rem; }
+button { font: inherit; padding: .5rem .8rem; cursor: pointer; }
+button:disabled { cursor: default; opacity: .55; }
+.error { color: #a32828; }
+.projects { padding: 0; list-style: none; }
+.projects li { display: flex; align-items: center; justify-content: space-between; gap: 1rem; border-bottom: 1px solid #e5e9ee; padding: .65rem 0; }
+.active { color: #175c42; }
+.documents, .project-documents { padding: 0; list-style: none; }
+.documents li, .project-documents li { display: flex; align-items: center; justify-content: space-between; gap: 1rem; border-bottom: 1px solid #e5e9ee; padding: .65rem 0; }
+.actions { display: flex; gap: .5rem; }
+.role { color: #175c42; margin-left: auto; }
+small { color: #596778; }

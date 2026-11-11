@@ -32,7 +32,9 @@ temp/
 
 # Local AI agent state; keep shared instructions and skills tracked
 .codex/
-.claude/
+.claude/settings.local.json
+.claude/worktrees/
+CLAUDE.local.md
 .cursor/
 .opencode/
 .aider*
@@ -42,5 +44,15 @@ AGENTS.local.md
 .idea/
 .vscode/
 
+# .NET build and IDE outputs
+bin/
+obj/
+packages/
+*.user
+*.suo
+
 # Spec Kit project configuration, specifications, templates, workflows,
 # and shared .agents/skills are intentionally kept under version control.
+
+# SC-002 import corpus (T044): downloaded PDFs, never committed
+/corpus/

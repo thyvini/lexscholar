@@ -1,0 +1,50 @@
+{
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  },
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": [
+      "Bash(dotnet *)",
+      "Bash(scripts/*)",
+      "Bash(git fetch*)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git show*)",
+      "Bash(git rev-parse*)",
+      "Bash(git merge-base*)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git restore *)",
+      "Bash(git checkout *)",
+      "Bash(git switch *)",
+      "Bash(git rebase *)",
+      "Bash(git branch*)",
+      "Bash(git worktree *)",
+      "Bash(git push --force-with-lease -u origin feat/*)",
+      "Bash(git push --force-with-lease -u origin fix/*)",
+      "Bash(git push --force-with-lease -u origin test/*)",
+      "Bash(git push --force-with-lease -u origin docs/*)",
+      "Bash(git push --force-with-lease -u origin chore/*)",
+      "Bash(gh pr *)",
+      "Bash(gh api repos/thyvini/lexscholar/*)",
+      "Bash(gh api 'repos/thyvini/lexscholar/*)"
+    ],
+    "deny": [
+      "Bash(git push*:*)",
+      "Bash(git push*release/*)",
+      "Bash(git push* main)",
+      "Bash(git push* main *)",
+      "Bash(git push*--force)",
+      "Bash(git push*--force *)",
+      "Bash(git push* -f*)",
+      "Bash(gh pr merge*--admin*)",
+      "Bash(gh api*git/refs*)",
+      "Bash(gh api*DELETE*)",
+      "Bash(gh repo delete*)",
+      "Edit(**/.specify/memory/constitution.md)",
+      "Write(**/.specify/memory/constitution.md)"
+    ]
+  }
+}

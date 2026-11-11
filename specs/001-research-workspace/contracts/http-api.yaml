@@ -173,8 +173,8 @@ paths:
         to each import request including re-imports; lowering limits does not
         affect reading existing documents. A valid identical upload returns
         the existing document. All valid simultaneous
-        identical uploads succeed and return the same document; safe internal
-        contention retries are allowed.
+        identical uploads succeed and return the same document; imports
+        commit one at a time within the single server process.
       requestBody:
         required: true
         content:
@@ -245,7 +245,7 @@ paths:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
         "503":
-          description: The UUID exists but its backing file is missing, inaccessible, unreadable, or fails the original SHA-256 integrity check. Metadata and associations remain unchanged.
+          description: The UUID exists but its backing file is missing, inaccessible, unreadable, or does not have the recorded byte length. Metadata and associations remain unchanged.
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }

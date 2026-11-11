@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk.BlazorWebAssembly">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Projects.fs" />
+    <Compile Include="Library.fs" />
+    <!-- Reader state depends on domain roles; App wires its effects and rendering. -->
+    <Compile Include="Reader.fs" />
+    <Compile Include="App.fs" />
+    <Compile Include="Program.fs" />
+    <ProjectReference Include="../LexScholar.Domain/LexScholar.Domain.fsproj" />
+    <PackageReference Include="Bolero" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" />
+  </ItemGroup>
+</Project>

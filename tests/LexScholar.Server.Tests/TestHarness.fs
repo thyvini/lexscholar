@@ -1,0 +1,89 @@
+namespace LexScholar.Server.Tests
+
+open System
+open System.Collections.Generic
+open System.IO
+open System.Net.Http
+open Microsoft.AspNetCore.Builder
+open Microsoft.AspNetCore.Hosting
+open Microsoft.AspNetCore.Hosting.Server
+open Microsoft.AspNetCore.Hosting.Server.Features
+open Microsoft.Extensions.Configuration
+open Microsoft.Extensions.DependencyInjection
+open Microsoft.Extensions.Hosting
+open LexScholar.Server
+
+/// Owns test data independently of a host so multiple processes can target it.
+type TemporaryWorkspace private (root: string) =
+    member _.Root = root
+    member _.DatabasePath = Path.Combine(root, "workspace.sqlite")
+
+    static member Create() =
+        let root = Path.Combine(Path.GetTempPath(), "lexscholar-tests", Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(root) |> ignore
+        new TemporaryWorkspace(root)
+
+    interface IDisposable with
+        member _.Dispose() = Directory.Delete(root, true)
+
+module HostSetup =
+    let builder root overrides =
+        let options = WebApplicationOptions(ContentRootPath = root, EnvironmentName = "Testing", ApplicationName = typeof<WorkspaceConfiguration>.Assembly.GetName().Name)
+        let builder = WebApplication.CreateBuilder(options)
+        // Do not inherit developer configuration or environment-supplied paths.
+        builder.Configuration.Sources.Clear()
+        let settings = Dictionary<string, string>()
+        settings.Add("LexScholar:DataDirectory", root)
+        settings.Add("LexScholar:DatabasePath", Path.Combine(root, "workspace.sqlite"))
+        settings.Add("LexScholar:Port", "0")
+        for key, value in overrides do
+            settings.[key] <- value
+        builder.Configuration.AddInMemoryCollection(settings) |> ignore
+        builder.WebHost.UseUrls("http://127.0.0.1:0") |> ignore
+        builder
+
+/// Each instance owns a server and HTTP client, and a private directory and
+/// database unless the caller supplies a workspace to reuse across restarts.
+type TestHarness private (workspace: TemporaryWorkspace, ownsWorkspace: bool, app: WebApplication, client: HttpClient) =
+    member _.Root = workspace.Root
+    member _.DatabasePath = workspace.DatabasePath
+    member _.App = app
+    member _.Client = client
+
+    static member Start(?settings: (string * string) list, ?serveClient: bool, ?configure: WebApplication -> unit, ?environment: string, ?workspace: TemporaryWorkspace) =
+        let ownsWorkspace = Option.isNone workspace
+        let workspace = match workspace with Some shared -> shared | None -> TemporaryWorkspace.Create()
+        let mutable app: WebApplication option = None
+        try
+            let builder = HostSetup.builder workspace.Root (defaultArg settings [])
+            environment |> Option.iter (fun name -> builder.Environment.EnvironmentName <- name)
+            if defaultArg serveClient false then
+                builder.WebHost.UseStaticWebAssets() |> ignore
+            let host =
+                match Program.create builder (defaultArg serveClient false) with
+                | Ok host -> host
+                | Error error -> failwithf "Test host unexpectedly rejected: %A" error
+            app <- Some host
+            configure |> Option.iter (fun setup -> setup host)
+            // Program.create owns database initialization under the directory lock.
+            host.StartAsync().GetAwaiter().GetResult()
+            let server = host.Services.GetRequiredService<IServer>()
+            let addresses = server.Features.Get<IServerAddressesFeature>().Addresses
+            let address = addresses |> Seq.exactlyOne
+            let client = new HttpClient(BaseAddress = Uri(address))
+            new TestHarness(workspace, ownsWorkspace, host, client)
+        with _ ->
+            match app with
+            | Some host -> host.DisposeAsync().AsTask().GetAwaiter().GetResult()
+            | None -> ()
+            if ownsWorkspace then (workspace :> IDisposable).Dispose()
+            reraise()
+
+    interface IDisposable with
+        member _.Dispose() =
+            client.Dispose()
+            try
+                app.StopAsync().GetAwaiter().GetResult()
+            finally
+                try app.DisposeAsync().AsTask().GetAwaiter().GetResult()
+                finally if ownsWorkspace then (workspace :> IDisposable).Dispose()

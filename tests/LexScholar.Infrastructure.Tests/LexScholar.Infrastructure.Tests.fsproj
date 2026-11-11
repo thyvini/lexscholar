@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <IsTestProject>true</IsTestProject>
+    <IsPackable>false</IsPackable>
+    <GenerateProgramFile>false</GenerateProgramFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../RunnerSmoke.fs" Link="RunnerSmoke.fs" />
+    <Compile Include="SchemaTestSupport.fs" />
+    <Compile Include="WorkspaceDbTests.fs" />
+    <Compile Include="ProjectSchemaTests.fs" />
+    <Compile Include="ProjectPersistenceTests.fs" />
+    <Compile Include="DocumentSchemaTests.fs" />
+    <Compile Include="PdfValidationTests.fs" />
+    <Compile Include="LibraryTests.fs" />
+    <Compile Include="StorageCleanupTests.fs" />
+    <Compile Include="ContentAvailabilityTests.fs" />
+    <ProjectReference Include="../../src/LexScholar.Infrastructure/LexScholar.Infrastructure.fsproj" />
+    <PackageReference Include="xunit.v3" />
+    <None Include="../Fixtures/*" LinkBase="Fixtures" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>
