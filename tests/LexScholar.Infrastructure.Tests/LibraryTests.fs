@@ -284,6 +284,64 @@ let ``concurrent imports of identical bytes all return the same single document`
     Assert.Equal<string list>(associationsBefore, associations workspace.Path)
     Assert.Empty(stagingFiles workspace.Path)
 
+[<Theory; Trait("Task", "T021"); Trait("Task", "T022")>]
+[<InlineData(false)>]
+[<InlineData(true)>]
+let ``post-promotion insertion errors preserve bytes and startup quarantines only unreferenced originals`` (committedBeforeError: bool) =
+    use workspace = new Workspace()
+    use directoryLock =
+        match DataDirectoryLock.acquire workspace.Path with
+        | Ok held -> held
+        | Error error -> failwithf "Unable to lock isolated workspace: %A" error
+    let existing = importBytes (create (dependencies workspace.Path defaults)) (fixture "distinct.pdf") "distinct.pdf" |> imported
+    associate workspace.Path existing.Document.Id
+    let rowsBefore = rows workspace.Path
+    let associationsBefore = associations workspace.Path
+    let mutable promoted = None
+    let failure = IOException("Simulated insertion failure after promotion.")
+    let failing : InsertDocument = fun document cancellationToken -> task {
+        assertStoredOriginal workspace.Path document (fixture "valid.pdf")
+        Assert.Empty(stagingFiles workspace.Path)
+        promoted <- Some document
+        if committedBeforeError then
+            do! LibraryRepository.insert workspace.Path document cancellationToken
+        return raise failure }
+    let import = create { dependencies workspace.Path defaults with Insert = failing }
+    let thrown = Assert.Throws<IOException>(fun () -> importBytes import (fixture "valid.pdf") "valid.pdf" |> ignore)
+    Assert.Same(failure, thrown)
+    let document = promoted |> Option.defaultWith (fun () -> failwith "Insert was not reached.")
+    Assert.Empty(stagingFiles workspace.Path)
+    assertStoredOriginal workspace.Path document (fixture "valid.pdf")
+    let expectedRows = if committedBeforeError then document :: rowsBefore else rowsBefore
+    assertResult (Set.ofList expectedRows) (rows workspace.Path |> Set.ofList)
+    Assert.Equal<string list>(List.sort [ existing.Document.StorageKey; document.StorageKey ], originals workspace.Path)
+
+    // Exercise the actual startup recovery policy with no import in progress,
+    // under the data-directory lock. Never infer absence of a row from an error.
+    let report = StorageCleanup.run workspace.Path
+    Assert.Equal(0, report.DeletedStagingFiles)
+    Assert.Empty(report.Conflicting)
+    if committedBeforeError then
+        Assert.Empty(report.Quarantined)
+        Assert.Empty(files (DocumentStore.quarantineDirectory workspace.Path))
+        assertStoredOriginal workspace.Path document (fixture "valid.pdf")
+        // The same workflow remains usable (the commit semaphore was released).
+        let retry = importBytes import (fixture "valid.pdf") "retry.pdf" |> imported
+        Assert.True(retry.Reused)
+        assertResult document retry.Document
+    else
+        Assert.Equal<string list>([ document.StorageKey ], report.Quarantined)
+        Assert.Equal<string list>([ existing.Document.StorageKey ], originals workspace.Path)
+        let quarantined = Path.Combine(DocumentStore.quarantineDirectory workspace.Path, document.StorageKey)
+        Assert.Equal<byte array>(fixture "valid.pdf", File.ReadAllBytes(quarantined))
+        Assert.Equal(UnixFileMode.UserRead, File.GetUnixFileMode(quarantined))
+    assertResult (Set.ofList expectedRows) (rows workspace.Path |> Set.ofList)
+    Assert.Equal<string list>(associationsBefore, associations workspace.Path)
+    assertStoredOriginal workspace.Path existing.Document (fixture "distinct.pdf")
+    let second = StorageCleanup.run workspace.Path
+    Assert.Empty(second.Quarantined)
+    Assert.Empty(second.Conflicting)
+
 [<Fact; Trait("Task", "T021")>]
 let ``a failure while validating discards the staged file and propagates`` () =
     use workspace = new Workspace()
