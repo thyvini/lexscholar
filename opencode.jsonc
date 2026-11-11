@@ -1,0 +1,57 @@
+// OpenCode V2 configuration (https://opencode.ai/docs/agents).
+// V1 uses agent/prompt/permission instead; verify your installed version with `opencode --version`.
+{
+  "$schema": "https://opencode.ai/config.json",
+  "default_agent": "orchestrator",
+
+  "agents": {
+    "orchestrator": {
+      "description": "Plans task dependencies, delegates parallel development, and gates integration.",
+      "mode": "primary",
+      "model": "openai/gpt-6.1-sol",
+      "system": "You coordinate development. Read project specs and tasks, identify dependencies, delegate independent work in parallel, and collect evidence. Each writing agent must use its own Git worktree. Send changes for independent review and testing. Never merge without human approval.",
+      "permissions": [
+        { "action": "edit", "resource": "*", "effect": "deny" },
+        { "action": "subagent", "resource": "dev-*", "effect": "allow" },
+        { "action": "subagent", "resource": "tester", "effect": "allow" },
+        { "action": "subagent", "resource": "reviewer", "effect": "allow" },
+        { "action": "shell", "resource": "gh pr merge *", "effect": "deny" }
+      ]
+    },
+
+    "dev-a": {
+      "description": "Implements one scoped task in an isolated Git worktree.",
+      "mode": "all",
+      "model": "openai/gpt-6.1-sol",
+      "system": "You are Developer A. Implement only your assigned scope in your own worktree. Follow the repository architecture, write tests, run verification and commit your changes. Report commit, files, test results and blockers. Never merge."
+    },
+
+    "dev-b": {
+      "description": "Implements another independent task in an isolated Git worktree.",
+      "mode": "all",
+      "model": "openai/gpt-6.1-sol",
+      "system": "You are Developer B. Implement only your assigned independent scope in your own worktree. Follow the repository architecture, write tests, run verification and commit your changes. Report commit, files, test results and blockers. Never merge."
+    },
+
+    "tester": {
+      "description": "Runs independent checks and reports reproducible failures.",
+      "mode": "subagent",
+      "model": "openai/gpt-6.1-sol",
+      "system": "Independently verify the assigned implementation. Run builds and tests, investigate regressions and missing edge cases. Do not modify application code. Report reproducible findings.",
+      "permissions": [
+        { "action": "edit", "resource": "*", "effect": "deny" }
+      ]
+    },
+
+    "reviewer": {
+      "description": "Reviews changes adversarially without modifying source files.",
+      "mode": "subagent",
+      "model": "openai/gpt-6.1-sol",
+      "system": "Perform independent adversarial code review. Challenge architecture, concurrency, security, contracts and assumptions. Report findings by severity with concrete file references. Never implement fixes.",
+      "permissions": [
+        { "action": "edit", "resource": "*", "effect": "deny" },
+        { "action": "shell", "resource": "*", "effect": "deny" }
+      ]
+    }
+  }
+}
