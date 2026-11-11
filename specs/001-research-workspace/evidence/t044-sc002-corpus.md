@@ -34,7 +34,7 @@ No product code changed.
 
 ## Environment
 
-CachyOS (Linux 7.3.3-1-cachyos), .NET SDK 10.0.114, PdfPig 0.1.16, Microsoft.EntityFrameworkCore.Sqlite 10.0.14, xunit.v3 4.0.2, qpdf 12.4.2, poppler `pdfinfo` 26.10.0, curl 8.23.0. Written on `4e131a9`. Tests ran as uid 1000.
+CachyOS (Linux 7.3.3-1-cachyos), .NET SDK 10.0.114, PdfPig 0.1.16, Microsoft.EntityFrameworkCore.Sqlite 10.0.14, xunit.v3 4.0.2, qpdf 12.4.2, poppler `pdfinfo` 26.10.0, curl 8.23.0. Written on `4e131a9` and rebased onto `8210007`. Tests ran as uid 1000.
 
 ## RED
 
@@ -62,7 +62,10 @@ dotnet build LexScholar.sln -c Release --no-restore -warnaserror
 dotnet test --solution LexScholar.sln --configuration Release --no-build
 ```
 
-Results are recorded in the PR description after the rebase onto the latest `release/0.1.0`. The corpus project builds with `-warnaserror` (0 warnings) separately, because it is not in the solution.
+After rebasing onto `8210007` (release/0.1.0 after #22):
+- Solution restore and build: 0 warnings, 0 errors.
+- Full suite: 291/291 passed with 0 skipped, browser journeys included. The suite is unchanged by this task, because the corpus project is outside the solution.
+- The corpus project, restored and built on its own with `-warnaserror`, also had 0 warnings. Its corpus run passed again: 1/1, 100 Imported.
 
 ## Limitations
 
