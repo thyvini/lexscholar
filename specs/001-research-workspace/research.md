@@ -112,6 +112,29 @@ These sources inform the decision; the summaries below are not quotations. The c
   - **Sources**: [Playwright for .NET](https://playwright.dev/dotnet/docs/intro); [Playwright browsers](https://playwright.dev/dotnet/docs/browsers).
 - **Sources**: [xUnit v3 getting started](https://xunit.net/docs/getting-started/v3/getting-started); [ASP.NET Core integration tests](https://learn.microsoft.com/en-us/aspnet/core/test/integration-tests).
 
+### SC-002 import corpus
+
+- **Decision**: Build the SC-002 corpus (T044) from 100 openly licensed arXiv papers. Candidates come from arXiv's OAI-PMH `arXivRaw` metadata, which states each paper's license. Only CC BY 4.0 and CC0 1.0 are accepted, and each paper is pinned to its latest version. `scripts/fetch-sc002-corpus.sh` downloads the PDFs into the git-ignored `corpus/sc002/pdfs/` and checks each one's SHA-256 against the committed manifest `sc002-corpus.csv`, which holds metadata only.
+- **Corpus membership**: a candidate is in the corpus only if it passes all of these checks, made with tools independent of the code under test:
+  - at most 100,000,000 bytes;
+  - `qpdf --check` passes;
+  - poppler's `pdfinfo` reports it as not encrypted with at most 2,000 pages;
+  - its SHA-256 is distinct from the others.
+
+  Candidates that fail are listed with the reason in `verification.md`.
+- **Corpus run**: a separate test project, `tests/LexScholar.Corpus.Tests`, is deliberately left out of `LexScholar.sln`.
+  - It imports every manifest entry through the real `ImportDocument` workflow into a temporary workspace and requires at least 99 imports.
+  - It runs only when asked, with `LEXSCHOLAR_SC002_CORPUS` naming the corpus directory. Without it, the test fails instead of skipping.
+  - The solution's full suite, which must have zero skips, is unaffected.
+- **Rationale**: the user decided (2026-11-10) that agents download openly licensed PDFs and never commit them. arXiv publishes machine-readable licenses and stable versioned URLs, so provenance can be checked and reproduced. Using independent tools to decide membership keeps "valid, readable PDF within limits" from being defined by the validator under test.
+- **Alternatives and trade-offs**:
+  - Rejected: xUnit v3 `Explicit` tests in an existing project, which Microsoft.Testing.Platform reports as not run/skipped, so the suite would no longer have zero skips.
+  - Rejected: an F# script (`.fsx`), which would have to load EF Core, the native SQLite library and PdfPig by hand.
+  - Rejected: a `Category` trait plus a test that passes when the corpus is absent, which would pass silently.
+  - Rejected: committing the PDFs, which would put third-party content in the repository.
+  - Trade-off: arXiv PDFs are mostly produced by the same TeX toolchain, so the corpus covers less variety in PDF producers than a mixed collection would.
+- **Scope and provenance**: approved by the lead on 2026-11-11 under the user's decision on T044 sources. This affects test tooling only; it changes no product code, spec, contract or data model.
+
 ## Security and privacy
 
 - Bind to loopback, use same-origin endpoints, reject foreign origins on mutations/antiforgery failures, and do not enable wildcard CORS.
