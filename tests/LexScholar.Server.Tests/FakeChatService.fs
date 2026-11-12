@@ -28,6 +28,7 @@ type RecordedChatRequest =
 type FakeChatService(script: int -> ChatScript) =
     inherit HttpMessageHandler()
     let requests = ConcurrentQueue<RecordedChatRequest>()
+    let mutable calls = 0
 
     new(always: ChatScript) = new FakeChatService(fun _ -> always)
 
@@ -36,8 +37,9 @@ type FakeChatService(script: int -> ChatScript) =
     override _.SendAsync(request, cancellation) = task {
         let! body = if isNull request.Content then Task.FromResult "" else request.Content.ReadAsStringAsync(cancellation)
         let authorization = request.Headers.Authorization |> Option.ofObj |> Option.map string
+        let number = Interlocked.Increment(&calls)
         requests.Enqueue { Uri = request.RequestUri; Authorization = authorization; Body = body }
-        match script requests.Count with
+        match script number with
         | Reply content ->
             let json = System.Text.Json.JsonSerializer.Serialize({| choices = [| {| message = {| role = "assistant"; content = content |} |} |] |})
             return new HttpResponseMessage(HttpStatusCode.OK, Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json"))
