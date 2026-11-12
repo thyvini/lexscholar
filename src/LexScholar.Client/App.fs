@@ -298,7 +298,7 @@ module private Ui =
             let summary, effect = Summary.update message state.Summary
             { state with Summary = summary },
             match effect with
-            | Some (Summary.Send (request, projectId, documentId)) ->
+            | Some (Summary.Send (request, projectId, documentId, _)) ->
                 Cmd.ofEffect (fun dispatch ->
                     Async.StartImmediate(async {
                         let! result = Api.summarize http projectId documentId (fun progress -> dispatch (SummaryMsg (Summary.Progressed (request, progress))))
@@ -458,7 +458,7 @@ module private Ui =
         | Summary.NotEnoughText -> "This document doesn't contain enough readable text for a summary."
         | Summary.TooManyPages -> "Documents of more than 100 pages aren't supported yet. Nothing was sent."
         | Summary.ServiceFailed -> "The summary could not be produced. Please try again."
-        | Summary.RequestFailed -> "The request failed. Please try again."
+        | Summary.RequestFailed | Summary.ConfirmationRequired _ -> "The request failed. Please try again."
 
     /// The context needed to understand and reproduce a summary (FR-008).
     let summaryContext (document: Reader.Document) (generated: Summary.Generated) =
@@ -487,7 +487,7 @@ module private Ui =
                             | None -> empty ()
                         button { attr.``type`` "button"; on.click (fun _ -> dispatch Summary.Dismiss); "Dismiss" }
                     }
-                | Summary.Shown _ -> empty ()
+                | Summary.Shown _ | Summary.Confirming _ -> empty ()
                 | Summary.Idle | Summary.Failed _ ->
                     button { attr.``type`` "button"; on.click (fun _ -> dispatch Summary.Summarize); "Summarize" }
             cond summary.State <| function

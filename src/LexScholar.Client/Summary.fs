@@ -30,9 +30,12 @@ type Failure =
     | TooManyPages
     | ServiceFailed
     | RequestFailed
+    /// The service is elsewhere and the researcher has not confirmed: its host and the model.
+    | ConfirmationRequired of host: string * model: string
 
 type State =
     | Idle
+    | Confirming of host: string * model: string
     | Generating of request: int
     | Shown of Generated
     | Failed of Failure
@@ -50,12 +53,14 @@ type Model =
 type Message =
     | Summarize
     | Dismiss
+    | ConfirmSend
+    | CancelSend
     | Progressed of request: int * Progress
     | Responded of request: int * Result<Generated, Failure>
     /// The reader's project and open document, after any change.
     | ReaderChanged of project: Guid option * document: Guid option
 
-type Effect = Send of request: int * project: Guid * document: Guid
+type Effect = Send of request: int * project: Guid * document: Guid * confirmed: bool
 
 let initial = { Project = None; Document = None; State = Idle; Progress = None; Request = 0 }
 
@@ -68,7 +73,7 @@ let update (message: Message) (model: Model) : Model * Effect option =
         match model.Project, model.Document, model.State with
         | Some project, Some document, (Idle | Shown _ | Failed _) ->
             let request = model.Request + 1
-            { model with State = Generating request; Progress = None; Request = request }, Some (Send (request, project, document))
+            { model with State = Generating request; Progress = None; Request = request }, Some (Send (request, project, document, false))
         | _ -> model, None
     | Dismiss -> reset model, None
     | Progressed (request, progress) when model.State = Generating request -> { model with Progress = Some progress }, None

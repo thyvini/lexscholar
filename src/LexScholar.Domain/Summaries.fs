@@ -7,6 +7,10 @@ type ServiceLocation =
     | Local
     | Elsewhere
 
+module ServiceLocation =
+    /// STUB (RED): replaced by the real rule in GREEN.
+    let classify (host: string) : ServiceLocation = Local
+
 /// Text of one page; `Number` is the page position, first page = 1.
 type PageText = { Number: int; Text: string }
 
