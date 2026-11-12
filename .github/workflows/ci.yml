@@ -1,0 +1,40 @@
+# Builds LexScholar and runs the full test suite, including the Playwright
+# browser tests in Chromium and Firefox, with the same commands as CLAUDE.md.
+# The SC-002 corpus tests are outside LexScholar.sln and are not run here.
+name: CI
+
+on:
+  pull_request:
+    branches: [main, "release/**"]
+  push:
+    branches: [main, "release/**"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore LexScholar.sln -warnaserror
+
+      - name: Build
+        run: dotnet build LexScholar.sln -c Release --no-restore -warnaserror
+
+      - name: Install Playwright browsers
+        run: scripts/install-browsers.sh --with-deps chromium firefox
+
+      - name: Test
+        run: dotnet test --solution LexScholar.sln --configuration Release --no-build
