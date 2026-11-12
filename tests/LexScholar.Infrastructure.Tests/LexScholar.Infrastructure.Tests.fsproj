@@ -17,8 +17,10 @@
     <Compile Include="LibraryTests.fs" />
     <Compile Include="StorageCleanupTests.fs" />
     <Compile Include="ContentAvailabilityTests.fs" />
+    <Compile Include="PdfTextTests.fs" />
     <ProjectReference Include="../../src/LexScholar.Infrastructure/LexScholar.Infrastructure.fsproj" />
     <PackageReference Include="xunit.v3" />
     <None Include="../Fixtures/*" LinkBase="Fixtures" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../Fixtures/summary/*" LinkBase="Fixtures/summary" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

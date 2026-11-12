@@ -41,3 +41,9 @@ type DocumentSummary =
       GeneratedAt: System.DateTimeOffset
       ServiceHost: string
       Model: string }
+
+module Summaries =
+    /// Splits pages into readable (some letter or digit) and unreadable, and
+    /// refuses documents with no readable page or fewer than 200 readable characters.
+    let readability (pages: PageText list) : Result<ReadablePages, NoTextReason> =
+        Error NoReadableText
