@@ -291,6 +291,9 @@ let private summarizeBody fixtureName endpointSettings (body: string) =
 [<InlineData("""{"confirmSend":false,"confirmedHost":"summary.example.test:8080","confirmedModel":"gpt"}""")>]
 [<InlineData("""{"confirmSend":true,"confirmedHost":1,"confirmedModel":"gpt"}""")>]
 [<InlineData("""not json""")>]
+[<InlineData("""null""")>]
+[<InlineData("""[]""")>]
+[<InlineData("""true""")>]
 [<InlineData("")>]
 let ``a service elsewhere without a confirmation of this host and model is 409 and receives nothing`` (body: string) =
     let status, text, fake = summarizeBody "article-en.pdf" elsewhere body
@@ -322,6 +325,8 @@ let ``a service elsewhere with confirmation of that host and model gets the text
 [<Theory; Trait("Task", "T007")>]
 [<InlineData("""{"confirmSend":false}""")>]
 [<InlineData("""{"confirmSend":true}""")>]
+[<InlineData("""null""")>]
+[<InlineData("""[]""")>]
 let ``a local service ignores confirmSend`` (body: string) =
     let status, text, fake = summarizeBody "article-en.pdf" settings body
     Assert.Equal(HttpStatusCode.OK, status)
