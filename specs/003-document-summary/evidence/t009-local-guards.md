@@ -7,6 +7,7 @@
 
 ## Decisions and limits
 
+- Greptile P1 (IPv4-only service with `::1` listed first): fixed; the connect tries each checked loopback address in order (test added, RED at the follow-up commit then GREEN, 38 tests).
 - Local means host `localhost` or a loopback IP literal, decided in `ChatCompletions.fs` for now; T007 replaces it with `ServiceLocation.classify`.
 - For a local endpoint the connect callback resolves the name and refuses it unless every address is loopback; the test injects the resolver to simulate `localhost` resolving elsewhere.
 - A non-local endpoint keeps the default proxy behaviour and no connect guard (confirmation is T007).

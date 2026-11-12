@@ -47,15 +47,22 @@ let private connectLoopbackOnly
         let! addresses = resolve context.DnsEndPoint.Host cancellation
         if addresses.Length = 0 || addresses |> Array.exists (IPAddress.IsLoopback >> not) then
             raise (HttpRequestException "The local service name does not resolve to loopback.")
-        let socket = new Socket(addresses[0].AddressFamily, SocketType.Stream, ProtocolType.Tcp)
-        socket.NoDelay <- true
-        try
-            do! socket.ConnectAsync(addresses[0], context.DnsEndPoint.Port, cancellation)
-            return new NetworkStream(socket, true) :> Stream
-        with ex ->
-            socket.Dispose()
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex).Throw()
-            return Unchecked.defaultof<Stream> })
+        // Every address is loopback; try them in order so an IPv4-only service works when ::1 is listed first.
+        let mutable stream : Stream = null
+        let mutable failure : exn = null
+        for address in addresses do
+            if isNull stream then
+                let socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp)
+                socket.NoDelay <- true
+                try
+                    do! socket.ConnectAsync(address, context.DnsEndPoint.Port, cancellation)
+                    stream <- new NetworkStream(socket, true)
+                with ex ->
+                    socket.Dispose()
+                    failure <- ex
+        if isNull stream then
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw()
+        return stream })
 
 /// The outgoing handler: never follows redirects. For a local service it also ignores
 /// environment proxies and connects to loopback only. `resolve` is a seam for tests.
