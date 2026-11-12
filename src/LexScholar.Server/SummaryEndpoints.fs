@@ -24,11 +24,13 @@ let private notAssociated directory projectId documentId =
     | Ok associations -> not (associations |> List.exists (fun (item, _) -> item.DocumentId = documentId))
     | Error _ -> true
 
-let private ndjson (event: obj) : IResult =
-    Results.Text(JsonSerializer.Serialize(event, JsonSerializerOptions.Web) + "\n", "application/x-ndjson")
+/// Writes one NDJSON event and flushes it, so progress reaches the client as it happens.
+let private write (context: HttpContext) (event: obj) : Task<unit> = task {
+    do! context.Response.WriteAsync(JsonSerializer.Serialize(event, JsonSerializerOptions.Web) + "\n", context.RequestAborted)
+    do! context.Response.Body.FlushAsync(context.RequestAborted) }
 
-let private failed code detail (omitted: int option) : IResult =
-    ndjson (box {| ``type`` = "failed"; code = code; detail = detail; omittedPoints = omitted |})
+let private failed context code detail (omitted: int option) : Task<unit> =
+    write context (box {| ``type`` = "failed"; code = code; detail = detail; omittedPoints = omitted |})
 
 let private summarizeOnce (context: HttpContext) (summary: SummaryConfiguration) documentId (pages: ReadablePages) : Task<IResult> = task {
     // The outgoing handler comes from DI when one is registered (tests), else a plain one.
@@ -39,26 +41,31 @@ let private summarizeOnce (context: HttpContext) (summary: SummaryConfiguration)
     let settings : ChatCompletions.Settings =
         { Endpoint = summary.Endpoint; Model = summary.Model; ApiKey = summary.ApiKey
           Temperature = summary.Temperature; MaxOutputTokens = summary.MaxOutputTokens }
+    context.Response.ContentType <- "application/x-ndjson"
     let capabilities : Summarize.Capabilities =
         { ExtractPages = fun _ -> failwith "pages are extracted by the endpoint"
           Complete = ChatCompletions.complete (context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger "LexScholar.Summary") client settings
-          Report = fun _ -> Task.FromResult() }
+          Report = function
+              | Summarize.Progress.PagesProcessed (processed, total) ->
+                  write context (box {| ``type`` = "progress"; pagesProcessed = processed; totalPages = total |})
+              | Summarize.Progress.Combining -> write context (box {| ``type`` = "combining" |}) }
     match! Summarize.summarize capabilities summary.MaxChunkCharacters pages context.RequestAborted with
     | Ok validated ->
         let covered = pages.Readable |> List.map (fun page -> page.Number)
-        return ndjson (box {| ``type`` = "summary"
-                              documentId = documentId
-                              points = validated.Points |> List.map (fun point -> {| text = point.Text; pages = point.Pages |})
-                              pagesCovered = covered
-                              unreadablePages = pages.Unreadable
-                              omittedPoints = validated.Omitted
-                              generatedAt = DateTimeOffset.UtcNow
-                              serviceHost = summary.Endpoint.Authority
-                              model = summary.Model |})
+        do! write context (box {| ``type`` = "summary"
+                                  documentId = documentId
+                                  points = validated.Points |> List.map (fun point -> {| text = point.Text; pages = point.Pages |})
+                                  pagesCovered = covered
+                                  unreadablePages = pages.Unreadable
+                                  omittedPoints = validated.Omitted
+                                  generatedAt = DateTimeOffset.UtcNow
+                                  serviceHost = summary.Endpoint.Authority
+                                  model = summary.Model |})
     | Error (Summarize.SummaryFailure.NotEnoughText omitted) ->
-        return failed "not_enough_text" "The service returned no point with valid citations." (Some omitted)
+        do! failed context "not_enough_text" "The service returned no point with valid citations." (Some omitted)
     | Error (Summarize.SummaryFailure.ServiceFailed _) ->
-        return failed "service_failed" "The summary service did not give a usable answer. Try again." None }
+        do! failed context "service_failed" "The summary service did not give a usable answer. Try again." None
+    return Results.Empty }
 
 let map (app: WebApplication) (configuration: WorkspaceConfiguration) =
     let summary = configuration.Summary

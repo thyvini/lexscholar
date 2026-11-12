@@ -66,9 +66,9 @@ let ``a service error or unparseable output is ServiceFailed`` () =
 
 let private text n = String('x', n)
 
-/// 6 readable pages of 100 characters; with a 250 limit every chunk holds one page.
+/// 6 readable pages of 150 characters; with a 250 limit every chunk holds one page.
 let private longPages : ReadablePages =
-    { Readable = [ for n in 1..6 -> page n (text 100) ]
+    { Readable = [ for n in 1..6 -> page n (text 150) ]
       Unreadable = [ 7 ] }
 
 let private isCombine (messages: Summarize.ChatMessage list) = messages.[1].Content.StartsWith "- (pages "

@@ -197,12 +197,18 @@ module Api =
                        Summary.ServiceHost = element.GetProperty("serviceHost").GetString()
                        Summary.Model = element.GetProperty("model").GetString() })
         | "failed" -> Some (Error (summaryFailure (element.GetProperty("code").GetString())))
-        // Progress events arrive here too; the panel does not show them yet.
+        | _ -> None
+
+    /// The progress an event reports, if it is one.
+    let private progressEvent (element: JsonElement) : Summary.Progress option =
+        match element.GetProperty("type").GetString() with
+        | "progress" -> Some (Summary.PagesProcessed (element.GetProperty("pagesProcessed").GetInt32(), element.GetProperty("totalPages").GetInt32()))
+        | "combining" -> Some Summary.Combining
         | _ -> None
 
     /// Requests a summary and reads the NDJSON stream until its one `summary` or
     /// `failed` event. Failures never show response details.
-    let summarize (http: HttpClient) (projectId: Guid) (documentId: Guid) = async {
+    let summarize (http: HttpClient) (projectId: Guid) (documentId: Guid) (onProgress: Summary.Progress -> unit) = async {
         try
             use! tokenResponse = http.GetAsync("api/antiforgery") |> Async.AwaitTask
             if not tokenResponse.IsSuccessStatusCode then return Error Summary.RequestFailed
@@ -228,7 +234,9 @@ module Api =
                             use json = JsonDocument.Parse(line)
                             match summaryEvent json.RootElement with
                             | Some outcome -> return outcome
-                            | None -> return! next () }
+                            | None ->
+                                progressEvent json.RootElement |> Option.iter onProgress
+                                return! next () }
                     return! next ()
         with _ -> return Error Summary.RequestFailed }
 
@@ -291,8 +299,10 @@ module private Ui =
             { state with Summary = summary },
             match effect with
             | Some (Summary.Send (request, projectId, documentId)) ->
-                Cmd.OfAsync.perform (fun () -> Api.summarize http projectId documentId) ()
-                    (fun result -> SummaryMsg (Summary.Responded (request, result)))
+                Cmd.ofEffect (fun dispatch ->
+                    Async.StartImmediate(async {
+                        let! result = Api.summarize http projectId documentId (fun progress -> dispatch (SummaryMsg (Summary.Progressed (request, progress))))
+                        dispatch (SummaryMsg (Summary.Responded (request, result))) }))
             | None -> Cmd.none
         | ProjectsMsg message ->
             let projects, effect = Projects.update message state.Projects
@@ -470,6 +480,11 @@ module private Ui =
                     span {
                         "role" => "status"
                         "Summarizing… "
+                        cond summary.Progress <| function
+                            | Some (Summary.PagesProcessed (processed, total)) ->
+                                span { attr.``class`` "summary-progress"; text $"{processed} of {total} pages processed. " }
+                            | Some Summary.Combining -> span { attr.``class`` "summary-progress"; text "Combining points. " }
+                            | None -> empty ()
                         button { attr.``type`` "button"; on.click (fun _ -> dispatch Summary.Dismiss); "Dismiss" }
                     }
                 | Summary.Shown _ -> empty ()

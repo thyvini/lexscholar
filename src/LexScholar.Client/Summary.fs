@@ -71,6 +71,7 @@ let update (message: Message) (model: Model) : Model * Effect option =
             { model with State = Generating request; Progress = None; Request = request }, Some (Send (request, project, document))
         | _ -> model, None
     | Dismiss -> reset model, None
+    | Progressed (request, progress) when model.State = Generating request -> { model with Progress = Some progress }, None
     | Progressed _ -> model, None
     | Responded (request, result) when model.State = Generating request ->
         match result with
