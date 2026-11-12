@@ -128,7 +128,7 @@ let private snapshot (root: string) =
               $"doc {d.Id} {d.Sha256} {d.StorageKey} {d.OriginalFileName} {d.ByteLength} {d.PageCount} {d.ImportedUtc:O}"
           for p in db.Set<ProjectDocumentRow>() |> Seq.toList |> List.sortBy (fun p -> p.ProjectId, p.DocumentId) ->
               $"link {p.ProjectId} {p.DocumentId} {p.Role} {p.AddedUtc:O}"
-          for p in db.Set<ResearchProjectRow>() |> Seq.toList -> $"project {p.Id} {p.Name} {p.CreatedUtc:O}"
+          for p in db.Set<ResearchProjectRow>() |> Seq.toList -> $"project {p.Id} {p.WorkspaceId} {p.Name} {p.NormalizedName} {p.CreatedUtc:O}"
           for w in db.Set<WorkspaceRow>() |> Seq.toList -> $"workspace {w.Id} {w.ActiveProjectId} {w.CreatedUtc:O}" ]
     let originals =
         [ for file in Directory.GetFiles(DocumentStore.originalsDirectory root) |> Array.sort ->
@@ -173,8 +173,9 @@ let ``declining and confirming the send to another host change no database row a
 [<Fact; Trait("Task", "T011")>]
 let ``abandoning a summary changes no database row and no original`` () =
     let fake = new FakeChatService(fun n -> if n = 1 then Reply citationAnswer else WaitUntilCancelled)
-    (
-        use harness = TestHarness.Start(settings = local, summaryHandler = fake)
+    use workspace = TemporaryWorkspace.Create()
+    let before =
+        use harness = TestHarness.Start(settings = local, summaryHandler = fake, workspace = workspace)
         let project = seedProject harness.Root
         let document = addDocument harness.Client project "long-40.pdf"
         let before = snapshot harness.Root
@@ -186,5 +187,6 @@ let ``abandoning a summary changes no database row and no original`` () =
         abandon.Cancel()
         response.Dispose()
         fake.Cancelled.WaitAsync(TimeSpan.FromSeconds 30.).GetAwaiter().GetResult()
-        Assert.Equal(before, snapshot harness.Root))
+        before // disposing the host waits for the abandoned request to end
+    Assert.Equal(before, snapshot workspace.Root)
     Assert.Equal(2, fake.Requests.Length)

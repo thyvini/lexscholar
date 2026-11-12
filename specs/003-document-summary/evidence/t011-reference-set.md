@@ -14,3 +14,8 @@
 - The openly licensed (CC BY 4.0) real article from research section 7 is still deferred (T001 GPT P2, accepted); the reference set here is the generated PDFs. It would only add realistic layout, not new behaviour, and is not needed for SC-001 as written.
 - For `long-40.pdf` the fake cites page 1 in every chunk, so only `omittedPoints >= 1` is asserted there; exact counts are asserted for the single-call documents.
 - SC-005 compares the library, project-link, project and workspace rows plus the SHA-256 of every file in the originals directory.
+
+## Greptile (first review, two P2)
+
+- Project fields missing from the snapshot (`WorkspaceId`, `NormalizedName`): must fix, done.
+- Abandon snapshot taken before the endpoint finished: must fix, done. The final comparison now runs after the host is disposed (which waits for the request to end), on a shared `TemporaryWorkspace`. `scripts/check.sh T011`: 18 total, 0 failed.
