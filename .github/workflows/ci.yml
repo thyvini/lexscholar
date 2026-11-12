@@ -38,3 +38,8 @@ jobs:
 
       - name: Test
         run: dotnet test --solution LexScholar.sln --configuration Release --no-build
+
+      # Keeps the agents' quiet check script working against real test output
+      # (a task whose tests span two projects).
+      - name: Agent check script
+        run: scripts/check.sh T022
