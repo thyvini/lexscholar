@@ -17,7 +17,7 @@ Tokens are the main cost of this team. Every tool result you read stays in your 
 
 Teammates don't survive a restart, so derive state from the repository:
 
-- `git fetch origin`; the open tasks in `$ARGUMENTS/tasks.md` on the release branch (`grep -n '^- \[ \]'`).
+- `git fetch origin`; in `$ARGUMENTS/tasks.md` on the release branch, find the open tasks (`grep -n '^- \[ \]'`), then read each open task's full entry (its notes, such as a deferral) and the dependencies section. That is what the briefs are built from.
 - Open PRs against the release branch, with their check states.
 - `git worktree list` and the feature's Codecks sub cards. Resume unfinished work instead of restarting it.
 
