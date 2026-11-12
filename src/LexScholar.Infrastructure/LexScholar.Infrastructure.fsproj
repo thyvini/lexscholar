@@ -15,6 +15,7 @@
     <Compile Include="LibraryRepository.fs" />
     <Compile Include="StorageCleanup.fs" />
     <Compile Include="VerifiedDocumentContent.fs" />
+    <Compile Include="PdfText.fs" />
     <ProjectReference Include="../LexScholar.Domain/LexScholar.Domain.fsproj" />
     <ProjectReference Include="../LexScholar.Application/LexScholar.Application.fsproj" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />

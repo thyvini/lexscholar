@@ -27,6 +27,7 @@
     <Compile Include="LimitRestartTests.fs" />
     <CompileAfter Include="TestProgram.fs" />
     <None Include="../Fixtures/*" LinkBase="Fixtures" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../Fixtures/summary/*" LinkBase="Fixtures/summary" CopyToOutputDirectory="PreserveNewest" />
     <ProjectReference Include="../../src/LexScholar.Server/LexScholar.Server.fsproj" />
     <PackageReference Include="xunit.v3" />
   </ItemGroup>
