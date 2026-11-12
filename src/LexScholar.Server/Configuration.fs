@@ -6,14 +6,26 @@ open System.IO
 open Microsoft.Extensions.Configuration
 open LexScholar.Application
 
+/// Optional connection to the researcher's chosen chat-completions service.
+type SummaryConfiguration =
+    { Endpoint: Uri
+      Model: string
+      ApiKey: string option
+      MaxChunkCharacters: int
+      Temperature: float option
+      MaxOutputTokens: int option }
+
 type WorkspaceConfiguration =
     { DataDirectory: string
-      ImportLimits: ImportLimits }
+      ImportLimits: ImportLimits
+      Summary: SummaryConfiguration option }
 
 type ConfigurationError =
     | InvalidLimit of name: string * value: string
     | NonPositiveLimit of name: string
     | InvalidDataDirectory of reason: string
+    /// `reason` is fixed text; the offending value is never echoed (it may hold a secret).
+    | InvalidSummarySetting of key: string * reason: string
 
 module Configuration =
     [<Literal>]
@@ -72,4 +84,5 @@ module Configuration =
                 limit MaxPagesKey 2_000 0 parseInt (get MaxPagesKey)
                 |> Result.map (fun pages ->
                     { DataDirectory = path
-                      ImportLimits = { MaxBytes = bytes; MaxPages = pages } })))
+                      ImportLimits = { MaxBytes = bytes; MaxPages = pages }
+                      Summary = None })))

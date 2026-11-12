@@ -7,3 +7,4 @@ module Endpoints =
         ProjectEndpoints.map app configuration.DataDirectory
         LibraryEndpoints.map app configuration
         ReaderEndpoints.map app configuration
+        SummaryEndpoints.map app configuration

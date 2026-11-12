@@ -9,6 +9,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../RunnerSmoke.fs" Link="RunnerSmoke.fs" />
+    <Compile Include="FakeChatService.fs" />
     <Compile Include="TestHarness.fs" />
     <Compile Include="ProcessHarness.fs" />
     <Compile Include="HarnessSmoke.fs" />
@@ -20,6 +21,7 @@
     <Compile Include="ProjectContractTests.fs" />
     <Compile Include="LibraryContractTests.fs" />
     <Compile Include="ReaderContractTests.fs" />
+    <Compile Include="SummaryContractTests.fs" />
     <Compile Include="LocalSecurityTests.fs" />
     <Compile Include="RestartTests.fs" />
     <Compile Include="LimitRestartTests.fs" />
