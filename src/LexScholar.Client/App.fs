@@ -196,16 +196,11 @@ module private Ui =
         | Library.SendAssociate (projectId, documentId, role) ->
             perform (fun () -> Api.associate http projectId documentId role) (fun result -> Library.Associated (projectId, result))
         | Library.SendRemove (projectId, documentId) ->
-            perform (fun () -> Api.removeAssociation http projectId documentId) (fun result -> Library.Removed (projectId, result))
+            perform (fun () -> Api.removeAssociation http projectId documentId) (fun result -> Library.Removed (projectId, documentId, result))
 
     let private updateLibrary http message state =
         let library, effect = Library.update message state.Library
-        let reader, _ = Reader.update (Reader.ActiveProjectChanged library.Project) state.Reader
-        let reader, _ =
-            if library.HasLoadedProject then
-                Reader.update (Reader.AssociationsChanged (library.Associations |> List.map (fun item -> item.Document.Id))) reader
-            else reader, None
-        { state with Library = library; Reader = reader }, effect |> Option.map (libraryCommand http) |> Option.defaultValue Cmd.none
+        { state with Library = library; Reader = Reader.followLibrary library state.Reader }, effect |> Option.map (libraryCommand http) |> Option.defaultValue Cmd.none
 
     let private updateReader http message state =
         let reader, effect = Reader.update message state.Reader

@@ -64,7 +64,7 @@ type Message =
     | Associate of documentId: Guid * DocumentRole
     | Associated of projectId: Guid * Result<unit, Failure>
     | Remove of documentId: Guid
-    | Removed of projectId: Guid * Result<unit, Failure>
+    | Removed of projectId: Guid * documentId: Guid * Result<unit, Failure>
 
 type Effect =
     | FetchLibrary of request: int
@@ -177,5 +177,13 @@ let update (message: Message) (model: Model) : Model * Effect option =
     | Associated (projectId, result) when model.Busy = Some Associating -> mutated projectId result model
     | Remove documentId when model.Busy.IsNone && model.Project.IsSome ->
         { model with Busy = Some Removing; Notice = None; Error = None }, Some (SendRemove (model.Project.Value, documentId))
-    | Removed (projectId, result) when model.Busy = Some Removing -> mutated projectId result model
+    | Removed (projectId, documentId, result) when model.Busy = Some Removing ->
+        // The server removed it: drop it now rather than waiting for the reload,
+        // which may fail, so the reader closes at once (Reader.followLibrary).
+        let model =
+            match result with
+            | Ok () when model.Project = Some projectId ->
+                { model with Associations = model.Associations |> List.filter (fun item -> item.Document.Id <> documentId) }
+            | _ -> model
+        mutated projectId result model
     | _ -> model, None
