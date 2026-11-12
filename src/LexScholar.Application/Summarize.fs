@@ -41,6 +41,10 @@ type SummaryFailure =
     | NotEnoughText of omitted: int
     | ServiceFailed of ServiceError
 
+/// LexScholar's own explanation for a failed call; never the service's body, prompt, text or key.
+let failureDetail (_error: ServiceError) : string =
+    "The summary service did not give a usable answer. Try again."
+
 let private systemPrompt =
     "You summarize a document for a researcher. The text is split by page markers such as [Page 7]. "
     + "Write 5 to 10 main points, in the language of most of the text. Each point cites the page markers it comes from. "

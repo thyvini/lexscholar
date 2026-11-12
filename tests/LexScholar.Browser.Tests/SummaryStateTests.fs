@@ -101,7 +101,7 @@ let ``progress of the current request is kept and cleared when it ends`` () =
 [<Fact; Trait("Task", "T006")>]
 let ``progress of an older or ended request is dropped`` () =
     let generating, _ = update Summarize reading
-    let failed, _ = update (Responded (1, Error ServiceFailed)) generating
+    let failed, _ = update (Responded (1, Error (ServiceFailed None))) generating
     let late, _ = update (Progressed (1, PagesProcessed (5, 40))) failed
     assertState None late.Progress
     let again, _ = update Summarize failed
@@ -182,3 +182,25 @@ let ``a second request for the same document is ignored while one runs, and dism
     assertState None idleDismiss
     let _, confirmingDismiss = update Dismiss confirming
     assertState None confirmingDismiss
+
+[<Fact; Trait("Task", "T010")>]
+let ``a service failure shows the server's explanation and offers another try that asks again`` () =
+    let detail = "The service rejected the request. Check Model."
+    let failed, _ = update (Responded (1, Error (ServiceFailed (Some detail)))) generating
+    assertState (Failed (ServiceFailed (Some detail))) failed.State
+    Assert.Contains(detail, failureText (ServiceFailed (Some detail)))
+    Assert.Contains("try again", (failureText (ServiceFailed None)).ToLowerInvariant())
+    let again, effect = update Summarize failed
+    assertState (Generating 2) again.State
+    assertState (Some (Send (2, project, document, None))) effect
+    let late, _ = update (Responded (1, Error (ServiceFailed None))) again
+    assertState (Generating 2) late.State
+
+[<Fact; Trait("Task", "T010")>]
+let ``abandoning a request is never shown as a failure, even when its fetch ends with an error`` () =
+    let dismissed, _ = update Dismiss generating
+    let late, _ = update (Responded (1, Error RequestFailed)) dismissed
+    assertState Idle late.State
+    let moved, _ = update (ReaderChanged (Some project, None)) generating
+    let lateMoved, _ = update (Responded (1, Error (ServiceFailed None))) moved
+    assertState Idle lateMoved.State

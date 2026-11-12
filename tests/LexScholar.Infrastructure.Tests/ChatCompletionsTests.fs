@@ -139,3 +139,48 @@ let ``a local service is reached on a later loopback address when the first refu
     // Nothing listens on ::1 at this port, so the connect falls through to 127.0.0.1.
     let handler = ChatCompletions.createHandlerWith (resolvesTo [ "::1"; "127.0.0.1" ]) (Uri endpoint)
     Assert.Equal(Ok "fine", complete handler (CapturingLogger()) endpoint None "hello")
+
+/// Sends valid headers, then stalls without sending the promised body until the connection closes.
+type private StallingBodyServer() =
+    let listener = new TcpListener(IPAddress.Loopback, 0)
+    do listener.Start()
+    let loop =
+        task {
+            try
+                use! client = listener.AcceptTcpClientAsync()
+                let stream = client.GetStream()
+                let buffer = Array.zeroCreate<byte> 65536
+                let mutable text = ""
+                while not (text.Contains "\r\n\r\n") do
+                    let! n = stream.ReadAsync(buffer, 0, buffer.Length)
+                    text <- text + Encoding.UTF8.GetString(buffer, 0, n)
+                let head = Encoding.UTF8.GetBytes "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 500\r\n\r\n{\"choices\""
+                do! stream.WriteAsync(head, 0, head.Length)
+                do! Task.Delay(Timeout.Infinite)
+            with _ -> () }
+    member _.Port = (listener.LocalEndpoint :?> IPEndPoint).Port
+    member _.Loop = loop
+    interface IDisposable with
+        member _.Dispose() = listener.Stop()
+
+[<Fact; Trait("Task", "T010")>]
+let ``a service that stalls after its headers times out instead of leaving the request pending`` () =
+    use server = new StallingBodyServer()
+    let endpoint = $"http://127.0.0.1:{server.Port}/v1"
+    use client = new HttpClient(ChatCompletions.createHandler (Uri endpoint), true, Timeout = TimeSpan.FromMilliseconds 300.0)
+    let call = ChatCompletions.complete (CapturingLogger()) client (settings endpoint None) (messages "hello") CancellationToken.None
+    // A guard so the RED run fails on the assertion instead of hanging.
+    let finished = Task.WhenAny(call, Task.Delay(TimeSpan.FromSeconds 10.0)).GetAwaiter().GetResult()
+    Assert.True(obj.ReferenceEquals(finished, call), "the call is still pending after its timeout")
+    Assert.Equal(Error Summarize.ServiceError.TimedOut, call.GetAwaiter().GetResult())
+
+[<Fact; Trait("Task", "T010")>]
+let ``a caller's cancellation while the body stalls is a cancellation, not a timeout`` () =
+    use server = new StallingBodyServer()
+    let endpoint = $"http://127.0.0.1:{server.Port}/v1"
+    use client = new HttpClient(ChatCompletions.createHandler (Uri endpoint), true, Timeout = TimeSpan.FromSeconds 30.0)
+    use source = new CancellationTokenSource(TimeSpan.FromMilliseconds 300.0)
+    let call = ChatCompletions.complete (CapturingLogger()) client (settings endpoint None) (messages "hello") source.Token
+    let finished = Task.WhenAny(call, Task.Delay(TimeSpan.FromSeconds 10.0)).GetAwaiter().GetResult()
+    Assert.True(obj.ReferenceEquals(finished, call), "the call is still pending after cancellation")
+    Assert.True(call.IsCanceled, "an abandoned call is cancelled, not reported as a failure")

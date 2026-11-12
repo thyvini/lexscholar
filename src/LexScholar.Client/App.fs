@@ -170,7 +170,7 @@ module Api =
         | "no_text" -> Summary.NoText
         | "not_enough_text" -> Summary.NotEnoughText
         | "too_many_pages" -> Summary.TooManyPages
-        | "service_failed" -> Summary.ServiceFailed
+        | "service_failed" -> Summary.ServiceFailed None
         | _ -> Summary.RequestFailed
 
     let private problemCode (body: string) =
@@ -482,16 +482,7 @@ module private Ui =
             }
         }
 
-    let summaryFailureText = function
-        | Summary.NotConfigured ->
-            "Summaries need a summarization service. Set LexScholar:Summary:Endpoint and LexScholar:Summary:Model in the app's settings file, then restart LexScholar."
-        | Summary.Unavailable ->
-            "This document's stored file is missing, unreadable or not the recorded size. Its library record and project associations are unchanged."
-        | Summary.NoText -> "This document has no readable text to summarize (for example, a scanned PDF without a text layer). Nothing was sent."
-        | Summary.NotEnoughText -> "This document doesn't contain enough readable text for a summary."
-        | Summary.TooManyPages -> "Documents of more than 100 pages aren't supported yet. Nothing was sent."
-        | Summary.ServiceFailed -> "The summary could not be produced. Please try again."
-        | Summary.RequestFailed | Summary.ConfirmationRequired _ -> "The request failed. Please try again."
+    let summaryFailureText = Summary.failureText
 
     /// The context needed to understand and reproduce a summary (FR-008).
     let summaryContext (document: Reader.Document) (generated: Summary.Generated) =
