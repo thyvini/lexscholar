@@ -462,8 +462,8 @@ module private Ui =
         $"{document.FileName}, covering {Summary.pageRanges generated.PagesCovered}.{unreadable} Generated {generatedAt} by {generated.Model} at {generated.ServiceHost}.{omitted}"
 
     /// The summary controls and panel of the open document. Citations are plain
-    /// page-number buttons (`button.citation`, `data-page`) that later slices wire to the reader.
-    let summaryView (document: Reader.Document) (summary: Summary.Model) dispatch =
+    /// page-number buttons (`button.citation`, `data-page`) that ask the reader to show that page.
+    let summaryView (document: Reader.Document) (summary: Summary.Model) onCite dispatch =
         concat {
             cond summary.State <| function
                 | Summary.Generating _ ->
@@ -501,6 +501,7 @@ module private Ui =
                                             attr.``class`` "citation"
                                             "data-page" => string page
                                             attr.title $"Page {page}"
+                                            on.click (fun _ -> onCite page)
                                             text (string page)
                                         }
                                 }
@@ -586,11 +587,13 @@ module private Ui =
                         p { "Use your browser's PDF viewer controls to navigate pages." }
                         a { attr.href document.ContentUrl; "target" => "_blank"; "rel" => "noopener"; "Open in new tab" }
                         button { attr.``type`` "button"; on.click (fun _ -> dispatch' (ReaderMsg Reader.Close)); "Close" }
-                        summaryView document state.Summary (SummaryMsg >> dispatch')
+                        summaryView document state.Summary (ReaderMsg << Reader.ShowPage >> dispatch') (SummaryMsg >> dispatch')
                         iframe {
+                            // Keyed by the navigation counter: every citation click re-creates the frame.
+                            attr.key state.Reader.Navigation
                             attr.``class`` "reader-frame"
                             "title" => document.FileName
-                            "src" => document.ContentUrl
+                            "src" => (match state.Reader.Page with Some page -> $"{document.ContentUrl}#page={page}" | None -> document.ContentUrl)
                             "style" => "width:100%;height:75vh;border:0"
                         }
                     }

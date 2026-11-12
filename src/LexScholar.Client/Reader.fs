@@ -22,6 +22,10 @@ type Model =
       Opening: Document option
       /// The document shown in the viewer.
       Open: Document option
+      /// The page a citation asked for, if any; the frame shows it.
+      Page: int option
+      /// Counts page requests so the frame is re-created even for a repeated page.
+      Navigation: int
       /// The document whose role is being changed; one change at a time.
       ChangingRole: Guid option
       /// Errors from a pending mutation on a previous project visit must not update this visit.
@@ -37,6 +41,8 @@ type Message =
     | Open of Document
     | ContentChecked of request: int * Result<unit, Failure>
     | Close
+    /// Show a cited page of the open document.
+    | ShowPage of int
     | ChangeRole of documentId: Guid * DocumentRole
     | RoleChanged of projectId: Guid * Result<unit, Failure>
 
@@ -47,7 +53,7 @@ type Effect =
     | RefreshProject
 
 let initial =
-    { Project = None; Opening = None; Open = None; ChangingRole = None; RoleStale = false; Error = None; CheckRequest = 0 }
+    { Project = None; Opening = None; Open = None; Page = None; Navigation = 0; ChangingRole = None; RoleStale = false; Error = None; CheckRequest = 0 }
 
 /// Maps an HTTP problem response to a failure; anything unexpected is a generic failure.
 let parseFailure (status: int) (body: string) : Failure =
@@ -63,7 +69,7 @@ let parseFailure (status: int) (body: string) : Failure =
 
 let update (message: Message) (model: Model) : Model * Effect option =
     let close model =
-        { model with Open = None; Opening = None; CheckRequest = model.CheckRequest + 1; Error = None }
+        { model with Open = None; Opening = None; Page = None; CheckRequest = model.CheckRequest + 1; Error = None }
     match message with
     | ActiveProjectChanged project when project <> model.Project ->
         { close model with Project = project; RoleStale = model.ChangingRole.IsSome }, None
@@ -72,13 +78,14 @@ let update (message: Message) (model: Model) : Model * Effect option =
         close model, None
     | Open document when model.Project.IsSome ->
         let request = model.CheckRequest + 1
-        { model with Opening = Some document; Open = None; Error = None; CheckRequest = request },
+        { model with Opening = Some document; Open = None; Page = None; Error = None; CheckRequest = request },
         Some (CheckContent (request, document.ContentUrl))
     | ContentChecked (request, result) when request = model.CheckRequest && model.Opening.IsSome ->
         match result with
         | Ok () -> { model with Open = model.Opening; Opening = None }, None
         | Error error -> { model with Opening = None; Error = Some error }, None
     | Close -> close model, None
+    | ShowPage page when model.Open.IsSome -> { model with Page = Some page; Navigation = model.Navigation + 1 }, None
     | ChangeRole (documentId, role) when model.Project.IsSome && model.ChangingRole.IsNone ->
         { model with ChangingRole = Some documentId; RoleStale = false; Error = None },
         Some (SendRole (model.Project.Value, documentId, role))
