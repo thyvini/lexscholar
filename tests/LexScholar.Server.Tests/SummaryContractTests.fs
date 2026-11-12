@@ -213,3 +213,32 @@ let ``unparseable output and a response over 1 MB are service_failed`` () =
         let _, events, _, _ = summarizeWith "article-en.pdf" (Reply answer) []
         let event = Assert.Single(events)
         Assert.Equal("service_failed", event.GetProperty("code").GetString())
+
+type private ThrowingStream() =
+    inherit MemoryStream()
+    override _.ReadAsync(_: byte array, _: int, _: int, _: Threading.CancellationToken) : Threading.Tasks.Task<int> =
+        Threading.Tasks.Task.FromException<int>(IOException("connection closed"))
+    override _.ReadAsync(_: Memory<byte>, _: Threading.CancellationToken) : Threading.Tasks.ValueTask<int> =
+        Threading.Tasks.ValueTask<int>(Threading.Tasks.Task.FromException<int>(IOException("connection closed")))
+
+/// Sends the headers, then breaks the connection while the body is read.
+type private TruncatedBody() =
+    inherit HttpContent()
+    override _.SerializeToStreamAsync(_, _) = Threading.Tasks.Task.FromException(IOException("connection closed"))
+    override _.TryComputeLength(length) = length <- 10L; false
+    override _.CreateContentReadStreamAsync() = Threading.Tasks.Task.FromResult<Stream>(new ThrowingStream())
+
+type private BrokenBodyHandler() =
+    inherit HttpMessageHandler()
+    override _.SendAsync(_, _) = Threading.Tasks.Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK, Content = new TruncatedBody()))
+
+[<Fact; Trait("Task", "T003")>]
+let ``a response that breaks while its body is read is a service_failed event`` () =
+    use harness = TestHarness.Start(settings = settings, summaryHandler = new BrokenBodyHandler())
+    let project = seedProject harness.Root
+    let document = import harness.Client "article-en.pdf"
+    associate harness.Client project document
+    let status, text = summarize harness.Client project document
+    Assert.Equal(HttpStatusCode.OK, status)
+    use json = JsonDocument.Parse(text.Trim())
+    Assert.Equal("service_failed", json.RootElement.GetProperty("code").GetString())

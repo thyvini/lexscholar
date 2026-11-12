@@ -84,3 +84,8 @@ let ``an empty points array is Ok with nothing`` () =
     let result = valid """{"points":[]}"""
     Assert.Empty(result.Points)
     Assert.Equal(0, result.Omitted)
+
+[<Fact; Trait("Task", "T003")>]
+let ``fences and think tags inside a point's text are preserved`` () =
+    let result = valid "{\"points\":[{\"text\":\"Use ```code``` and <think>x</think> as written.\",\"pages\":[1]}]}"
+    Assert.Equal("Use ```code``` and <think>x</think> as written.", result.Points.Head.Text)
