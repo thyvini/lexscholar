@@ -23,6 +23,8 @@ type ImportDependencies =
 /// The document an import produced, and whether it already existed.
 type ImportOutcome = { Document: LibraryDocument; Reused: bool }
 
+/// Import borrows the caller-owned input until its task completes. The
+/// implementation must not dispose or retain it, including on cancellation.
 type Import = Stream -> string -> CancellationToken -> Task<Result<ImportOutcome, PdfRejection>>
 
 let private bufferSize = 81_920
