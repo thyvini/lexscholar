@@ -43,7 +43,15 @@ type DocumentSummary =
       Model: string }
 
 module Summaries =
+    /// Fewer readable characters than this in total is not enough to summarize.
+    let minimumReadableCharacters = 200
+
+    let private hasLetterOrDigit (text: string) = text |> Seq.exists System.Char.IsLetterOrDigit
+
     /// Splits pages into readable (some letter or digit) and unreadable, and
     /// refuses documents with no readable page or fewer than 200 readable characters.
     let readability (pages: PageText list) : Result<ReadablePages, NoTextReason> =
-        Error NoReadableText
+        let readable, unreadable = pages |> List.partition (fun page -> hasLetterOrDigit page.Text)
+        if List.isEmpty readable then Error NoReadableText
+        elif readable |> List.sumBy (fun page -> page.Text.Length) < minimumReadableCharacters then Error NotEnoughText
+        else Ok { Readable = readable; Unreadable = unreadable |> List.map (fun page -> page.Number) }
