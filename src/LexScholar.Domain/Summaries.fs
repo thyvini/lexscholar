@@ -60,5 +60,49 @@ module Summaries =
         else Ok { Readable = readable; Unreadable = unreadable |> List.map (fun page -> page.Number) }
 
 
-    /// Reads the model's answer into validated points (research §5). RED stub.
-    let parsePoints (allowedPages: Set<int>) (output: string) : Result<ValidatedPoints, Unparseable> = Error Unparseable
+    /// Longest accepted point text.
+    let maximumPointCharacters = 1000
+
+    let private thinkBlocks = System.Text.RegularExpressions.Regex("<think>.*?</think>", System.Text.RegularExpressions.RegexOptions.Singleline ||| System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+    let private fences = System.Text.RegularExpressions.Regex("```[A-Za-z]*")
+
+    let private pageOf (element: System.Text.Json.JsonElement) =
+        match element.ValueKind with
+        | System.Text.Json.JsonValueKind.Number ->
+            match element.TryGetInt32() with
+            | true, value when value >= 1 -> Some value
+            | _ -> None
+        | _ -> None
+
+    /// A point is valid when its text is a non-empty string of at most 1,000
+    /// characters and its pages are a non-empty array of integers, all allowed.
+    let private point (allowed: Set<int>) (element: System.Text.Json.JsonElement) : SummaryPoint option =
+        let kind = System.Text.Json.JsonValueKind.String
+        if element.ValueKind <> System.Text.Json.JsonValueKind.Object then None
+        else
+            match element.TryGetProperty "text", element.TryGetProperty "pages" with
+            | (true, text), (true, pages) when text.ValueKind = kind && pages.ValueKind = System.Text.Json.JsonValueKind.Array ->
+                let trimmed = text.GetString().Trim()
+                let cited = [ for item in pages.EnumerateArray() -> pageOf item ]
+                if trimmed = "" || trimmed.Length > maximumPointCharacters then None
+                elif List.isEmpty cited || cited |> List.exists (fun page -> page.IsNone || not (allowed.Contains page.Value)) then None
+                else Some { Text = trimmed; Pages = cited |> List.choose id |> List.distinct |> List.sort }
+            | _ -> None
+
+    /// Reads the model's answer into validated points (research §5). The output is
+    /// untrusted: think blocks and code fences are dropped, the outermost JSON
+    /// object is parsed, and a point citing any page outside `allowedPages` is omitted.
+    let parsePoints (allowedPages: Set<int>) (output: string) : Result<ValidatedPoints, Unparseable> =
+        let cleaned = fences.Replace(thinkBlocks.Replace(output, ""), "")
+        let first = cleaned.IndexOf '{'
+        let last = cleaned.LastIndexOf '}'
+        if first < 0 || last <= first then Error Unparseable
+        else
+            try
+                use document = System.Text.Json.JsonDocument.Parse(cleaned.Substring(first, last - first + 1))
+                match document.RootElement.TryGetProperty "points" with
+                | true, points when points.ValueKind = System.Text.Json.JsonValueKind.Array ->
+                    let parsed = [ for item in points.EnumerateArray() -> point allowedPages item ]
+                    Ok { Points = parsed |> List.choose id; Omitted = parsed |> List.filter Option.isNone |> List.length }
+                | _ -> Error Unparseable
+            with :? System.Text.Json.JsonException -> Error Unparseable
