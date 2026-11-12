@@ -14,3 +14,5 @@
 - A service elsewhere keeps the default proxy behaviour (the researcher confirmed that send); redirects stay off.
 - Nothing is remembered: each request is judged by its own `confirmSend`, and the client's Cancel emits no effect.
 - Not covered here: the manual `strace` check of SC-006 (T012).
+- Greptile P2 "no browser coverage": must fix, done. A journey (Chromium and Firefox) with an elsewhere endpoint checks the dialog text, Cancel sends nothing (zero fake requests), asking again asks again, and Send gives the summary with exactly one request. `scripts/check.sh T007`: `Tests: 30 total, 0 failed, 0 skipped.`
+- Greptile P2 "focus and aria-describedby on the dialog": overkill for this slice (no accessibility requirement in the spec; needs JS interop for focus); the dialog is a native-button flow with `role=alertdialog` and a label.
