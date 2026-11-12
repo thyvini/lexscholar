@@ -31,5 +31,5 @@
 
 ## Notes
 
-- `/speckit-clarify` (2026-11-12) resolved the three open questions: local-only processing (FR-010), any document up to the import page limit (FR-011), 40 pages within 2 minutes with page progress (FR-012, SC-007). It also added background continuation when the researcher switches document (FR-009, FR-014). Summary length and mixed-language handling keep their documented defaults.
-- Size: one user story, but the clarified scope (whole-document summaries of any length, background generation, local processing) may exceed the AGENTS.md budget of about 10–15 tasks. Check at `/speckit-plan` and `/speckit-tasks`, and propose a split if it does.
+- `/speckit-clarify` (2026-11-12): bring your own model, chosen in the settings file; a service outside the researcher's machine needs her confirmation before each summary (FR-010, FR-014); documents up to 100 pages (FR-011); 40 pages within 2 minutes with page progress (FR-012, SC-007); abandoned on switch (FR-009). Summary length and mixed-language handling keep their documented defaults.
+- Size: the owner split the work to fit the AGENTS.md budget. F003 is the core summary (this spec); F004 is planned for the settings screen, documents over 100 pages and background generation.
