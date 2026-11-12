@@ -1,0 +1,140 @@
+openapi: 3.1.0
+info:
+  title: LexScholar F003 Document Summary API
+  version: 1.0.0
+  description: >-
+    Adds one endpoint to the F001 API (specs/001-research-workspace/contracts/http-api.yaml),
+    under the same host security: loopback only, Host/Origin checks and an antiforgery
+    token (X-CSRF-TOKEN) on this POST. Nothing is stored. Problems use the F001 Problem
+    shape (title, status, code). Decisions: research.md.
+servers:
+  - url: http://localhost:{port}/api
+    variables:
+      port:
+        default: "5000"
+paths:
+  /projects/{projectId}/documents/{documentId}/summary:
+    post:
+      summary: Summarize a document of the project
+      description: >-
+        Checks run in this order and stop at the first failure: service configured,
+        association exists, stored file available, at most 100 pages, readable text,
+        enough text, confirmation (service elsewhere only). Only then is anything sent
+        to the configured service. The 200 response streams progress and ends with
+        exactly one `summary` or `failed` event. Closing the request abandons the work
+        and cancels the outgoing call.
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: documentId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirmSend]
+              properties:
+                confirmSend:
+                  type: boolean
+                  description: The researcher confirmed sending this document's text to a service elsewhere. Ignored for a local service.
+      responses:
+        "200":
+          description: Newline-delimited JSON events, one per line.
+          content:
+            application/x-ndjson:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ProgressEvent"
+                  - $ref: "#/components/schemas/CombiningEvent"
+                  - $ref: "#/components/schemas/SummaryEvent"
+                  - $ref: "#/components/schemas/FailedEvent"
+        "404":
+          description: "`not_found`: the document is not associated with the project; `document_not_found`: no such document."
+          content: { application/problem+json: { schema: { $ref: "#/components/schemas/Problem" } } }
+        "409":
+          description: "`confirmation_required`: the service is elsewhere and confirmSend was not true. Nothing was sent."
+          content: { application/problem+json: { schema: { $ref: "#/components/schemas/ConfirmationProblem" } } }
+        "422":
+          description: >-
+            `too_many_pages` (more than 100 pages), `no_text` (no page has readable text),
+            `not_enough_text` (too little readable text). Nothing was sent.
+          content: { application/problem+json: { schema: { $ref: "#/components/schemas/Problem" } } }
+        "503":
+          description: >-
+            `summary_service_not_configured` (detail says how to configure one) or
+            `document_unavailable` (as in F001).
+          content: { application/problem+json: { schema: { $ref: "#/components/schemas/Problem" } } }
+components:
+  schemas:
+    Problem:
+      type: object
+      required: [title, status, code]
+      properties:
+        title: { type: string }
+        detail: { type: string }
+        status: { type: integer }
+        code:
+          type: string
+          enum: [not_found, document_not_found, document_unavailable, summary_service_not_configured, too_many_pages, no_text, not_enough_text, confirmation_required]
+    ConfirmationProblem:
+      allOf:
+        - $ref: "#/components/schemas/Problem"
+        - type: object
+          required: [serviceHost, model]
+          properties:
+            serviceHost: { type: string, description: "Host (and port) of the configured endpoint." }
+            model: { type: string }
+    ProgressEvent:
+      type: object
+      required: [type, pagesProcessed, totalPages]
+      properties:
+        type: { const: progress }
+        pagesProcessed: { type: integer, minimum: 0 }
+        totalPages: { type: integer, minimum: 1, description: "The document's page count; unreadable pages count as processed from the first event." }
+    CombiningEvent:
+      type: object
+      required: [type]
+      properties:
+        type: { const: combining }
+    SummaryEvent:
+      type: object
+      required: [type, documentId, points, pagesCovered, unreadablePages, omittedPoints, generatedAt, serviceHost, model]
+      properties:
+        type: { const: summary }
+        documentId: { type: string, format: uuid }
+        points:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [text, pages]
+            properties:
+              text: { type: string, description: Generated text; render as plain text. }
+              pages:
+                type: array
+                minItems: 1
+                items: { type: integer, minimum: 1 }
+                description: Page positions (first page = 1), each a readable page of the document.
+        pagesCovered: { type: array, items: { type: integer, minimum: 1 } }
+        unreadablePages: { type: array, items: { type: integer, minimum: 1 } }
+        omittedPoints: { type: integer, minimum: 0, description: Points dropped for missing or invalid citations. }
+        generatedAt: { type: string, format: date-time }
+        serviceHost: { type: string }
+        model: { type: string }
+    FailedEvent:
+      type: object
+      required: [type, code]
+      properties:
+        type: { const: failed }
+        code:
+          type: string
+          enum: [service_failed, not_enough_text]
+          description: >-
+            `service_failed`: unreachable, error status, redirect, timeout or unusable output
+            (try again); for a 400 from the service, `detail` says to check `Model` and the optional
+            `Temperature` and `MaxOutputTokens` settings. `not_enough_text`: the service returned no point
+            with valid citations.
+        detail:
+          type: string
+          description: LexScholar's own explanation; never the service's response body.
+        omittedPoints: { type: integer, minimum: 0 }
