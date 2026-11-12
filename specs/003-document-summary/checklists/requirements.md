@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,5 +31,5 @@
 
 ## Notes
 
-- Three [NEEDS CLARIFICATION] markers remain by the owner's request, to be resolved in `/speckit-clarify`: processing location and opt-in (FR-010), the largest supported document and behavior beyond it (FR-011), and waiting time with progress feedback (FR-012). Summary length and mixed-language handling have documented defaults in Assumptions, also open for clarify.
-- Size: one user story; expected to fit the AGENTS.md budget of about 10–15 tasks.
+- `/speckit-clarify` (2026-11-12) resolved the three open questions: local-only processing (FR-010), any document up to the import page limit (FR-011), 40 pages within 2 minutes with page progress (FR-012, SC-007). It also added background continuation when the researcher switches document (FR-009, FR-014). Summary length and mixed-language handling keep their documented defaults.
+- Size: one user story, but the clarified scope (whole-document summaries of any length, background generation, local processing) may exceed the AGENTS.md budget of about 10–15 tasks. Check at `/speckit-plan` and `/speckit-tasks`, and propose a split if it does.
