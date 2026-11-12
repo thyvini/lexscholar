@@ -67,6 +67,31 @@ let private summarizeOnce (context: HttpContext) (summary: SummaryConfiguration)
         do! failed context "service_failed" "The summary service did not give a usable answer. Try again." None
     return Results.Empty }
 
+/// Whether the body is a JSON object with `"confirmSend": true`. Anything else (missing,
+/// malformed, oversized, another type) is not a confirmation.
+let private confirmed (context: HttpContext) : Task<bool> = task {
+    try
+        use buffer = new IO.MemoryStream()
+        let chunk = Array.zeroCreate<byte> 1024
+        let mutable total = 0
+        let mutable finished = false
+        while not finished && total <= 4096 do
+            let! read = context.Request.Body.ReadAsync(chunk, 0, chunk.Length, context.RequestAborted)
+            if read = 0 then finished <- true
+            else
+                buffer.Write(chunk, 0, read)
+                total <- total + read
+        if not finished then return false
+        else
+            use document = JsonDocument.Parse(buffer.ToArray())
+            match document.RootElement.ValueKind with
+            | JsonValueKind.Object ->
+                match document.RootElement.TryGetProperty "confirmSend" with
+                | true, value -> return value.ValueKind = JsonValueKind.True
+                | _ -> return false
+            | _ -> return false
+    with :? JsonException -> return false }
+
 let map (app: WebApplication) (configuration: WorkspaceConfiguration) =
     let summary = configuration.Summary
     let directory = configuration.DataDirectory
@@ -98,4 +123,18 @@ let map (app: WebApplication) (configuration: WorkspaceConfiguration) =
                 | Error NotEnoughText ->
                     return problem 422 "not_enough_text" "The document has too little text"
                                "The readable text is too short to summarize. Nothing was sent."
-                | Ok readable -> return! summarizeOnce context configured documentId readable })) |> ignore
+                | Ok readable ->
+                    // FR-014: for a service elsewhere nothing is sent without this request's confirmation.
+                    // This is the only path to `summarizeOnce`, and it runs after the local checks.
+                    let! confirmedSend = confirmed context
+                    if ServiceLocation.classify configured.Endpoint.Host = Elsewhere && not confirmedSend then
+                        context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("LexScholar.Summary")
+                            .LogInformation("Summary needs confirmation for {Host}, model {Model}", configured.Endpoint.Authority, configured.Model)
+                        return Results.Problem(
+                            statusCode = Nullable 409,
+                            title = "Confirmation needed",
+                            detail = "The text of this document will leave this machine. Nothing was sent.",
+                            extensions = dict [ "code", box "confirmation_required"
+                                                "serviceHost", box configured.Endpoint.Authority
+                                                "model", box configured.Model ])
+                    else return! summarizeOnce context configured documentId readable })) |> ignore

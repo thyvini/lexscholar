@@ -76,11 +76,23 @@ let update (message: Message) (model: Model) : Model * Effect option =
             { model with State = Generating request; Progress = None; Request = request }, Some (Send (request, project, document, false))
         | _ -> model, None
     | Dismiss -> reset model, None
+    | ConfirmSend ->
+        match model.Project, model.Document, model.State with
+        | Some project, Some document, Confirming _ ->
+            let request = model.Request + 1
+            { model with State = Generating request; Progress = None; Request = request }, Some (Send (request, project, document, true))
+        | _ -> model, None
+    // Cancelling sends nothing: no effect. A late answer is dropped because only `Generating` accepts one.
+    | CancelSend ->
+        match model.State with
+        | Confirming _ -> reset model, None
+        | _ -> model, None
     | Progressed (request, progress) when model.State = Generating request -> { model with Progress = Some progress }, None
     | Progressed _ -> model, None
     | Responded (request, result) when model.State = Generating request ->
         match result with
         | Ok generated -> { model with State = Shown generated; Progress = None }, None
+        | Error (ConfirmationRequired (host, name)) -> { model with State = Confirming (host, name); Progress = None }, None
         | Error failure -> { model with State = Failed failure; Progress = None }, None
     | ReaderChanged (project, document) when (project, document) <> (model.Project, model.Document) ->
         { reset model with Project = project; Document = document }, None

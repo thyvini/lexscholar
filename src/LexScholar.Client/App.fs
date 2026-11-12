@@ -179,6 +179,16 @@ module Api =
             json.RootElement.GetProperty("code").GetString()
         with _ -> ""
 
+    /// A 409 `confirmation_required` carries the host and model to show; anything else maps by its code.
+    let private confirmationOrFailure (body: string) : Summary.Failure =
+        try
+            use json = JsonDocument.Parse(body)
+            let root = json.RootElement
+            if root.GetProperty("code").GetString() = "confirmation_required" then
+                Summary.ConfirmationRequired (root.GetProperty("serviceHost").GetString(), root.GetProperty("model").GetString())
+            else summaryFailure (problemCode body)
+        with _ -> Summary.RequestFailed
+
     let private summaryEvent (element: JsonElement) : Result<Summary.Generated, Summary.Failure> option =
         let pages (name: string) = element.GetProperty(name).EnumerateArray() |> Seq.map (fun page -> page.GetInt32()) |> Seq.toList
         match element.GetProperty("type").GetString() with
@@ -208,7 +218,7 @@ module Api =
 
     /// Requests a summary and reads the NDJSON stream until its one `summary` or
     /// `failed` event. Failures never show response details.
-    let summarize (http: HttpClient) (projectId: Guid) (documentId: Guid) (onProgress: Summary.Progress -> unit) = async {
+    let summarize (http: HttpClient) (projectId: Guid) (documentId: Guid) (confirmed: bool) (onProgress: Summary.Progress -> unit) = async {
         try
             use! tokenResponse = http.GetAsync("api/antiforgery") |> Async.AwaitTask
             if not tokenResponse.IsSuccessStatusCode then return Error Summary.RequestFailed
@@ -217,12 +227,12 @@ module Api =
                 use tokenJson = JsonDocument.Parse(tokenBody)
                 use request = new HttpRequestMessage(HttpMethod.Post, $"api/projects/{projectId:D}/documents/{documentId:D}/summary")
                 request.Headers.Add("X-CSRF-TOKEN", tokenJson.RootElement.GetProperty("requestToken").GetString())
-                request.Content <- new StringContent("""{"confirmSend":false}""", Encoding.UTF8, "application/json")
+                request.Content <- new StringContent((if confirmed then """{"confirmSend":true}""" else """{"confirmSend":false}"""), Encoding.UTF8, "application/json")
                 request.SetBrowserResponseStreamingEnabled(true) |> ignore
                 use! response = http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead) |> Async.AwaitTask
                 if not response.IsSuccessStatusCode then
                     let! body = response.Content.ReadAsStringAsync() |> Async.AwaitTask
-                    return Error (summaryFailure (problemCode body))
+                    return Error (confirmationOrFailure body)
                 else
                     use! stream = response.Content.ReadAsStreamAsync() |> Async.AwaitTask
                     use reader = new IO.StreamReader(stream)
@@ -298,10 +308,10 @@ module private Ui =
             let summary, effect = Summary.update message state.Summary
             { state with Summary = summary },
             match effect with
-            | Some (Summary.Send (request, projectId, documentId, _)) ->
+            | Some (Summary.Send (request, projectId, documentId, confirmed)) ->
                 Cmd.ofEffect (fun dispatch ->
                     Async.StartImmediate(async {
-                        let! result = Api.summarize http projectId documentId (fun progress -> dispatch (SummaryMsg (Summary.Progressed (request, progress))))
+                        let! result = Api.summarize http projectId documentId confirmed (fun progress -> dispatch (SummaryMsg (Summary.Progressed (request, progress))))
                         dispatch (SummaryMsg (Summary.Responded (request, result))) }))
             | None -> Cmd.none
         | ProjectsMsg message ->
@@ -487,7 +497,17 @@ module private Ui =
                             | None -> empty ()
                         button { attr.``type`` "button"; on.click (fun _ -> dispatch Summary.Dismiss); "Dismiss" }
                     }
-                | Summary.Shown _ | Summary.Confirming _ -> empty ()
+                | Summary.Shown _ -> empty ()
+                | Summary.Confirming (host, model) ->
+                    div {
+                        attr.``class`` "summary-confirm"
+                        "role" => "alertdialog"
+                        "aria-label" => "Confirm sending"
+                        p { text $"The text of {document.FileName} will be sent to {host} (model {model}), which is not on this machine. Send?" }
+                        button { attr.``type`` "button"; attr.``class`` "send-confirm"; on.click (fun _ -> dispatch Summary.ConfirmSend); "Send" }
+                        " "
+                        button { attr.``type`` "button"; attr.``class`` "send-cancel"; on.click (fun _ -> dispatch Summary.CancelSend); "Cancel" }
+                    }
                 | Summary.Idle | Summary.Failed _ ->
                     button { attr.``type`` "button"; on.click (fun _ -> dispatch Summary.Summarize); "Summarize" }
             cond summary.State <| function
