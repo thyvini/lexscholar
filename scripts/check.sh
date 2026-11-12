@@ -8,10 +8,12 @@
 #   scripts/check.sh --all            build, then the full suite (CI runs it on every PR)
 #
 # Exits non-zero when the build fails, a test fails, a test is skipped, or no
-# test matched. LOG=<path> overrides the log file.
+# test matched (each requested task must match at least one test file). Each
+# run writes its own log, so parallel worktrees don't mix results; LOG=<path>
+# overrides it.
 set -uo pipefail
 cd "$(dirname "$0")/.."
-log="${LOG:-${TMPDIR:-/tmp}/lexscholar-check.log}"
+log="${LOG:-$(mktemp "${TMPDIR:-/tmp}/lexscholar-check.XXXXXX")}"
 : >"$log"
 
 plain() { sed -E 's/\x1B\[[0-9;?]*[A-Za-z]//g' "$log"; }
@@ -22,7 +24,7 @@ if ! dotnet build LexScholar.sln -c Release -warnaserror -nologo -v q -tl:off >>
   echo "Full log: $log"
   exit 1
 fi
-[ $# -eq 0 ] && { echo "Build OK."; exit 0; }
+[ $# -eq 0 ] && { echo "Build OK."; [ -z "${LOG:-}" ] && rm -f "$log"; exit 0; }
 
 status=0
 if [ "$1" = "--all" ]; then
@@ -31,18 +33,21 @@ else
   # Run only the test projects whose files carry the requested Task traits.
   filters=()
   projects=()
+  unmatched=()
   for task in "$@"; do
     filters+=(--filter-trait "Task=$task")
+    found=0
     while IFS= read -r file; do
       project=$(ls "$(dirname "$file")"/*.fsproj 2>/dev/null | head -1)
-      [ -n "$project" ] && projects+=("$project")
+      [ -n "$project" ] && { projects+=("$project"); found=1; }
     done < <(grep -rlE "\"Task\", \"$task\"" tests --include='*.fs')
+    [ "$found" -eq 1 ] || unmatched+=("$task")
   done
-  mapfile -t projects < <(printf '%s\n' "${projects[@]}" | sort -u | sed '/^$/d')
-  if [ ${#projects[@]} -eq 0 ]; then
-    echo "No tests are tagged with: $*"
+  if [ ${#unmatched[@]} -gt 0 ]; then
+    echo "No tests are tagged with: ${unmatched[*]}"
     exit 1
   fi
+  mapfile -t projects < <(printf '%s\n' "${projects[@]}" | sort -u)
   for project in "${projects[@]}"; do
     dotnet test --project "$project" -c Release "${filters[@]}" >>"$log" 2>&1 || status=1
   done
@@ -71,5 +76,7 @@ fi
 if [ "$status" -ne 0 ]; then
   [ "$failed" -eq 0 ] && plain | tail -20
   echo "Full log: $log"
+elif [ -z "${LOG:-}" ]; then
+  rm -f "$log"
 fi
 exit "$status"
