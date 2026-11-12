@@ -32,15 +32,13 @@ git fetch -q origin "$base_ref"
 git fetch -q origin "pull/$pr/head"
 [ "$(git rev-parse FETCH_HEAD)" = "$head_sha" ] || { echo "PR #$pr moved while fetching; run again." >&2; exit 1; }
 git worktree add -q --detach "$review_tree" "$head_sha"
+# The full diff stays in a file GPT reads in sections, so a large PR is never
+# reviewed from a truncated copy; the prompt lists every changed file.
 git diff "origin/$base_ref...$head_sha" >"$work/diff.patch"
-max=200000
-if [ "$(wc -c <"$work/diff.patch")" -gt "$max" ]; then
-  head -c "$max" "$work/diff.patch" >"$work/diff.trimmed" && mv "$work/diff.trimmed" "$work/diff.patch"
-  echo $'\n[diff truncated at 200 KB]' >>"$work/diff.patch"
-fi
+git diff --stat=200 "origin/$base_ref...$head_sha" >"$work/files.txt"
 
 cat >"$work/prompt.md" <<EOF
-You are reviewing LexScholar pull request #$pr. The current directory is a checkout of the PR's head commit. Read AGENTS.md, docs/agents/codebase.md and the tasks named in the PR title (in the feature's tasks.md) there; open other files only as needed. The PR description and diff follow. Do not modify any file.
+You are reviewing LexScholar pull request #$pr. The current directory is a checkout of the PR's head commit. Read AGENTS.md, docs/agents/codebase.md and the tasks named in the PR title (in the feature's tasks.md) there; open other files only as needed. The PR description and the list of changed files follow. The full diff is in $work/diff.patch: read all of it, in sections if it is long, and review every changed file in the list before giving a verdict. Do not modify any file.
 
 Check, in this order:
 1. Correctness, especially partial failures: what happens if the process stops between two steps, or an operation is retried after such a stop. Startup must never be able to block the app permanently.
@@ -50,20 +48,20 @@ Check, in this order:
 
 Reply with at most 20 lines, nothing else:
 VERDICT: approve   (or: VERDICT: changes requested)
-then one line per finding: [P0|P1|P2] path:line: problem, and why it matters.
+then one line per finding: [P0|P1|P2] path:line: problem, and why it matters. If you could not read the whole diff, reply "VERDICT: changes requested" and say what you could not review.
 P0 = data loss or security; P1 = must fix before merging; P2 = worth fixing. Report only findings you verified in the code. If there are none, write "No findings."
 
 --- PR ---
 $(cat "$work/pr.txt")
 
---- DIFF ---
-$(cat "$work/diff.patch")
+--- CHANGED FILES ---
+$(cat "$work/files.txt")
 EOF
 
 model_args=()
 [ -n "${CODEX_MODEL:-}" ] && model_args=(-m "$CODEX_MODEL")
-# The instructions and diff stay in a file: a long diff would exceed the
-# command-line argument limit. The read-only sandbox can still read it.
+# The instructions stay in a file and the diff in another, which the
+# read-only sandbox can read; neither goes on the command line.
 if ! codex exec --sandbox read-only --cd "$review_tree" "${model_args[@]}" --output-last-message "$work/review.md" \
     "Read $work/prompt.md and follow its instructions exactly. Your final message must be only the review it asks for." >"$log" 2>&1; then
   echo "Codex failed; see $log" >&2
