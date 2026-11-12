@@ -89,3 +89,34 @@ let ``an empty points array is Ok with nothing`` () =
 let ``fences and think tags inside a point's text are preserved`` () =
     let result = valid "{\"points\":[{\"text\":\"Use ```code``` and <think>x</think> as written.\",\"pages\":[1]}]}"
     Assert.Equal("Use ```code``` and <think>x</think> as written.", result.Points.Head.Text)
+
+let private text n = System.String('x', n)
+
+[<Fact; Trait("Task", "T006")>]
+let ``whole pages are packed in order into chunks within the limit`` () =
+    // Each piece is "[Page n]\n" (9 characters) + 40; pieces are joined by a blank line.
+    let chunks = Summaries.chunk 120 [ page 1 (text 40); page 2 (text 40); page 3 (text 40) ]
+    Assert.Equal<int list list>([ [ 1; 2 ]; [ 3 ] ], chunks |> List.map (fun c -> c.PageNumbers))
+    Assert.All(chunks, fun c -> Assert.True(c.Content.Length <= 120))
+    Assert.StartsWith("[Page 1]\n", chunks.Head.Content)
+    Assert.Contains("\n\n[Page 2]\n", chunks.Head.Content)
+
+[<Fact; Trait("Task", "T006")>]
+let ``a page longer than the limit is split into parts that keep its page number`` () =
+    let chunks = Summaries.chunk 100 [ page 7 (text 250) ]
+    Assert.True(chunks.Length >= 3)
+    Assert.All(chunks, fun c ->
+        Assert.Equal<int list>([ 7 ], c.PageNumbers)
+        Assert.StartsWith("[Page 7]\n", c.Content)
+        Assert.True(c.Content.Length <= 100))
+    Assert.Equal(250, chunks |> List.sumBy (fun c -> c.Content.Length - "[Page 7]\n".Length))
+
+[<Fact; Trait("Task", "T006")>]
+let ``points are grouped in order so every group fits the limit`` () =
+    let point n : SummaryPoint = { Text = text 50; Pages = [ n ] }
+    let points = [ point 1; point 2; point 3; point 4; point 5 ]
+    let limit = 2 * (Summaries.pointLine (point 1)).Length + 1
+    let groups = Summaries.groupPoints limit points
+    Assert.Equal<SummaryPoint list>(points, List.concat groups)
+    Assert.Equal<int list>([ 2; 2; 1 ], groups |> List.map List.length)
+    Assert.Empty(Summaries.groupPoints limit [])

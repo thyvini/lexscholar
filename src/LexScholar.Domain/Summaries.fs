@@ -60,6 +60,17 @@ module Summaries =
         else Ok { Readable = readable; Unreadable = unreadable |> List.map (fun page -> page.Number) }
 
 
+    /// Splits readable pages into chunks of at most `maxCharacters` (marker included).
+    let chunk (maxCharacters: int) (pages: PageText list) : Chunk list = []
+
+    /// How a point is shown to the model when combining.
+    let pointLine (point: SummaryPoint) : string =
+        let pages = System.String.Join(", ", point.Pages)
+        $"- (pages {pages}) {point.Text}"
+
+    /// Groups points, in order, so each group's lines fit `maxCharacters`.
+    let groupPoints (maxCharacters: int) (points: SummaryPoint list) : SummaryPoint list list = []
+
     /// Longest accepted point text.
     let maximumPointCharacters = 1000
 

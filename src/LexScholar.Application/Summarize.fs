@@ -52,7 +52,7 @@ let private userPrompt (pages: PageText list) =
 
 /// Summary points for the readable pages of a document that fits one request
 /// (longer documents are chunked in T006). Every point cites only pages that were sent.
-let summarize (capabilities: Capabilities) (pages: ReadablePages) (cancellation: CancellationToken)
+let summarize (capabilities: Capabilities) (maxChunkCharacters: int) (pages: ReadablePages) (cancellation: CancellationToken)
     : Task<Result<ValidatedPoints, SummaryFailure>> = task {
     let messages =
         [ { Role = "system"; Content = systemPrompt }

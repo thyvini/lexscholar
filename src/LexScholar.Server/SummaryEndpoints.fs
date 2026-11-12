@@ -43,7 +43,7 @@ let private summarizeOnce (context: HttpContext) (summary: SummaryConfiguration)
         { ExtractPages = fun _ -> failwith "pages are extracted by the endpoint"
           Complete = ChatCompletions.complete (context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger "LexScholar.Summary") client settings
           Report = fun _ -> Task.FromResult() }
-    match! Summarize.summarize capabilities pages context.RequestAborted with
+    match! Summarize.summarize capabilities summary.MaxChunkCharacters pages context.RequestAborted with
     | Ok validated ->
         let covered = pages.Readable |> List.map (fun page -> page.Number)
         return ndjson (box {| ``type`` = "summary"
