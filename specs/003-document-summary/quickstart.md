@@ -11,7 +11,9 @@ Summaries need an OpenAI-compatible Chat Completions service. Add to `appsetting
 | `LexScholar:Summary:Endpoint` | yes | `http://127.0.0.1:11434/v1` | Base URL; `/chat/completions` is appended. |
 | `LexScholar:Summary:Model` | yes | `qwen3:8b` | Model name as the service knows it. |
 | `LexScholar:Summary:ApiKey` | cloud only | — | Set as the environment variable `LexScholar__Summary__ApiKey`. Never commit it. |
-| `LexScholar:Summary:MaxChunkCharacters` | no | `12000` | Lower it for models with a small context. |
+| `LexScholar:Summary:MaxChunkCharacters` | no | `12000` | At least 4000; lower it for models with a small context. |
+| `LexScholar:Summary:Temperature` | no | `0.2` | 0 to 2, sent as `temperature` only when set. |
+| `LexScholar:Summary:MaxOutputTokens` | no | `2048` | Sent as `max_tokens` only when set. Leave both unset for OpenAI reasoning models (o-series, GPT-5), which reject them. |
 
 Examples: Ollama `http://127.0.0.1:11434/v1`, llama.cpp `http://127.0.0.1:8080/v1`, LM Studio `http://127.0.0.1:1234/v1`, OpenAI `https://api.openai.com/v1`, Mistral `https://api.mistral.ai/v1`.
 
@@ -33,7 +35,7 @@ Prerequisites: a local server (for example Ollama with a model pulled), LexSchol
 2. **Language (FR-002)**: `article-pt.pdf` gives points in Portuguese.
 3. **Support (SC-002)**: for 10 points across the set, record whether the cited page supports the point; expect at least 9.
 4. **Edge cases**: `scanned.pdf` → no readable text; `partial.pdf` → summary lists pages 2 and 5 as unreadable; `little-text.pdf` → not enough text; `too-long.pdf` → not supported yet, nothing sent.
-5. **Timing and progress (SC-007, FR-012)**: `long-40.pdf` shows pages processed out of 40 and finishes within 2 minutes of the request.
+5. **Timing and progress (SC-007, FR-012)**: `long-40.pdf` shows pages processed out of 40 and finishes within 2 minutes of the request. The target assumes a GPU-backed local server or a cloud service; on a CPU-only laptop with a mid-size local model it can take much longer. Measure it on the researcher's real setup before the release.
 6. **Abandon (FR-009)**: start a summary of `long-40.pdf`, then switch project; no summary appears later, and the server log shows the request cancelled.
 7. **Nothing leaves the machine (SC-006)**: run the host under `strace -f -e trace=connect -o connect.log dotnet LexScholar.Server.dll`, summarize the set, and check `connect.log` has only loopback (`127.0.0.1`, `::1`) and local socket addresses.
 8. **Service elsewhere (FR-014)**: point `Endpoint` at a cloud service (or any non-loopback address). Requesting a summary shows the confirmation with host and model; **Cancel** sends nothing (no connection in `strace`); **Send** produces the summary.

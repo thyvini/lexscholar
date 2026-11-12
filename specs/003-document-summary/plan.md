@@ -22,7 +22,7 @@ While a project document is open in the reader, the researcher asks for a summar
 
 **Project Type**: local web application (ASP.NET Core host + Bolero WebAssembly client).
 
-**Performance Goals**: a 40-page article summarized within 2 minutes on her configured service (SC-007, manual).
+**Performance Goals**: a 40-page article summarized within 2 minutes on her configured service (SC-007, manual). This assumes a GPU-backed local server or a cloud service; on a CPU-only laptop with a mid-size local model it can take much longer. SC-007 is measured on her real setup before the release.
 
 **Constraints**: incoming host security unchanged; outgoing calls only to the configured endpoint, no redirects, no proxy for a local service, connection guard to loopback for a local service; no document text, prompt, raw model output or API key in logs or error responses (validated points are returned only in the `summary` event); at most 100 pages.
 
@@ -47,7 +47,7 @@ While a project document is open in the reader, the researcher asks for a summar
 - `ServiceLocation = Local | Elsewhere` and `classify : Uri -> ServiceLocation`.
 - `PageText = { Number: int; Text: string }`; `readability : PageText list -> Result<ReadablePages, NoTextReason>` (readable and unreadable pages, `no_text`, `not_enough_text`).
 - `chunk : int -> PageText list -> Chunk list` (consecutive whole pages, long pages split, page numbers kept).
-- `parsePoints : allowedPages: Set<int> -> string -> Result<ValidatedPoints, Unparseable>` with `ValidatedPoints = { Points: SummaryPoint list; Omitted: int }`, `SummaryPoint = { Text: string; Pages: int list }`.
+- `parsePoints : allowedPages: Set<int> -> string -> Result<ValidatedPoints, Unparseable>`, where `allowedPages` is the chunk's readable pages for a map call and the pages cited by the group's points for a combine call (research §5), with `ValidatedPoints = { Points: SummaryPoint list; Omitted: int }`, `SummaryPoint = { Text: string; Pages: int list }`.
 
 **Application** (`src/LexScholar.Application/Summarize.fs`): the workflow over capability functions: `ExtractPages` (document id → pages or unavailable/too many pages), `Complete` (messages → cancellation → `Task<Result<string, ServiceError>>`), `Report` (progress event). It builds prompts (map, combine), runs chunks in order, combines in bounded rounds (research §4), validates each answer and returns `DocumentSummary` or a failure union. Pre-send checks return before `Complete` is ever called.
 
