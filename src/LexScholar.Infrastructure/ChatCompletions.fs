@@ -78,4 +78,4 @@ let complete (client: HttpClient) (settings: Settings) (messages: Summarize.Chat
     with
     | :? OperationCanceledException when cancellation.IsCancellationRequested -> return raise (OperationCanceledException(cancellation))
     | :? OperationCanceledException -> return Error Summarize.ServiceError.TimedOut
-    | :? HttpRequestException -> return Error Summarize.ServiceError.Unreachable }
+    | :? HttpRequestException | :? IOException -> return Error Summarize.ServiceError.Unreachable }

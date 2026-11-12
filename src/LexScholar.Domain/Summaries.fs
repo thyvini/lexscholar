@@ -63,8 +63,23 @@ module Summaries =
     /// Longest accepted point text.
     let maximumPointCharacters = 1000
 
-    let private thinkBlocks = System.Text.RegularExpressions.Regex("<think>.*?</think>", System.Text.RegularExpressions.RegexOptions.Singleline ||| System.Text.RegularExpressions.RegexOptions.IgnoreCase)
-    let private fences = System.Text.RegularExpressions.Regex("```[A-Za-z]*")
+    /// Drops wrappers around the JSON only: leading think blocks, then a leading code
+    /// fence line and a trailing fence. Text inside the JSON is never touched.
+    let private unwrap (output: string) =
+        let mutable text = output.Trim()
+        let mutable changed = true
+        while changed do
+            changed <- false
+            if text.StartsWith("<think>", System.StringComparison.OrdinalIgnoreCase) then
+                let close = text.IndexOf("</think>", System.StringComparison.OrdinalIgnoreCase)
+                if close >= 0 then
+                    text <- text.Substring(close + "</think>".Length).Trim()
+                    changed <- true
+        if text.StartsWith "```" then
+            let newline = text.IndexOf '\n'
+            text <- if newline >= 0 then text.Substring(newline + 1) else ""
+        if text.TrimEnd().EndsWith "```" then text <- text.TrimEnd().[.. text.TrimEnd().Length - 4]
+        text
 
     let private pageOf (element: System.Text.Json.JsonElement) =
         match element.ValueKind with
@@ -93,7 +108,7 @@ module Summaries =
     /// untrusted: think blocks and code fences are dropped, the outermost JSON
     /// object is parsed, and a point citing any page outside `allowedPages` is omitted.
     let parsePoints (allowedPages: Set<int>) (output: string) : Result<ValidatedPoints, Unparseable> =
-        let cleaned = fences.Replace(thinkBlocks.Replace(output, ""), "")
+        let cleaned = unwrap output
         let first = cleaned.IndexOf '{'
         let last = cleaned.LastIndexOf '}'
         if first < 0 || last <= first then Error Unparseable
