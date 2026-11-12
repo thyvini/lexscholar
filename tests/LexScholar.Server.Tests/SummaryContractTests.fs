@@ -242,3 +242,24 @@ let ``a response that breaks while its body is read is a service_failed event`` 
     Assert.Equal(HttpStatusCode.OK, status)
     use json = JsonDocument.Parse(text.Trim())
     Assert.Equal("service_failed", json.RootElement.GetProperty("code").GetString())
+
+[<Fact; Trait("Task", "T006")>]
+let ``a 40-page document streams progress to 40 of 40, then combining, then one summary`` () =
+    // Later map calls cite page 1, which is not in their chunk, so only the first chunk yields a point;
+    // the combine call may cite page 1.
+    let script n = Reply """{"points":[{"text":"Main idea","pages":[1]}]}"""
+    let status, events, fake, _ = summarizeWith "long-40.pdf" (script 0) []
+    Assert.Equal(HttpStatusCode.OK, status)
+    let kinds = events |> Array.map (fun e -> e.GetProperty("type").GetString()) |> Array.toList
+    Assert.Equal("summary", List.last kinds)
+    Assert.Equal(1, kinds |> List.filter ((=) "summary") |> List.length)
+    Assert.Contains("combining", kinds)
+    let progress = events |> Array.filter (fun e -> e.GetProperty("type").GetString() = "progress")
+    Assert.True(progress.Length >= 3, "several chunks mean several progress events")
+    let counts = progress |> Array.map (fun e -> e.GetProperty("pagesProcessed").GetInt32())
+    Assert.Equal<int[]>(Array.sort counts, counts)
+    Assert.Equal(40, counts |> Array.last)
+    Assert.All(progress, fun e -> Assert.Equal(40, e.GetProperty("totalPages").GetInt32()))
+    // Progress precedes the combine step and the combine call is the last request.
+    Assert.True(List.findIndex ((=) "combining") kinds > (List.rev kinds |> List.findIndex ((=) "progress") |> fun i -> kinds.Length - 1 - i))
+    Assert.Equal(progress.Length, fake.Requests.Length) // one map call per chunk (progress has an extra opening event)

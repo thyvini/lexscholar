@@ -17,6 +17,11 @@ type Generated =
       ServiceHost: string
       Model: string }
 
+/// What a running request has reported so far.
+type Progress =
+    | PagesProcessed of processed: int * total: int
+    | Combining
+
 type Failure =
     | NotConfigured
     | Unavailable
@@ -37,36 +42,41 @@ type Model =
       Project: Guid option
       Document: Guid option
       State: State
+      /// The latest progress of the running request, if any.
+      Progress: Progress option
       /// The latest request; only its result is used.
       Request: int }
 
 type Message =
     | Summarize
     | Dismiss
+    | Progressed of request: int * Progress
     | Responded of request: int * Result<Generated, Failure>
     /// The reader's project and open document, after any change.
     | ReaderChanged of project: Guid option * document: Guid option
 
 type Effect = Send of request: int * project: Guid * document: Guid
 
-let initial = { Project = None; Document = None; State = Idle; Request = 0 }
+let initial = { Project = None; Document = None; State = Idle; Progress = None; Request = 0 }
 
 let update (message: Message) (model: Model) : Model * Effect option =
     // A late result is dropped because only `Generating request` accepts its own number,
     // and every new request takes a fresh one.
-    let reset model = { model with State = Idle }
+    let reset model = { model with State = Idle; Progress = None }
     match message with
     | Summarize ->
         match model.Project, model.Document, model.State with
         | Some project, Some document, (Idle | Shown _ | Failed _) ->
             let request = model.Request + 1
-            { model with State = Generating request; Request = request }, Some (Send (request, project, document))
+            { model with State = Generating request; Progress = None; Request = request }, Some (Send (request, project, document))
         | _ -> model, None
     | Dismiss -> reset model, None
+    | Progressed (request, progress) when model.State = Generating request -> { model with Progress = Some progress }, None
+    | Progressed _ -> model, None
     | Responded (request, result) when model.State = Generating request ->
         match result with
-        | Ok generated -> { model with State = Shown generated }, None
-        | Error failure -> { model with State = Failed failure }, None
+        | Ok generated -> { model with State = Shown generated; Progress = None }, None
+        | Error failure -> { model with State = Failed failure; Progress = None }, None
     | ReaderChanged (project, document) when (project, document) <> (model.Project, model.Document) ->
         { reset model with Project = project; Document = document }, None
     | _ -> model, None

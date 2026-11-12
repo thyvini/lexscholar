@@ -60,6 +60,49 @@ module Summaries =
         else Ok { Readable = readable; Unreadable = unreadable |> List.map (fun page -> page.Number) }
 
 
+    /// Splits readable pages into chunks of at most `maxCharacters` (marker included).
+    let chunk (maxCharacters: int) (pages: PageText list) : Chunk list =
+        let marker (number: int) = $"[Page {number}]\n"
+        let separator = 2 // the blank line between pieces
+        let pieces =
+            pages
+            |> List.collect (fun page ->
+                let room = max 1 (maxCharacters - (marker page.Number).Length)
+                let parts =
+                    if page.Text.Length <= room then [ page.Text ]
+                    else page.Text |> Seq.chunkBySize room |> Seq.map (fun characters -> System.String characters) |> Seq.toList
+                parts |> List.map (fun part -> page.Number, marker page.Number + part))
+        // Each open chunk is its pieces, newest first, and its length so far.
+        let packed =
+            pieces
+            |> List.fold (fun chunks (number, piece: string) ->
+                match chunks with
+                | (items, length) :: rest when length + separator + piece.Length <= maxCharacters ->
+                    ((number, piece) :: items, length + separator + piece.Length) :: rest
+                | _ -> ([ number, piece ], piece.Length) :: chunks) []
+        packed
+        |> List.rev
+        |> List.map (fun (items, _) ->
+            let ordered = List.rev items
+            { Content = ordered |> List.map snd |> String.concat "\n\n"
+              PageNumbers = ordered |> List.map fst |> List.distinct |> List.sort })
+
+    /// How a point is shown to the model when combining.
+    let pointLine (point: SummaryPoint) : string =
+        let pages = System.String.Join(", ", point.Pages)
+        $"- (pages {pages}) {point.Text}"
+
+    /// Groups points, in order, so each group's lines fit `maxCharacters`.
+    let groupPoints (maxCharacters: int) (points: SummaryPoint list) : SummaryPoint list list =
+        points
+        |> List.fold (fun groups point ->
+            let cost = (pointLine point).Length
+            match groups with
+            | (items, length) :: rest when length + 1 + cost <= maxCharacters -> (point :: items, length + 1 + cost) :: rest // 1 = newline
+            | _ -> ([ point ], cost) :: groups) []
+        |> List.rev
+        |> List.map (fst >> List.rev)
+
     /// Longest accepted point text.
     let maximumPointCharacters = 1000
 

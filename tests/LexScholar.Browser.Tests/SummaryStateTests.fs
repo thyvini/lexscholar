@@ -84,3 +84,26 @@ let ``a document or project change resets the summary and drops late results`` (
     // The same project and document reported again keeps the summary.
     let same, _ = update (ReaderChanged (Some project, Some document)) shown
     assertState (Shown generated) same.State
+
+[<Fact; Trait("Task", "T006")>]
+let ``progress of the current request is kept and cleared when it ends`` () =
+    let generating, _ = update Summarize reading
+    let counted, _ = update (Progressed (1, PagesProcessed (12, 40))) generating
+    assertState (Some (PagesProcessed (12, 40))) counted.Progress
+    let combining, _ = update (Progressed (1, Combining)) counted
+    assertState (Some Combining) combining.Progress
+    assertState (Generating 1) combining.State
+    let shown, _ = update (Responded (1, Ok generated)) combining
+    assertState None shown.Progress
+    let dismissed, _ = update Dismiss combining
+    assertState None dismissed.Progress
+
+[<Fact; Trait("Task", "T006")>]
+let ``progress of an older or ended request is dropped`` () =
+    let generating, _ = update Summarize reading
+    let failed, _ = update (Responded (1, Error ServiceFailed)) generating
+    let late, _ = update (Progressed (1, PagesProcessed (5, 40))) failed
+    assertState None late.Progress
+    let again, _ = update Summarize failed
+    let old, _ = update (Progressed (1, PagesProcessed (5, 40))) again
+    assertState None old.Progress

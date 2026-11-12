@@ -20,7 +20,7 @@ let private capabilities (answer: Result<string, Summarize.ServiceError>) (sent:
       Report = fun _ -> Task.FromResult() }
 
 let private run capabilities =
-    (Summarize.summarize capabilities pages CancellationToken.None).GetAwaiter().GetResult()
+    (Summarize.summarize capabilities 12000 pages CancellationToken.None).GetAwaiter().GetResult()
 
 [<Fact; Trait("Task", "T003")>]
 let ``the request has instructions and the readable pages under their own page markers`` () =
@@ -61,3 +61,86 @@ let ``a service error or unparseable output is ServiceFailed`` () =
                  run (capabilities (Error Summarize.ServiceError.TimedOut) sent))
     Assert.Equal(Error (Summarize.SummaryFailure.ServiceFailed Summarize.ServiceError.UnusableOutput),
                  run (capabilities (Ok "I cannot help") sent))
+
+// ---- T006: long documents ----
+
+let private text n = String('x', n)
+
+/// 6 readable pages of 150 characters; with a 250 limit every chunk holds one page.
+let private longPages : ReadablePages =
+    { Readable = [ for n in 1..6 -> page n (text 150) ]
+      Unreadable = [ 7 ] }
+
+let private isCombine (messages: Summarize.ChatMessage list) = messages.[1].Content.StartsWith "- (pages "
+
+/// Pages named by the "[Page n]" markers, or by the "(pages a, b)" prefixes of combined points.
+let private citedIn (messages: Summarize.ChatMessage list) =
+    let content = messages.[1].Content
+    let markers = Text.RegularExpressions.Regex.Matches(content, @"\[Page (\d+)\]") |> Seq.map (fun m -> int m.Groups.[1].Value)
+    let lists =
+        Text.RegularExpressions.Regex.Matches(content, @"^- \(pages ([\d, ]+)\)", Text.RegularExpressions.RegexOptions.Multiline)
+        |> Seq.collect (fun m -> m.Groups.[1].Value.Split(',') |> Seq.map (fun p -> int (p.Trim())))
+    Seq.append markers lists |> Seq.distinct |> Seq.toList
+
+let private pointsJson (points: (string * int list) list) =
+    let items = points |> List.map (fun (t, pages) -> $"""{{"text":"{t}","pages":[{String.Join(",", pages)}]}}""")
+    $"""{{"points":[{String.Join(",", items)}]}}"""
+
+let private runLong (reply: Summarize.ChatMessage list -> string) (sent: List<Summarize.ChatMessage list>) (reports: List<Summarize.Progress>) =
+    let capabilities : Summarize.Capabilities =
+        { ExtractPages = fun _ -> failwith "not used"
+          Complete = fun messages _ -> sent.Add messages; Task.FromResult (Ok (reply messages))
+          Report = fun progress -> reports.Add progress; Task.FromResult() }
+    (Summarize.summarize capabilities 250 longPages CancellationToken.None).GetAwaiter().GetResult()
+
+[<Fact; Trait("Task", "T006")>]
+let ``a long document is mapped chunk by chunk, then combined, with progress`` () =
+    let sent, reports = List(), List()
+    // Map: each chunk gives one 60-character point; the combine call merges what it is given into one.
+    let reply messages =
+        if isCombine messages then pointsJson [ "merged", citedIn messages ]
+        else pointsJson [ text 60, citedIn messages ]
+    match runLong reply sent reports with
+    | Ok result ->
+        Assert.Equal<SummaryPoint list>([ { Text = "merged"; Pages = [ 1; 2; 3; 4; 5; 6 ] } ], result.Points)
+    | Error failure -> failwith $"expected Ok, got {failure}"
+    Assert.Equal(6, sent |> Seq.filter (isCombine >> not) |> Seq.length)
+    Assert.True(sent |> Seq.exists isCombine)
+    // Unreadable page 7 counts from the start; each chunk then adds its page.
+    let counted = reports |> Seq.filter (fun r -> r <> Summarize.Progress.Combining) |> Seq.toList
+    Assert.Equal<Summarize.Progress list>([ for processed in 1..7 -> Summarize.Progress.PagesProcessed (processed, 7) ], counted)
+    Assert.Equal(Summarize.Progress.Combining, reports.[reports.Count - 1])
+
+[<Fact; Trait("Task", "T006")>]
+let ``a combine round that does not shrink the points is service_failed and calls nothing more`` () =
+    let sent, reports = List(), List()
+    // Map: one 100-character point per chunk; combine echoes its points, so no round ever shrinks.
+    let reply messages =
+        if isCombine messages then
+            let points =
+                messages.[1].Content.Split('\n')
+                |> Array.toList
+                |> List.map (fun line ->
+                    let m = Text.RegularExpressions.Regex.Match(line, @"^- \(pages ([\d, ]+)\) (.*)$")
+                    m.Groups.[2].Value, m.Groups.[1].Value.Split(',') |> Array.map (fun p -> int (p.Trim())) |> Array.toList)
+            pointsJson points
+        else pointsJson [ text 100, citedIn messages ]
+    match runLong reply sent reports with
+    | Error (Summarize.SummaryFailure.ServiceFailed _) -> ()
+    | other -> failwith $"expected service failure, got {other}"
+    let calls = sent.Count
+    Assert.Equal(6 + 3, calls) // six maps, then one round of three groups
+    Assert.Equal(3, sent |> Seq.filter isCombine |> Seq.length)
+
+[<Fact; Trait("Task", "T006")>]
+let ``a combined point citing a page outside its group is omitted`` () =
+    let sent, reports = List(), List()
+    let reply messages =
+        if isCombine messages then
+            pointsJson [ "good", [ (citedIn messages).Head ]; "bad", [ 99 ] ]
+        else pointsJson [ text 20, citedIn messages ]
+    match runLong reply sent reports with
+    | Ok result ->
+        Assert.DoesNotContain(result.Points, fun p -> p.Pages |> List.contains 99)
+        Assert.True(result.Omitted >= 1)
+    | Error failure -> failwith $"expected Ok, got {failure}"
