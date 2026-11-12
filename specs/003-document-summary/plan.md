@@ -24,7 +24,7 @@ While a project document is open in the reader, the researcher asks for a summar
 
 **Performance Goals**: a 40-page article summarized within 2 minutes on her configured service (SC-007, manual).
 
-**Constraints**: incoming host security unchanged; outgoing calls only to the configured endpoint, no redirects, no proxy for a local service, connection guard to loopback for a local service; no document text, prompt, output or API key in logs or responses; at most 100 pages.
+**Constraints**: incoming host security unchanged; outgoing calls only to the configured endpoint, no redirects, no proxy for a local service, connection guard to loopback for a local service; no document text, prompt, raw model output or API key in logs or error responses (validated points are returned only in the `summary` event); at most 100 pages.
 
 **Scale/Scope**: one researcher, one summary at a time, documents up to 100 pages.
 
@@ -49,7 +49,7 @@ While a project document is open in the reader, the researcher asks for a summar
 - `chunk : int -> PageText list -> Chunk list` (consecutive whole pages, long pages split, page numbers kept).
 - `parsePoints : allowedPages: Set<int> -> string -> Result<ValidatedPoints, Unparseable>` with `ValidatedPoints = { Points: SummaryPoint list; Omitted: int }`, `SummaryPoint = { Text: string; Pages: int list }`.
 
-**Application** (`src/LexScholar.Application/Summarize.fs`): the workflow over capability functions: `ExtractPages` (document id → pages or unavailable/too many pages), `Complete` (messages → cancellation → `Task<Result<string, ServiceError>>`), `Report` (progress event). It builds prompts (map, combine), runs chunks in order, validates each answer and returns `DocumentSummary` or a failure union. Pre-send checks return before `Complete` is ever called.
+**Application** (`src/LexScholar.Application/Summarize.fs`): the workflow over capability functions: `ExtractPages` (document id → pages or unavailable/too many pages), `Complete` (messages → cancellation → `Task<Result<string, ServiceError>>`), `Report` (progress event). It builds prompts (map, combine), runs chunks in order, combines in bounded rounds (research §4), validates each answer and returns `DocumentSummary` or a failure union. Pre-send checks return before `Complete` is ever called.
 
 **Infrastructure**: `PdfText.fs` (verified open + PdfPig per-page extraction, page-count check first); `ChatCompletions.fs` (request/response JSON, `HttpClient` with the handler rules from research §1–2).
 
