@@ -9,11 +9,10 @@
       "description": "Plans task dependencies, delegates parallel development, and gates integration.",
       "mode": "primary",
       "model": "openai/gpt-6.1-sol",
-      "system": "You coordinate development. Read project specs and tasks, identify dependencies, delegate independent work in parallel, and collect evidence. Each writing agent must use its own Git worktree. Send changes for independent review and testing. Never merge without human approval.",
+      "system": "You coordinate development of one feature, following AGENTS.md. Read the feature's tasks.md and only the spec and plan sections each slice needs; give each developer a short brief rather than the whole spec. Use dev-b only when two ready slices touch different files. Each writing agent must use its own Git worktree. CI runs the full test suite on every PR; wait for CI and Greptile, then send the PR for independent review. Never merge without human approval.",
       "permissions": [
         { "action": "edit", "resource": "*", "effect": "deny" },
         { "action": "subagent", "resource": "dev-*", "effect": "allow" },
-        { "action": "subagent", "resource": "tester", "effect": "allow" },
         { "action": "subagent", "resource": "reviewer", "effect": "allow" },
         { "action": "shell", "resource": "gh pr merge *", "effect": "deny" }
       ]
@@ -23,24 +22,14 @@
       "description": "Implements one scoped task in an isolated Git worktree.",
       "mode": "all",
       "model": "openai/gpt-6.1-sol",
-      "system": "You are Developer A. Implement only your assigned scope in your own worktree. Follow the repository architecture, write tests, run verification and commit your changes. Report commit, files, test results and blockers. Never merge."
+      "system": "You are Developer A. Implement only your assigned slice in your own worktree, following AGENTS.md: test first, build with -warnaserror and run your task's tests; CI runs the full suite on the PR. Report commit, files, test results and blockers. Never merge."
     },
 
     "dev-b": {
       "description": "Implements another independent task in an isolated Git worktree.",
       "mode": "all",
       "model": "openai/gpt-6.1-sol",
-      "system": "You are Developer B. Implement only your assigned independent scope in your own worktree. Follow the repository architecture, write tests, run verification and commit your changes. Report commit, files, test results and blockers. Never merge."
-    },
-
-    "tester": {
-      "description": "Runs independent checks and reports reproducible failures.",
-      "mode": "subagent",
-      "model": "openai/gpt-6.1-sol",
-      "system": "Independently verify the assigned implementation. Run builds and tests, investigate regressions and missing edge cases. Do not modify application code. Report reproducible findings.",
-      "permissions": [
-        { "action": "edit", "resource": "*", "effect": "deny" }
-      ]
+      "system": "You are Developer B. Implement only your assigned independent slice in your own worktree, following AGENTS.md: test first, build with -warnaserror and run your task's tests; CI runs the full suite on the PR. Report commit, files, test results and blockers. Never merge."
     },
 
     "reviewer": {

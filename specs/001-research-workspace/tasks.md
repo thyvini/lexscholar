@@ -83,7 +83,7 @@ Tests are required from the first increment. Establish the compile-ready scaffol
 
 ## Dependencies and parallel work
 
-T005 and T006 test work was first verified in RED; see [foundation RED results](foundation-red-results.md) for the original failures and [foundation GREEN results](foundation-green-results.md) for revised typed-boundary RED and T007/T008 verification. Later tasks remain incomplete.
+T005 and T006 test work was first verified in RED; see [foundation RED results](evidence/foundation-red-results.md) for the original failures and [foundation GREEN results](evidence/foundation-green-results.md) for revised typed-boundary RED and T007/T008 verification. Later tasks remain incomplete.
 
 Phase 1 → Phase 2 → US1 → US2 → US3 → Phase 6. T045 supplies runnable test scaffolding before T005–T006 and all story tests. Before T012–T013, complete T014's type signatures and T015's runnable schema scaffolding; implement project behavior only after those tests fail. Before T020–T023, complete T024's types and T025's runnable schema scaffolding plus the T045 harness; implement validation, import and association behavior only after the relevant tests fail. T034–T035 use the existing US2 data setup and T045 reader stubs before T036–T038 implement behavior. Numbering retains existing IDs and does not override these dependencies. US2 needs projects and US3 needs shared documents and associations; each checkpoint can be verified with its own fixtures after its prerequisites. Once their stated scaffolds are complete, T012 and T013 can run independently, as can T020–T023 and T034–T035. `[P]` marks only work on separate files with no dependency on another incomplete task in the same group. Shared repository and migration edits are sequential.
 

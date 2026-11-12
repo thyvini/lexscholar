@@ -362,6 +362,8 @@ let ``an import cancelled while staging discards the staged file`` () =
     use source = new CancellingSource(fixture "valid.pdf", cancellation)
     Assert.ThrowsAny<OperationCanceledException>(fun () ->
         (import source "valid.pdf" cancellation.Token).GetAwaiter().GetResult() |> ignore) |> ignore
+    // The caller owns the input: a cancelled import must not dispose it.
+    Assert.True(source.CanRead)
     Assert.Empty(rows workspace.Path)
     Assert.Empty(originals workspace.Path)
     Assert.Empty(stagingFiles workspace.Path)

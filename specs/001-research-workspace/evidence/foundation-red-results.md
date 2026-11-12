@@ -55,8 +55,8 @@ Module: `LexScholar.Server.Tests.ConfigurationTests`.
 
 ### Defaults and positive overrides (6 failures)
 
-Requirement: [specification](spec.md) clarification on PDF limits, FR-003 and
-SC-008; [plan](plan.md) configuration constraints.
+Requirement: [specification](../spec.md) clarification on PDF limits, FR-003 and
+SC-008; [plan](../plan.md) configuration constraints.
 
 | Test method / inputs | Expected byte/page limits | Observed failure |
 |---|---|---|
@@ -80,8 +80,8 @@ Each row below is exercised by **both** methods:
 1. `invalid limits produce a validation failure rather than a placeholder`
 2. `invalid configuration prevents the application from starting`
 
-Requirement: [plan](plan.md) Constraints and Data and Request Flow step 2;
-[research](research.md) PDF validation and limits / Remaining technical notes:
+Requirement: [plan](../plan.md) Constraints and Data and Request Flow step 2;
+[research](../research.md) PDF validation and limits / Remaining technical notes:
 malformed, zero, and negative configuration must fail startup. Numeric overflow
 is invalid for the existing `int64` byte / `int` page signatures.
 
@@ -109,8 +109,8 @@ reaches a real loopback listener, making missing startup validation observable.
 
 Module: `LexScholar.Server.Tests.ProcessLockTests`.
 
-Requirement: [plan](plan.md) Data and Request Flow step 1 and single-instance
-lock risk; [research](research.md) Process exclusivity and tabs: OS-held exclusive
+Requirement: [plan](../plan.md) Data and Request Flow step 1 and single-instance
+lock risk; [research](../research.md) Process exclusivity and tabs: OS-held exclusive
 ownership, refusal of a second process, release after exit, independent roots,
 and tabs sharing the same process. Normal exit and forced termination exercise
 both release paths requested for T006.
