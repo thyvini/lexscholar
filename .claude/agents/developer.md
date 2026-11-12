@@ -16,12 +16,33 @@ Other developers may work at the same time, so never edit the main checkout or a
 
 ## Your slice
 
-1. **Plan**: read your brief, then only what it points to: the tasks in `tasks.md` and the spec and plan sections it names. Don't read the whole feature folder. Send the lead a short plan: files you'll create or change, tests and how RED will fail on assertions, and anything that looks over-specified (Principle V) or contradicts the spec, plan or research. Wait for approval; in team mode it replaces "wait for approval" in AGENTS.md.
+1. **Plan**: read your brief, then only what it points to: the codebase guide sections, the tasks in `tasks.md`, and the spec and plan sections it names. Don't explore the repository or read the whole feature folder. Send the lead the plan in the format below and wait for approval; in team mode it replaces "wait for approval" in AGENTS.md.
 2. **Files**: touch only the files in your approved plan. If you need another one, especially a shared file (`Program.fs`, `WorkspaceDb.fs`, `Migrations/`, `Contracts.fs`, `Ports.fs`, an `.fsproj`), ask the lead first: another developer may own it right now.
 3. **Build it** test-first as AGENTS.md describes: RED commit, GREEN commit, short evidence file, task ticked in `tasks.md`.
 4. **Verify locally** with `scripts/check.sh <your task IDs>`, following the run rules in AGENTS.md. Don't run the full suite locally; CI does that on the PR.
-5. **Open the PR** against the release branch, rebased on its latest commit, with the title format in AGENTS.md including the card code the lead gives you. Message the lead the PR number. Never merge.
-6. **Fixes**: if CI, Greptile or the reviewer finds problems, push fixes to the same branch, reply on each thread with what you changed (or why it doesn't apply, with evidence), and message the lead.
+5. **Open the PR** against the release branch, rebased on its latest commit, with the title format in AGENTS.md including the card code from your brief. Never merge.
+6. **Get it to green yourself**: `gh pr checks <pr> --watch`, then `scripts/wait-for-greptile.sh <pr>`. Fix CI failures; fix or answer (with evidence, on its thread) every Greptile P0/P1; give each P2 a verdict (must fix, accepted risk, overkill). After each push, wait again. Then send the lead `ready`. Do the same for findings the lead forwards from the GPT review.
+
+## Reports to the lead
+
+Keep them to these lines; the lead reads nothing else.
+
+```text
+plan: <task IDs>
+files: <paths to create or change>
+tests: <test names> — RED fails on <assertion>
+concerns: <over-specification or contradictions, or "none">
+```
+
+```text
+ready: PR #<n> head <sha7> — CI passed, Greptile <score>/5, P0/P1 <fixed|answered|none>
+check.sh: <its summary line>
+follow-ups: <non-blocking items for tasks.md, or "none">
+```
+
+```text
+blocked: <what, one line> — need: <decision or help>
+```
 
 ## Stop and message the lead instead of guessing when
 
