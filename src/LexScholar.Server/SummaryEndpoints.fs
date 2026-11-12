@@ -90,12 +90,14 @@ let private confirmedService (context: HttpContext) : Task<(string * string) opt
                 match root.TryGetProperty(name: string) with
                 | true, value when value.ValueKind = JsonValueKind.String -> Some (value.GetString())
                 | _ -> None
-            match root.ValueKind, root.TryGetProperty "confirmSend" with
-            | JsonValueKind.Object, (true, flag) when flag.ValueKind = JsonValueKind.True ->
-                match text "confirmedHost", text "confirmedModel" with
-                | Some host, Some model -> return Some (host, model)
+            if root.ValueKind <> JsonValueKind.Object then return None
+            else
+                match root.TryGetProperty "confirmSend" with
+                | true, flag when flag.ValueKind = JsonValueKind.True ->
+                    match text "confirmedHost", text "confirmedModel" with
+                    | Some host, Some model -> return Some (host, model)
+                    | _ -> return None
                 | _ -> return None
-            | _ -> return None
     with :? JsonException -> return None }
 
 let map (app: WebApplication) (configuration: WorkspaceConfiguration) =

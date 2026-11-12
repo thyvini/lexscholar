@@ -21,3 +21,4 @@
 
 - RED at the follow-up test commit: `scripts/check.sh T007`: 37 tests, 7 failed (bare `confirmSend: true`, wrong or missing or non-string host/model: `Expected Conflict, Actual OK`; the state test: effect carried an empty host and model).
 - A request is confirmed only with `confirmSend: true` and `confirmedHost` and `confirmedModel` equal to the current configured authority and model; otherwise 409 with the current values and zero service requests. Contract, FR-014 wording and research §2 updated (owner-approved).
+- Greptile P2 (non-object body `null`, `[]`, `true` threw `InvalidOperationException`, 500): must fix, done. RED: 42 tests, 5 failed (500 instead of 409/200); GREEN after checking `ValueKind` first.
