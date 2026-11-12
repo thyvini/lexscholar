@@ -63,7 +63,10 @@ type Message =
 /// The service the researcher confirmed, as the dialog showed it.
 type Confirmed = { Host: string; Model: string }
 
-type Effect = Send of request: int * project: Guid * document: Guid * confirmed: Confirmed option
+type Effect =
+    | Send of request: int * project: Guid * document: Guid * confirmed: Confirmed option
+    /// Abandon the running request: its fetch is aborted and the server stops (FR-009).
+    | Cancel of request: int
 
 let initial = { Project = None; Document = None; State = Idle; Progress = None; Request = 0 }
 

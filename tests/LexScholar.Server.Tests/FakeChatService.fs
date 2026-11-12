@@ -29,10 +29,16 @@ type FakeChatService(script: int -> ChatScript) =
     inherit HttpMessageHandler()
     let requests = ConcurrentQueue<RecordedChatRequest>()
     let mutable calls = 0
+    let waiting = TaskCompletionSource()
+    let cancelled = TaskCompletionSource()
 
     new(always: ChatScript) = new FakeChatService(fun _ -> always)
 
     member _.Requests = requests.ToArray() |> Array.toList
+
+    /// Completes when a `WaitUntilCancelled` request is waiting, and when it is then cancelled (handshakes, no polling).
+    member _.Waiting : Task = waiting.Task
+    member _.Cancelled : Task = cancelled.Task
 
     override _.SendAsync(request, cancellation) = task {
         let! body = if isNull request.Content then Task.FromResult "" else request.Content.ReadAsStringAsync(cancellation)
@@ -46,6 +52,8 @@ type FakeChatService(script: int -> ChatScript) =
         | Status code ->
             return new HttpResponseMessage(enum<HttpStatusCode> code, Content = new StringContent("{\"error\":\"service detail\"}"))
         | WaitUntilCancelled ->
-            do! Task.Delay(Timeout.Infinite, cancellation)
+            waiting.TrySetResult() |> ignore
+            try do! Task.Delay(Timeout.Infinite, cancellation)
+            with :? OperationCanceledException as error -> cancelled.TrySetResult() |> ignore; raise error
             return new HttpResponseMessage(HttpStatusCode.OK)
     }

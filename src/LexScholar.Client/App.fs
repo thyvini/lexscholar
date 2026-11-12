@@ -319,6 +319,7 @@ module private Ui =
                     Async.StartImmediate(async {
                         let! result = Api.summarize http projectId documentId confirmed (fun progress -> dispatch (SummaryMsg (Summary.Progressed (request, progress))))
                         dispatch (SummaryMsg (Summary.Responded (request, result))) }))
+            | Some (Summary.Cancel _) -> Cmd.none
             | None -> Cmd.none
         | ProjectsMsg message ->
             let projects, effect = Projects.update message state.Projects
