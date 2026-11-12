@@ -179,3 +179,56 @@ let ``a successful role change after returning to its project refreshes without 
     assertState model.CheckRequest refreshed.CheckRequest
     assertState model.Error refreshed.Error
     assertState None refreshed.ChangingRole
+
+// Removing the open document. The page steps the library, then the reader
+// follows it (App.fs), so these tests drive both the same way.
+
+module private Page =
+    module L = LexScholar.Client.Library
+
+    let association (document: Document) : L.Association =
+        { Document = { Id = document.Id; FileName = document.FileName; PageCount = 2; ContentUrl = document.ContentUrl }
+          Role = FocusedSource }
+
+    let fetch effect =
+        match effect with
+        | Some (L.FetchProject (projectId, request)) -> projectId, request
+        | other -> failwithf "Expected a project fetch, got %A." other
+
+    let step message (library, reader) =
+        let library, effect = L.update message library
+        (library, followLibrary library reader), effect
+
+    /// Project alpha with paper and notes loaded; the reader shows nothing yet.
+    let loaded () =
+        let page, effect = step (L.ActiveProjectChanged (Some alpha)) (L.initial, initial)
+        let projectId, request = fetch effect
+        step (L.ProjectLoaded (projectId, request, Ok [ association paper; association notes ])) page |> fst
+
+    /// Removes the document; the server accepts it. Returns the page and the reload effect.
+    let removed (document: Document) page =
+        let page, _ = step (L.Remove document.Id) page
+        step (L.Removed (alpha, document.Id, Ok ())) page
+
+[<Fact; Trait("Task", "T039")>]
+let ``removing the open document closes the reader even if the project reload fails`` () =
+    let library, reader = Page.loaded ()
+    let reader, effect = step (Open paper) reader
+    let reader, _ = step (ContentChecked (fst (check effect), Ok ())) reader
+    assertState (Some paper) reader.Open
+    let (library, reader), reload = Page.removed paper (library, reader)
+    assertState None reader.Open
+    let projectId, request = Page.fetch reload
+    let failed = LexScholar.Client.Library.ProjectLoaded (projectId, request, Error LexScholar.Client.Library.RequestFailed)
+    let (_, reader), _ = Page.step failed (library, reader)
+    assertState None reader.Open
+    assertState None reader.Opening
+
+[<Fact; Trait("Task", "T039")>]
+let ``a content check that returns after the removal does not reopen the document`` () =
+    let library, reader = Page.loaded ()
+    let reader, pending = step (Open paper) reader
+    let (_, reader), _ = Page.removed paper (library, reader)
+    let reader, _ = step (ContentChecked (fst (check pending), Ok ())) reader
+    assertState None reader.Open
+    assertState None reader.Opening

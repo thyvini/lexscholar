@@ -161,16 +161,27 @@ let ``removing an association refreshes the active project`` () =
     let model, effect = step (Remove paper.Id) model
     assertState (Some (SendRemove (alpha, paper.Id))) effect
     assertState (Some Removing) model.Busy
-    let model, effect = step (Removed (alpha, Ok ())) model
+    let model, effect = step (Removed (alpha, paper.Id, Ok ())) model
     assertState alpha (fst (projectRequest effect))
     assertState None model.Busy
+
+[<Fact; Trait("Task", "T032")>]
+let ``a successful removal drops the association at once, even if the reload fails`` () =
+    let model = showing alpha [ { Document = paper; Role = FocusedSource }; { Document = notes; Role = ReferenceSource } ] [ paper; notes ]
+    let ids (model: Model) = model.Associations |> List.map (fun item -> item.Document.Id)
+    let model, _ = step (Remove paper.Id) model
+    let model, effect = step (Removed (alpha, paper.Id, Ok ())) model
+    assertState [ notes.Id ] (ids model)
+    let model, _ = projectLoaded effect (Error RequestFailed) model
+    assertState [ notes.Id ] (ids model)
+    assertState (Some RequestFailed) model.Error
 
 [<Fact; Trait("Task", "T032")>]
 let ``a mutation result after a project switch does not refresh the new project`` () =
     let model = showing alpha [ { Document = paper; Role = FocusedSource } ] [ paper ]
     let model, _ = step (Remove paper.Id) model
     let model, _ = step (ActiveProjectChanged (Some beta)) model
-    let model, effect = step (Removed (alpha, Ok ())) model
+    let model, effect = step (Removed (alpha, paper.Id, Ok ())) model
     assertState None effect
     assertState None model.Busy
     assertState (Some beta) model.Project

@@ -94,3 +94,11 @@ let update (message: Message) (model: Model) : Model * Effect option =
             | Error _ when stale -> model, None
             | Error error -> { model with Error = Some error }, None
     | _ -> model, None
+
+/// Follows the library's active project and, once loaded, its associations:
+/// the viewer closes when its project changes or its document leaves the list.
+let followLibrary (library: Library.Model) (model: Model) : Model =
+    let model, _ = update (ActiveProjectChanged library.Project) model
+    if library.HasLoadedProject then
+        update (AssociationsChanged (library.Associations |> List.map (fun item -> item.Document.Id))) model |> fst
+    else model
