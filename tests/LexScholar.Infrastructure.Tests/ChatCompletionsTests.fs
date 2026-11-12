@@ -107,15 +107,14 @@ let ``a local service ignores environment proxies and a remote one keeps the def
 
 [<Fact; Trait("Task", "T009")>]
 let ``a redirect is a failure and its target is not contacted`` () =
-    use target = new TcpListener(IPAddress.Loopback, 0)
-    target.Start()
-    let targetPort = (target.LocalEndpoint :?> IPEndPoint).Port
+    use target = new FixedServer(ok "followed")
+    let targetPort = target.Port
     use server =
         new FixedServer($"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{targetPort}/elsewhere\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
     let endpoint = $"http://127.0.0.1:{server.Port}/v1"
     let result = complete (ChatCompletions.createHandler (Uri endpoint)) (CapturingLogger()) endpoint None "hello"
     Assert.Equal(Error Summarize.ServiceError.Redirected, result)
-    Assert.False(target.Pending())
+    Assert.Equal(0, target.Accepted)
 
 [<Fact; Trait("Task", "T009")>]
 let ``logs name host, model and message count but no text, prompt, output or key`` () =
