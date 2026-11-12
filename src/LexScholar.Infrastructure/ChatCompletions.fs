@@ -61,7 +61,9 @@ let private connectLoopbackOnly
 /// environment proxies and connects to loopback only. `resolve` is a seam for tests.
 let createHandlerWith (resolve: string -> CancellationToken -> Task<IPAddress array>) (endpoint: Uri) : SocketsHttpHandler =
     let handler = new SocketsHttpHandler(AllowAutoRedirect = false)
-    ignore (resolve, isLocalHost, connectLoopbackOnly)
+    if isLocalHost endpoint.Host then
+        handler.UseProxy <- false
+        handler.ConnectCallback <- fun context cancellation -> connectLoopbackOnly resolve context cancellation
     handler
 
 let createHandler (endpoint: Uri) : SocketsHttpHandler =
@@ -130,8 +132,7 @@ let complete (logger: ILogger) (client: HttpClient) (settings: Settings) (messag
     let clock = Stopwatch.StartNew()
     let! result = send client settings messages cancellation
     let outcome = match result with Ok _ -> "ok" | Error error -> $"{error}".Split(' ').[0]
-    ignore logger
-    ignore (
+    logger.LogInformation(
         "Summary request to {Host}, model {Model}: {Messages} messages, {Outcome}, {Milliseconds} ms",
-        "", outcome, clock)
+        settings.Endpoint.Host, settings.Model, List.length messages, outcome, clock.ElapsedMilliseconds)
     return result }
