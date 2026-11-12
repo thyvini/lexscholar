@@ -36,7 +36,9 @@ paths:
               properties:
                 confirmSend:
                   type: boolean
-                  description: The researcher confirmed sending this document's text to a service elsewhere. Ignored for a local service.
+                  description: The researcher confirmed sending this document's text to the service named by confirmedHost and confirmedModel. Ignored for a local service.
+                confirmedHost: { type: string, description: "The serviceHost the researcher was shown. Required with confirmSend: true." }
+                confirmedModel: { type: string, description: "The model the researcher was shown. Required with confirmSend: true." }
       responses:
         "200":
           description: Newline-delimited JSON events, one per line.
@@ -52,7 +54,7 @@ paths:
           description: "`not_found`: the document is not associated with the project; `document_not_found`: no such document."
           content: { application/problem+json: { schema: { $ref: "#/components/schemas/Problem" } } }
         "409":
-          description: "`confirmation_required`: the service is elsewhere and confirmSend was not true. Nothing was sent."
+          description: "`confirmation_required`: the service is elsewhere and the request did not confirm its current host and model (confirmSend not true, or confirmedHost/confirmedModel missing or different). Nothing was sent."
           content: { application/problem+json: { schema: { $ref: "#/components/schemas/ConfirmationProblem" } } }
         "422":
           description: >-

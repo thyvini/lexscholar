@@ -27,7 +27,7 @@ let private reading = update (ReaderChanged (Some project, Some document)) initi
 let ``requesting a summary starts generating and sends one request`` () =
     let model, effect = update Summarize reading
     assertState (Generating 1) model.State
-    assertState (Some (Send (1, project, document))) effect
+    assertState (Some (Send (1, project, document, None))) effect
 
 [<Fact; Trait("Task", "T004")>]
 let ``requesting without an open document does nothing`` () =
@@ -58,7 +58,7 @@ let ``a failure is kept as the state, with not configured distinct`` () =
     // After a failure the researcher can ask again.
     let again, effect = update Summarize failed
     assertState (Generating 2) again.State
-    assertState (Some (Send (2, project, document))) effect
+    assertState (Some (Send (2, project, document, None))) effect
 
 [<Fact; Trait("Task", "T004")>]
 let ``dismissing returns to idle and drops a late result`` () =
@@ -107,3 +107,44 @@ let ``progress of an older or ended request is dropped`` () =
     let again, _ = update Summarize failed
     let old, _ = update (Progressed (1, PagesProcessed (5, 40))) again
     assertState None old.Progress
+
+let private confirming =
+    let generating, _ = update Summarize reading
+    update (Responded (1, Error (ConfirmationRequired ("summary.example.test:8080", "gpt")))) generating |> fst
+
+[<Fact; Trait("Task", "T007")>]
+let ``a confirmation required answer asks the researcher and sends nothing more`` () =
+    assertState (Confirming ("summary.example.test:8080", "gpt")) confirming.State
+    let again, effect = update Summarize confirming
+    assertState confirming again
+    assertState None effect
+
+[<Fact; Trait("Task", "T007")>]
+let ``confirming repeats the request with the confirmed host and model under a new request number`` () =
+    let model, effect = update ConfirmSend confirming
+    assertState (Generating 2) model.State
+    assertState (Some (Send (2, project, document, Some { Host = "summary.example.test:8080"; Model = "gpt" }))) effect
+
+[<Fact; Trait("Task", "T007")>]
+let ``cancelling returns to idle and emits no effect`` () =
+    let model, effect = update CancelSend confirming
+    assertState Idle model.State
+    assertState None effect
+    // A late answer to the first request changes nothing, and asking again starts unconfirmed.
+    let late, lateEffect = update (Responded (1, Ok generated)) model
+    assertState Idle late.State
+    assertState None lateEffect
+    let _, again = update Summarize model
+    assertState (Some (Send (2, project, document, None))) again
+
+[<Fact; Trait("Task", "T007")>]
+let ``confirm and cancel do nothing unless a confirmation is open, and a reader change closes it`` () =
+    let ignored, effect = update ConfirmSend reading
+    assertState reading ignored
+    assertState None effect
+    let ignoredCancel, cancelEffect = update CancelSend reading
+    assertState reading ignoredCancel
+    assertState None cancelEffect
+    let moved, movedEffect = update (ReaderChanged (Some project, Some (Guid.NewGuid()))) confirming
+    assertState Idle moved.State
+    assertState None movedEffect

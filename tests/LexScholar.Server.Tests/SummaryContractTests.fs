@@ -263,3 +263,72 @@ let ``a 40-page document streams progress to 40 of 40, then combining, then one 
     // Progress precedes the combine step and the combine call is the last request.
     Assert.True(List.findIndex ((=) "combining") kinds > (List.rev kinds |> List.findIndex ((=) "progress") |> fun i -> kinds.Length - 1 - i))
     Assert.Equal(progress.Length, fake.Requests.Length) // one map call per chunk (progress has an extra opening event)
+
+let private elsewhere = [ "LexScholar:Summary:Endpoint", "http://summary.example.test:8080/v1"; "LexScholar:Summary:Model", "gpt" ]
+let private answer = """{"points":[{"text":"Main idea","pages":[1,2]}]}"""
+
+/// Posts `body` to the summary endpoint of an imported fixture; returns status, body text and the fake.
+let private summarizeBody fixtureName endpointSettings (body: string) =
+    let fake = new FakeChatService(Reply answer)
+    use harness = TestHarness.Start(settings = endpointSettings, summaryHandler = fake)
+    let project = seedProject harness.Root
+    let document = import harness.Client fixtureName
+    associate harness.Client project document
+    let status, text =
+        send harness.Client HttpMethod.Post $"/api/projects/{project}/documents/{document}/summary"
+            (Some (new StringContent(body, Encoding.UTF8, "application/json")))
+    status, text, fake
+
+[<Theory; Trait("Task", "T007")>]
+[<InlineData("""{"confirmSend":false}""")>]
+[<InlineData("""{}""")>]
+[<InlineData("""{"confirmSend":"true"}""")>]
+[<InlineData("""{"confirmSend":true}""")>]
+[<InlineData("""{"confirmSend":true,"confirmedHost":"summary.example.test:8080"}""")>]
+[<InlineData("""{"confirmSend":true,"confirmedModel":"gpt"}""")>]
+[<InlineData("""{"confirmSend":true,"confirmedHost":"other.example.test:8080","confirmedModel":"gpt"}""")>]
+[<InlineData("""{"confirmSend":true,"confirmedHost":"summary.example.test:8080","confirmedModel":"other-model"}""")>]
+[<InlineData("""{"confirmSend":false,"confirmedHost":"summary.example.test:8080","confirmedModel":"gpt"}""")>]
+[<InlineData("""{"confirmSend":true,"confirmedHost":1,"confirmedModel":"gpt"}""")>]
+[<InlineData("""not json""")>]
+[<InlineData("""null""")>]
+[<InlineData("""[]""")>]
+[<InlineData("""true""")>]
+[<InlineData("")>]
+let ``a service elsewhere without a confirmation of this host and model is 409 and receives nothing`` (body: string) =
+    let status, text, fake = summarizeBody "article-en.pdf" elsewhere body
+    Assert.Equal(HttpStatusCode.Conflict, status)
+    use json = JsonDocument.Parse(text)
+    Assert.Equal("confirmation_required", json.RootElement.GetProperty("code").GetString())
+    Assert.Equal("summary.example.test:8080", json.RootElement.GetProperty("serviceHost").GetString())
+    Assert.Equal("gpt", json.RootElement.GetProperty("model").GetString())
+    Assert.Empty(fake.Requests)
+
+[<Fact; Trait("Task", "T007")>]
+let ``local checks come before the confirmation`` () =
+    let status, text, fake = summarizeBody "scanned.pdf" elsewhere """{"confirmSend":false}"""
+    Assert.Equal(enum<HttpStatusCode> 422, status)
+    Assert.Contains("no_text", text)
+    Assert.Empty(fake.Requests)
+
+[<Fact; Trait("Task", "T007")>]
+let ``a service elsewhere with confirmation of that host and model gets the text and answers with a summary`` () =
+    let status, text, fake =
+        summarizeBody "article-en.pdf" elsewhere """{"confirmSend":true,"confirmedHost":"summary.example.test:8080","confirmedModel":"gpt"}"""
+    Assert.Equal(HttpStatusCode.OK, status)
+    use json = JsonDocument.Parse(text.Split('\n', StringSplitOptions.RemoveEmptyEntries).[0])
+    Assert.Equal("summary", json.RootElement.GetProperty("type").GetString())
+    Assert.Equal("summary.example.test:8080", json.RootElement.GetProperty("serviceHost").GetString())
+    let request = Assert.Single(fake.Requests)
+    Assert.Equal(Uri("http://summary.example.test:8080/v1/chat/completions"), request.Uri)
+
+[<Theory; Trait("Task", "T007")>]
+[<InlineData("""{"confirmSend":false}""")>]
+[<InlineData("""{"confirmSend":true}""")>]
+[<InlineData("""null""")>]
+[<InlineData("""[]""")>]
+let ``a local service ignores confirmSend`` (body: string) =
+    let status, text, fake = summarizeBody "article-en.pdf" settings body
+    Assert.Equal(HttpStatusCode.OK, status)
+    Assert.Contains("\"type\":\"summary\"", text)
+    Assert.Single(fake.Requests) |> ignore

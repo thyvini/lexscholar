@@ -68,7 +68,7 @@ While reading a document in a project, the researcher asks for a summary of it. 
 - **FR-011**: The system MUST summarize documents of up to 100 pages. For longer documents it MUST say clearly that they aren't supported yet and MUST NOT send any of their text to the service.
 - **FR-012**: While a summary is being generated, the researcher MUST see its progress as pages processed out of the document's total, and MUST be able to dismiss it.
 - **FR-013**: Requesting, viewing or dismissing a summary MUST NOT change the document's library record, its stored file, or any project association or role.
-- **FR-014**: When the configured service is not on the researcher's machine, the system MUST, before sending any text for each summary, tell her that the document's text will leave her machine and which service will receive it, and MUST send nothing unless she confirms. A service on her machine MUST NOT require this confirmation.
+- **FR-014**: When the configured service is not on the researcher's machine, the system MUST, before sending any text for each summary, tell her that the document's text will leave her machine and which service will receive it, and MUST send nothing unless she confirms that service (host and model) as currently configured. A service on her machine MUST NOT require this confirmation.
 
 ### Key Entities
 

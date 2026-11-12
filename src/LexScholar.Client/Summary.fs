@@ -30,9 +30,12 @@ type Failure =
     | TooManyPages
     | ServiceFailed
     | RequestFailed
+    /// The service is elsewhere and the researcher has not confirmed: its host and the model.
+    | ConfirmationRequired of host: string * model: string
 
 type State =
     | Idle
+    | Confirming of host: string * model: string
     | Generating of request: int
     | Shown of Generated
     | Failed of Failure
@@ -50,12 +53,17 @@ type Model =
 type Message =
     | Summarize
     | Dismiss
+    | ConfirmSend
+    | CancelSend
     | Progressed of request: int * Progress
     | Responded of request: int * Result<Generated, Failure>
     /// The reader's project and open document, after any change.
     | ReaderChanged of project: Guid option * document: Guid option
 
-type Effect = Send of request: int * project: Guid * document: Guid
+/// The service the researcher confirmed, as the dialog showed it.
+type Confirmed = { Host: string; Model: string }
+
+type Effect = Send of request: int * project: Guid * document: Guid * confirmed: Confirmed option
 
 let initial = { Project = None; Document = None; State = Idle; Progress = None; Request = 0 }
 
@@ -68,14 +76,26 @@ let update (message: Message) (model: Model) : Model * Effect option =
         match model.Project, model.Document, model.State with
         | Some project, Some document, (Idle | Shown _ | Failed _) ->
             let request = model.Request + 1
-            { model with State = Generating request; Progress = None; Request = request }, Some (Send (request, project, document))
+            { model with State = Generating request; Progress = None; Request = request }, Some (Send (request, project, document, None))
         | _ -> model, None
     | Dismiss -> reset model, None
+    | ConfirmSend ->
+        match model.Project, model.Document, model.State with
+        | Some project, Some document, Confirming (host, name) ->
+            let request = model.Request + 1
+            { model with State = Generating request; Progress = None; Request = request }, Some (Send (request, project, document, Some { Host = host; Model = name }))
+        | _ -> model, None
+    // Cancelling sends nothing: no effect. A late answer is dropped because only `Generating` accepts one.
+    | CancelSend ->
+        match model.State with
+        | Confirming _ -> reset model, None
+        | _ -> model, None
     | Progressed (request, progress) when model.State = Generating request -> { model with Progress = Some progress }, None
     | Progressed _ -> model, None
     | Responded (request, result) when model.State = Generating request ->
         match result with
         | Ok generated -> { model with State = Shown generated; Progress = None }, None
+        | Error (ConfirmationRequired (host, name)) -> { model with State = Confirming (host, name); Progress = None }, None
         | Error failure -> { model with State = Failed failure; Progress = None }, None
     | ReaderChanged (project, document) when (project, document) <> (model.Project, model.Document) ->
         { reset model with Project = project; Document = document }, None

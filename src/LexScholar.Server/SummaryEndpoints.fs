@@ -67,6 +67,39 @@ let private summarizeOnce (context: HttpContext) (summary: SummaryConfiguration)
         do! failed context "service_failed" "The summary service did not give a usable answer. Try again." None
     return Results.Empty }
 
+/// The service the request body says the researcher confirmed, or None. A confirmation is
+/// `"confirmSend": true` with string `confirmedHost` and `confirmedModel`; anything else
+/// (missing, malformed, oversized, another type) is not one.
+let private confirmedService (context: HttpContext) : Task<(string * string) option> = task {
+    try
+        use buffer = new IO.MemoryStream()
+        let chunk = Array.zeroCreate<byte> 1024
+        let mutable total = 0
+        let mutable finished = false
+        while not finished && total <= 4096 do
+            let! read = context.Request.Body.ReadAsync(chunk, 0, chunk.Length, context.RequestAborted)
+            if read = 0 then finished <- true
+            else
+                buffer.Write(chunk, 0, read)
+                total <- total + read
+        if not finished then return None
+        else
+            use document = JsonDocument.Parse(buffer.ToArray())
+            let root = document.RootElement
+            let text name =
+                match root.TryGetProperty(name: string) with
+                | true, value when value.ValueKind = JsonValueKind.String -> Some (value.GetString())
+                | _ -> None
+            if root.ValueKind <> JsonValueKind.Object then return None
+            else
+                match root.TryGetProperty "confirmSend" with
+                | true, flag when flag.ValueKind = JsonValueKind.True ->
+                    match text "confirmedHost", text "confirmedModel" with
+                    | Some host, Some model -> return Some (host, model)
+                    | _ -> return None
+                | _ -> return None
+    with :? JsonException -> return None }
+
 let map (app: WebApplication) (configuration: WorkspaceConfiguration) =
     let summary = configuration.Summary
     let directory = configuration.DataDirectory
@@ -98,4 +131,20 @@ let map (app: WebApplication) (configuration: WorkspaceConfiguration) =
                 | Error NotEnoughText ->
                     return problem 422 "not_enough_text" "The document has too little text"
                                "The readable text is too short to summarize. Nothing was sent."
-                | Ok readable -> return! summarizeOnce context configured documentId readable })) |> ignore
+                | Ok readable ->
+                    // FR-014: for a service elsewhere nothing is sent without this request's confirmation
+                    // of the host and model currently configured. This is the only path to
+                    // `summarizeOnce`, and it runs after the local checks.
+                    let! confirmation = confirmedService context
+                    let current = configured.Endpoint.Authority, configured.Model
+                    if ServiceLocation.classify configured.Endpoint.Host = Elsewhere && confirmation <> Some current then
+                        context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("LexScholar.Summary")
+                            .LogInformation("Summary needs confirmation for {Host}, model {Model}", configured.Endpoint.Authority, configured.Model)
+                        return Results.Problem(
+                            statusCode = Nullable 409,
+                            title = "Confirmation needed",
+                            detail = "The text of this document will leave this machine. Nothing was sent.",
+                            extensions = dict [ "code", box "confirmation_required"
+                                                "serviceHost", box configured.Endpoint.Authority
+                                                "model", box configured.Model ])
+                    else return! summarizeOnce context configured documentId readable })) |> ignore

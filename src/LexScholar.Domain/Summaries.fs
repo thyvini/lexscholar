@@ -7,6 +7,18 @@ type ServiceLocation =
     | Local
     | Elsewhere
 
+module ServiceLocation =
+    /// Local only for the name `localhost` or a loopback IP literal (127.0.0.0/8, ::1);
+    /// everything else, including private network addresses and 0.0.0.0, is elsewhere
+    /// (research.md section 2). A bracketed IPv6 host, as `Uri.Host` gives it, is accepted.
+    let classify (host: string) : ServiceLocation =
+        let name = host.Trim().Trim('[', ']')
+        if name.Equals("localhost", System.StringComparison.OrdinalIgnoreCase) then Local
+        else
+            match System.Net.IPAddress.TryParse name with
+            | true, address when System.Net.IPAddress.IsLoopback address -> Local
+            | _ -> Elsewhere
+
 /// Text of one page; `Number` is the page position, first page = 1.
 type PageText = { Number: int; Text: string }
 

@@ -117,3 +117,26 @@ let ``selecting a citation shows the cited page in the reader, also when selecte
         do! click citation
         do! Assertions.Expect(frame).Not.ToHaveAttributeAsync("data-mark", "old")
         do! Assertions.Expect(frame).ToHaveAttributeAsync("src", Text.RegularExpressions.Regex("/content#page=2$")) })
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T007"); Trait("Category", "Browser")>]
+let ``a service elsewhere is asked about first: Cancel sends nothing, Send sends exactly once`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use fake = new FakeChatService(Reply answer)
+        let elsewhere = [ "LexScholar:Summary:Endpoint", "http://summary.example.test:8080/v1"; "LexScholar:Summary:Model", "test-model" ]
+        use harness = TestHarness.Start(serveClient = true, settings = elsewhere, summaryHandler = fake)
+        let! page = openApp browser harness
+        do! arrange page
+        let dialog = page.GetByRole(AriaRole.Alertdialog)
+        do! click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = "Summarize", Exact = true)))
+        do! Assertions.Expect(dialog).ToContainTextAsync("article-en.pdf")
+        do! Assertions.Expect(dialog).ToContainTextAsync("summary.example.test:8080")
+        do! Assertions.Expect(dialog).ToContainTextAsync("test-model")
+        do! click (button dialog "Cancel")
+        do! Assertions.Expect(dialog).ToHaveCountAsync(0)
+        do! Assertions.Expect(panel page).ToHaveCountAsync(0)
+        Assert.Empty(fake.Requests)
+        // Asking again asks again; Send then produces the summary with one service request.
+        do! click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = "Summarize", Exact = true)))
+        do! click (button dialog "Send")
+        do! Assertions.Expect(panel page).ToContainTextAsync("Generated summary")
+        Assert.Single(fake.Requests) |> ignore })

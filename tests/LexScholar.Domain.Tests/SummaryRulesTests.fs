@@ -120,3 +120,23 @@ let ``points are grouped in order so every group fits the limit`` () =
     Assert.Equal<SummaryPoint list>(points, List.concat groups)
     Assert.Equal<int list>([ 2; 2; 1 ], groups |> List.map List.length)
     Assert.Empty(Summaries.groupPoints limit [])
+
+[<Theory; Trait("Task", "T007")>]
+[<InlineData("localhost", true)>]
+[<InlineData("LOCALHOST", true)>]
+[<InlineData("127.0.0.1", true)>]
+[<InlineData("127.0.0.2", true)>]
+[<InlineData("127.255.255.254", true)>]
+[<InlineData("::1", true)>]
+[<InlineData("[::1]", true)>]
+[<InlineData("0.0.0.0", false)>]
+[<InlineData("192.168.1.10", false)>]
+[<InlineData("10.0.0.1", false)>]
+[<InlineData("localhost.example", false)>]
+[<InlineData("mylocalhost", false)>]
+[<InlineData("example.com", false)>]
+[<InlineData("::ffff:192.168.1.10", false)>]
+[<InlineData("", false)>]
+let ``a service is local only for localhost or a loopback address`` (host: string, local: bool) =
+    let expected = if local then Local else Elsewhere
+    Assert.Equal(expected, ServiceLocation.classify host)

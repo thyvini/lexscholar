@@ -16,6 +16,7 @@ open System.Threading
 open System.Threading.Tasks
 open Microsoft.Extensions.Logging
 open LexScholar.Application
+open LexScholar.Domain
 
 /// What the researcher configured for the service.
 type Settings =
@@ -27,14 +28,6 @@ type Settings =
 
 /// A response larger than this is a failure.
 let maximumResponseBytes = 1_048_576
-
-/// Whether the endpoint host is this machine: `localhost` or a loopback IP literal
-/// (research.md section 2). T007 moves the rule to `ServiceLocation.classify`; swap it here then.
-let private isLocalHost (host: string) =
-    host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
-    || (match IPAddress.TryParse(host.Trim('[', ']')) with
-        | true, address -> IPAddress.IsLoopback address
-        | _ -> false)
 
 /// Connects only when every address the name resolves to is loopback, so name
 /// resolution cannot send the text off this machine.
@@ -68,7 +61,7 @@ let private connectLoopbackOnly
 /// environment proxies and connects to loopback only. `resolve` is a seam for tests.
 let createHandlerWith (resolve: string -> CancellationToken -> Task<IPAddress array>) (endpoint: Uri) : SocketsHttpHandler =
     let handler = new SocketsHttpHandler(AllowAutoRedirect = false)
-    if isLocalHost endpoint.Host then
+    if ServiceLocation.classify endpoint.Host = Local then
         handler.UseProxy <- false
         handler.ConnectCallback <- fun context cancellation -> connectLoopbackOnly resolve context cancellation
     handler
