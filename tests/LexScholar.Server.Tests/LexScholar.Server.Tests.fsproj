@@ -22,6 +22,7 @@
     <Compile Include="LibraryContractTests.fs" />
     <Compile Include="ReaderContractTests.fs" />
     <Compile Include="SummaryContractTests.fs" />
+    <Compile Include="SummaryReferenceSetTests.fs" />
     <Compile Include="LocalSecurityTests.fs" />
     <Compile Include="RestartTests.fs" />
     <Compile Include="LimitRestartTests.fs" />
