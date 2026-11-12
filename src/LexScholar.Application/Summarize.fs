@@ -42,8 +42,15 @@ type SummaryFailure =
     | ServiceFailed of ServiceError
 
 /// LexScholar's own explanation for a failed call; never the service's body, prompt, text or key.
-let failureDetail (_error: ServiceError) : string =
-    "The summary service did not give a usable answer. Try again."
+let failureDetail (error: ServiceError) : string =
+    match error with
+    | ServiceError.ErrorStatus 400 ->
+        "The summary service rejected the request. Check the Model setting, and the optional Temperature and MaxOutputTokens settings. Try again."
+    | ServiceError.ErrorStatus _ -> "The summary service answered with an error. Try again."
+    | ServiceError.Unreachable -> "The summary service could not be reached. Check that it is running and the Endpoint setting. Try again."
+    | ServiceError.TimedOut -> "The summary service took too long to answer. Try again."
+    | ServiceError.Redirected -> "The summary service redirected the request, which LexScholar does not follow. Check the Endpoint setting. Try again."
+    | ServiceError.UnusableOutput -> "The summary service did not give a usable answer. Try again."
 
 let private systemPrompt =
     "You summarize a document for a researcher. The text is split by page markers such as [Page 7]. "

@@ -139,5 +139,6 @@ let failureText (failure: Failure) : string =
     | NoText -> "This document has no readable text to summarize (for example, a scanned PDF without a text layer). Nothing was sent."
     | NotEnoughText -> "This document doesn't contain enough readable text for a summary."
     | TooManyPages -> "Documents of more than 100 pages aren't supported yet. Nothing was sent."
-    | ServiceFailed _ -> "The summary could not be produced. Please try again."
+    | ServiceFailed (Some detail) -> detail
+    | ServiceFailed None -> "The summary could not be produced. Please try again."
     | RequestFailed | ConfirmationRequired _ -> "The request failed. Please try again."

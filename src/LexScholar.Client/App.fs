@@ -206,7 +206,15 @@ module Api =
                        Summary.GeneratedAt = element.GetProperty("generatedAt").GetDateTimeOffset()
                        Summary.ServiceHost = element.GetProperty("serviceHost").GetString()
                        Summary.Model = element.GetProperty("model").GetString() })
-        | "failed" -> Some (Error (summaryFailure (element.GetProperty("code").GetString())))
+        | "failed" ->
+            match summaryFailure (element.GetProperty("code").GetString()) with
+            | Summary.ServiceFailed _ ->
+                let detail =
+                    match element.TryGetProperty "detail" with
+                    | true, value when value.ValueKind = JsonValueKind.String -> Some (value.GetString())
+                    | _ -> None
+                Some (Error (Summary.ServiceFailed detail))
+            | failure -> Some (Error failure)
         | _ -> None
 
     /// The progress an event reports, if it is one.
@@ -522,8 +530,10 @@ module private Ui =
                         " "
                         button { attr.``type`` "button"; attr.``class`` "send-cancel"; on.click (fun _ -> dispatch Summary.CancelSend); "Cancel" }
                     }
-                | Summary.Idle | Summary.Failed _ ->
+                | Summary.Idle ->
                     button { attr.``type`` "button"; on.click (fun _ -> dispatch Summary.Summarize); "Summarize" }
+                | Summary.Failed _ ->
+                    button { attr.``type`` "button"; attr.``class`` "summary-retry"; on.click (fun _ -> dispatch Summary.Summarize); "Try again" }
             cond summary.State <| function
                 | Summary.Failed failure -> p { attr.``class`` "error"; "role" => "alert"; text (summaryFailureText failure) }
                 | _ -> empty ()
