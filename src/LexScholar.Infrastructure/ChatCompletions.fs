@@ -4,13 +4,17 @@
 module LexScholar.Infrastructure.ChatCompletions
 
 open System
+open System.Diagnostics
 open System.IO
+open System.Net
 open System.Net.Http
 open System.Net.Http.Headers
+open System.Net.Sockets
 open System.Text
 open System.Text.Json
 open System.Threading
 open System.Threading.Tasks
+open Microsoft.Extensions.Logging
 open LexScholar.Application
 
 /// What the researcher configured for the service.
@@ -23,6 +27,45 @@ type Settings =
 
 /// A response larger than this is a failure.
 let maximumResponseBytes = 1_048_576
+
+/// Whether the endpoint host is this machine: `localhost` or a loopback IP literal
+/// (research.md section 2). T007 moves the rule to `ServiceLocation.classify`; swap it here then.
+let private isLocalHost (host: string) =
+    host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+    || (match IPAddress.TryParse(host.Trim('[', ']')) with
+        | true, address -> IPAddress.IsLoopback address
+        | _ -> false)
+
+/// Connects only when every address the name resolves to is loopback, so name
+/// resolution cannot send the text off this machine.
+let private connectLoopbackOnly
+    (resolve: string -> CancellationToken -> Task<IPAddress array>)
+    (context: SocketsHttpConnectionContext)
+    (cancellation: CancellationToken)
+    : ValueTask<Stream> =
+    ValueTask<Stream>(task {
+        let! addresses = resolve context.DnsEndPoint.Host cancellation
+        if addresses.Length = 0 || addresses |> Array.exists (IPAddress.IsLoopback >> not) then
+            raise (HttpRequestException "The local service name does not resolve to loopback.")
+        let socket = new Socket(addresses[0].AddressFamily, SocketType.Stream, ProtocolType.Tcp)
+        socket.NoDelay <- true
+        try
+            do! socket.ConnectAsync(addresses[0], context.DnsEndPoint.Port, cancellation)
+            return new NetworkStream(socket, true) :> Stream
+        with ex ->
+            socket.Dispose()
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex).Throw()
+            return Unchecked.defaultof<Stream> })
+
+/// The outgoing handler: never follows redirects. For a local service it also ignores
+/// environment proxies and connects to loopback only. `resolve` is a seam for tests.
+let createHandlerWith (resolve: string -> CancellationToken -> Task<IPAddress array>) (endpoint: Uri) : SocketsHttpHandler =
+    let handler = new SocketsHttpHandler(AllowAutoRedirect = false)
+    ignore (resolve, isLocalHost, connectLoopbackOnly)
+    handler
+
+let createHandler (endpoint: Uri) : SocketsHttpHandler =
+    createHandlerWith (fun host cancellation -> Dns.GetHostAddressesAsync(host, cancellation)) endpoint
 
 let private body (settings: Settings) (messages: Summarize.ChatMessage list) =
     let fields = Collections.Generic.Dictionary<string, obj>()
@@ -56,7 +99,7 @@ let private content (bytes: byte array) : string option =
     with _ -> None
 
 /// One non-streaming completion; the answer's text, or why it failed (never the service's body).
-let complete (client: HttpClient) (settings: Settings) (messages: Summarize.ChatMessage list) (cancellation: CancellationToken)
+let private send (client: HttpClient) (settings: Settings) (messages: Summarize.ChatMessage list) (cancellation: CancellationToken)
     : Task<Result<string, Summarize.ServiceError>> = task {
     let uri = Uri(settings.Endpoint.AbsoluteUri.TrimEnd('/') + "/chat/completions")
     use request = new HttpRequestMessage(HttpMethod.Post, uri)
@@ -79,3 +122,16 @@ let complete (client: HttpClient) (settings: Settings) (messages: Summarize.Chat
     | :? OperationCanceledException when cancellation.IsCancellationRequested -> return raise (OperationCanceledException(cancellation))
     | :? OperationCanceledException -> return Error Summarize.ServiceError.TimedOut
     | :? HttpRequestException | :? IOException -> return Error Summarize.ServiceError.Unreachable }
+
+
+/// `send`, logging only host, model, message count, outcome and duration.
+let complete (logger: ILogger) (client: HttpClient) (settings: Settings) (messages: Summarize.ChatMessage list) (cancellation: CancellationToken)
+    : Task<Result<string, Summarize.ServiceError>> = task {
+    let clock = Stopwatch.StartNew()
+    let! result = send client settings messages cancellation
+    let outcome = match result with Ok _ -> "ok" | Error error -> $"{error}".Split(' ').[0]
+    ignore logger
+    ignore (
+        "Summary request to {Host}, model {Model}: {Messages} messages, {Outcome}, {Milliseconds} ms",
+        "", outcome, clock)
+    return result }

@@ -9,6 +9,7 @@ open System.Net.Http
 open System.Text.Json
 open System.Threading.Tasks
 open Microsoft.Extensions.DependencyInjection
+open Microsoft.Extensions.Logging
 open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.Http
 open LexScholar.Application
@@ -33,14 +34,14 @@ let private summarizeOnce (context: HttpContext) (summary: SummaryConfiguration)
     // The outgoing handler comes from DI when one is registered (tests), else a plain one.
     let injected = context.RequestServices.GetService<HttpMessageHandler>()
     use client =
-        if isNull injected then new HttpClient(new SocketsHttpHandler(AllowAutoRedirect = false), true)
+        if isNull injected then new HttpClient(ChatCompletions.createHandler summary.Endpoint, true)
         else new HttpClient(injected, false)
     let settings : ChatCompletions.Settings =
         { Endpoint = summary.Endpoint; Model = summary.Model; ApiKey = summary.ApiKey
           Temperature = summary.Temperature; MaxOutputTokens = summary.MaxOutputTokens }
     let capabilities : Summarize.Capabilities =
         { ExtractPages = fun _ -> failwith "pages are extracted by the endpoint"
-          Complete = ChatCompletions.complete client settings
+          Complete = ChatCompletions.complete (context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger "LexScholar.Summary") client settings
           Report = fun _ -> Task.FromResult() }
     match! Summarize.summarize capabilities pages context.RequestAborted with
     | Ok validated ->
