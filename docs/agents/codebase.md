@@ -10,10 +10,10 @@ Dependency direction: Domain ← Application ← Infrastructure ← Server. The 
 
 | Project | Owns | Key files |
 |---|---|---|
-| `src/LexScholar.Domain` | Pure types and rules, no I/O | `Projects.fs` (`ResearchProject`, `ProjectName`), `Documents.fs` (`LibraryDocument`, `ProjectDocument`, `DocumentRole`) |
-| `src/LexScholar.Application` | Workflows over capability functions, contract views | `Contracts.fs` (views, `ImportLimits`, rejections), `Ports.fs` + `Capabilities.fs` (capability function types), `Projects.fs`, `Library.fs`, `DocumentRoles.fs` (workflows with a `Store` record), `ImportDocument.fs` (the import pipeline) |
+| `src/LexScholar.Domain` | Pure types and rules, no I/O | `Projects.fs` (`ResearchProject`, `ProjectName`), `Documents.fs` (`LibraryDocument`, `ProjectDocument`, `DocumentRole`), `Summaries.fs` (F003 types: `PageText`, `SummaryPoint`, `DocumentSummary`) |
+| `src/LexScholar.Application` | Workflows over capability functions, contract views | `Contracts.fs` (views, `ImportLimits`, rejections), `Ports.fs` + `Capabilities.fs` (capability function types), `Projects.fs`, `Library.fs`, `DocumentRoles.fs` (workflows with a `Store` record), `ImportDocument.fs` (the import pipeline), `Summarize.fs` (F003 capabilities `Capabilities`, failures) |
 | `src/LexScholar.Infrastructure` | SQLite (EF Core), files, PDF parsing | `WorkspaceDb.fs` (rows, `DbContext`, `initialize`), `Migrations/`, `ProjectRepository.fs`, `LibraryRepository.fs`, `DocumentStore.fs` (staging/originals/quarantine), `PdfValidator.fs` (PdfPig), `StorageCleanup.fs` (startup recovery), `VerifiedDocumentContent.fs`, `DataDirectoryLock.fs` (`flock`) |
-| `src/LexScholar.Server` | ASP.NET Core host and HTTP endpoints | `Program.fs` (startup order), `Configuration.fs`, `HostSecurity.fs`, `Errors.fs`, `ProjectEndpoints.fs`, `LibraryEndpoints.fs`, `ReaderEndpoints.fs`, `Endpoints.fs` (registers them) |
+| `src/LexScholar.Server` | ASP.NET Core host and HTTP endpoints | `Program.fs` (startup order), `Configuration.fs` (incl. optional `Summary` section, F003), `HostSecurity.fs`, `Errors.fs`, `ProjectEndpoints.fs`, `LibraryEndpoints.fs`, `ReaderEndpoints.fs`, `SummaryEndpoints.fs` (F003), `Endpoints.fs` (registers them) |
 | `src/LexScholar.Client` | Bolero/Elmish WebAssembly UI | `Projects.fs`, `Library.fs`, `Reader.fs` (pure state machines), `App.fs` (HTTP `Api`, effect interpretation, view) |
 
 HTTP routes are listed in `specs/001-research-workspace/quickstart.md` ("HTTP routes") and specified in `contracts/http-api.yaml`.
@@ -103,6 +103,7 @@ Import (`ImportDocument.create`, `POST /api/documents`): stage at most MaxBytes 
 - **Run tests with `scripts/check.sh <Txxx>`** (see AGENTS.md). Tag every test `[<Fact; Trait("Task", "Txxx")>]`.
 - In-process host: `use harness = TestHarness.Start()` gives `harness.Client` (an `HttpClient`) and `harness.Root` (a temporary data directory). Options: `settings` (config overrides), `serveClient = true` for browser tests, `workspace` to reuse a `TemporaryWorkspace` across restarts.
 - Unsafe requests in contract tests need `GET /api/antiforgery`, then the `X-CSRF-TOKEN` header and an `Origin` header; copy the `token`/`request`/`send` helpers at the top of `LibraryContractTests.fs`.
+- Summary service (F003): `FakeChatService(script)` is an `HttpMessageHandler` that records requests and answers from a script (`Reply`, `Status`, `WaitUntilCancelled`); `TestHarness.Start(summaryHandler = fake, settings = [ "LexScholar:Summary:Endpoint", ...; "LexScholar:Summary:Model", ... ])`. Reference PDFs: `tests/Fixtures/summary/` (see its README entry in `tests/Fixtures/README.md`, regenerate with `scripts/make-summary-fixtures.fsx`).
 - Real child process (locks, startup failures): `ProcessHarness.HostProcess.Start(root, overrides)`.
 - State tests: drive `update` with messages and assert on the model and the returned effect; see `LibraryStateTests.fs` for helpers (`step`, `assertState`, request-number extractors).
 - Browser journeys: Playwright's auto-waiting `Assertions.Expect(...)`, never sleeps; helpers at the top of `ReaderJourneyTests.fs`.

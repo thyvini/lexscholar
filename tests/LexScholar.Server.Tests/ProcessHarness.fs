@@ -34,6 +34,7 @@ let private startupErrorCode = function
     | Program.ConfigurationFailure (InvalidLimit (name, _)) -> "InvalidLimit:" + name
     | Program.ConfigurationFailure (NonPositiveLimit name) -> "NonPositiveLimit:" + name
     | Program.ConfigurationFailure (InvalidDataDirectory _) -> "InvalidDataDirectory"
+    | Program.ConfigurationFailure (InvalidSummarySetting (key, _)) -> "InvalidSummarySetting:" + key
     | Program.LockFailure (DirectoryAlreadyInUse _) -> "DirectoryAlreadyInUse"
     | Program.InvalidPort _ -> "InvalidPort"
 
