@@ -148,3 +148,37 @@ let ``confirm and cancel do nothing unless a confirmation is open, and a reader 
     let moved, movedEffect = update (ReaderChanged (Some project, Some (Guid.NewGuid()))) confirming
     assertState Idle moved.State
     assertState None movedEffect
+
+let private generating = update Summarize reading |> fst
+
+[<Fact; Trait("Task", "T008")>]
+let ``dismissing a running request cancels it and drops its late events`` () =
+    let model, effect = update Dismiss generating
+    assertState Idle model.State
+    assertState (Some (Cancel 1)) effect
+    let late, lateEffect = update (Responded (1, Ok generated)) model
+    assertState Idle late.State
+    assertState None lateEffect
+    let progressed, _ = update (Progressed (1, Combining)) model
+    assertState None progressed.Progress
+
+[<Fact; Trait("Task", "T008")>]
+let ``changing document or project cancels the running request`` () =
+    let otherDocument, effect = update (ReaderChanged (Some project, Some (Guid.NewGuid()))) generating
+    assertState Idle otherDocument.State
+    assertState (Some (Cancel 1)) effect
+    let otherProject, effect2 = update (ReaderChanged (Some (Guid.NewGuid()), None)) generating
+    assertState Idle otherProject.State
+    assertState (Some (Cancel 1)) effect2
+    let late, _ = update (Responded (1, Ok generated)) otherDocument
+    assertState Idle late.State
+
+[<Fact; Trait("Task", "T008")>]
+let ``a second request for the same document is ignored while one runs, and dismissing outside a request cancels nothing`` () =
+    let again, effect = update Summarize generating
+    assertState generating again
+    assertState None effect
+    let _, idleDismiss = update Dismiss reading
+    assertState None idleDismiss
+    let _, confirmingDismiss = update Dismiss confirming
+    assertState None confirmingDismiss

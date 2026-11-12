@@ -224,9 +224,9 @@ module Api =
 
     /// Requests a summary and reads the NDJSON stream until its one `summary` or
     /// `failed` event. Failures never show response details.
-    let summarize (http: HttpClient) (projectId: Guid) (documentId: Guid) (confirmed: Summary.Confirmed option) (onProgress: Summary.Progress -> unit) = async {
+    let summarize (http: HttpClient) (projectId: Guid) (documentId: Guid) (confirmed: Summary.Confirmed option) (onProgress: Summary.Progress -> unit) (cancellation: Threading.CancellationToken) = async {
         try
-            use! tokenResponse = http.GetAsync("api/antiforgery") |> Async.AwaitTask
+            use! tokenResponse = http.GetAsync("api/antiforgery", cancellation) |> Async.AwaitTask
             if not tokenResponse.IsSuccessStatusCode then return Error Summary.RequestFailed
             else
                 let! tokenBody = tokenResponse.Content.ReadAsStringAsync() |> Async.AwaitTask
@@ -235,7 +235,7 @@ module Api =
                 request.Headers.Add("X-CSRF-TOKEN", tokenJson.RootElement.GetProperty("requestToken").GetString())
                 request.Content <- new StringContent(summaryBody confirmed, Encoding.UTF8, "application/json")
                 request.SetBrowserResponseStreamingEnabled(true) |> ignore
-                use! response = http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead) |> Async.AwaitTask
+                use! response = http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellation) |> Async.AwaitTask
                 if not response.IsSuccessStatusCode then
                     let! body = response.Content.ReadAsStringAsync() |> Async.AwaitTask
                     return Error (confirmationOrFailure body)
@@ -243,7 +243,7 @@ module Api =
                     use! stream = response.Content.ReadAsStreamAsync() |> Async.AwaitTask
                     use reader = new IO.StreamReader(stream)
                     let rec next () = async {
-                        match! reader.ReadLineAsync() |> Async.AwaitTask with
+                        match! reader.ReadLineAsync(cancellation).AsTask() |> Async.AwaitTask with
                         | null -> return Error Summary.RequestFailed
                         | line when String.IsNullOrWhiteSpace line -> return! next ()
                         | line ->
@@ -308,18 +308,34 @@ module private Ui =
             state, Cmd.OfAsync.perform (fun () -> Api.changeRole http projectId documentId role) () (fun result -> ReaderMsg (Reader.RoleChanged (projectId, result)))
         | None -> state, Cmd.none
 
+    /// The requests in flight, by request number, so a `Cancel` effect can abort the fetch (FR-009).
+    let private running = Collections.Generic.Dictionary<int, Threading.CancellationTokenSource>()
+
+    let private summaryCommand http (effect: Summary.Effect option) : Cmd<Msg> =
+        match effect with
+        | Some (Summary.Send (request, projectId, documentId, confirmed)) ->
+            let source = new Threading.CancellationTokenSource()
+            running[request] <- source
+            Cmd.ofEffect (fun dispatch ->
+                Async.StartImmediate(async {
+                    let! result = Api.summarize http projectId documentId confirmed (fun progress -> dispatch (SummaryMsg (Summary.Progressed (request, progress)))) source.Token
+                    running.Remove request |> ignore
+                    source.Dispose()
+                    dispatch (SummaryMsg (Summary.Responded (request, result))) }))
+        | Some (Summary.Cancel request) ->
+            match running.TryGetValue request with
+            | true, source -> source.Cancel()
+            | _ -> ()
+            Cmd.none
+        | None -> Cmd.none
+
     let private updateCore http msg state =
         match msg with
         | SummaryMsg message ->
             let summary, effect = Summary.update message state.Summary
             { state with Summary = summary },
             match effect with
-            | Some (Summary.Send (request, projectId, documentId, confirmed)) ->
-                Cmd.ofEffect (fun dispatch ->
-                    Async.StartImmediate(async {
-                        let! result = Api.summarize http projectId documentId confirmed (fun progress -> dispatch (SummaryMsg (Summary.Progressed (request, progress))))
-                        dispatch (SummaryMsg (Summary.Responded (request, result))) }))
-            | None -> Cmd.none
+            | effect -> summaryCommand http effect
         | ProjectsMsg message ->
             let projects, effect = Projects.update message state.Projects
             let state = { state with Projects = projects }
@@ -343,7 +359,8 @@ module private Ui =
     /// The summary follows the reader's project and open document after every message.
     let update http msg state =
         let state, command = updateCore http msg state
-        { state with Summary = Summary.followReader state.Reader state.Summary }, command
+        let summary, effect = Summary.followReader state.Reader state.Summary
+        { state with Summary = summary }, Cmd.batch [ command; summaryCommand http effect ]
 
     let errorText = function
         | InvalidName -> "Enter a project name that is not blank."

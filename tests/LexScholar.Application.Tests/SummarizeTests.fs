@@ -144,3 +144,16 @@ let ``a combined point citing a page outside its group is omitted`` () =
         Assert.DoesNotContain(result.Points, fun p -> p.Pages |> List.contains 99)
         Assert.True(result.Omitted >= 1)
     | Error failure -> failwith $"expected Ok, got {failure}"
+
+[<Fact; Trait("Task", "T008")>]
+let ``a request cancelled between service calls starts no further call`` () =
+    let sent = List()
+    use source = new CancellationTokenSource()
+    let capabilities : Summarize.Capabilities =
+        { ExtractPages = fun _ -> failwith "not used"
+          // The first call answers validly and abandons the request; the capability itself ignores the token.
+          Complete = fun messages _ -> sent.Add messages; source.Cancel(); Task.FromResult (Ok (pointsJson [ "point", [ 1 ] ]))
+          Report = fun _ -> Task.FromResult() }
+    let run () = (Summarize.summarize capabilities 250 longPages source.Token).GetAwaiter().GetResult()
+    Assert.ThrowsAny<OperationCanceledException>(fun () -> run () |> ignore) |> ignore
+    Assert.Equal(1, sent.Count)

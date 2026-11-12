@@ -332,3 +332,26 @@ let ``a local service ignores confirmSend`` (body: string) =
     Assert.Equal(HttpStatusCode.OK, status)
     Assert.Contains("\"type\":\"summary\"", text)
     Assert.Single(fake.Requests) |> ignore
+
+[<Fact; Trait("Task", "T008")>]
+let ``an aborted request cancels the service call and sends no further request`` () =
+    // First map call answers, the second waits; the client then abandons the request.
+    let fake = new FakeChatService(fun n -> if n = 1 then Reply """{"points":[{"text":"Main idea","pages":[1]}]}""" else WaitUntilCancelled)
+    let run () =
+        use harness = TestHarness.Start(settings = settings, summaryHandler = fake)
+        let project = seedProject harness.Root
+        let document = import harness.Client "long-40.pdf"
+        associate harness.Client project document
+        use abandon = new Threading.CancellationTokenSource()
+        use message = new HttpRequestMessage(HttpMethod.Post, $"/api/projects/{project}/documents/{document}/summary")
+        message.Headers.TryAddWithoutValidation("Origin", harness.Client.BaseAddress.GetLeftPart(UriPartial.Authority)) |> ignore
+        message.Headers.TryAddWithoutValidation("X-CSRF-TOKEN", token harness.Client) |> ignore
+        message.Content <- new StringContent("""{"confirmSend":false}""", Encoding.UTF8, "application/json")
+        let response = harness.Client.Send(message, HttpCompletionOption.ResponseHeadersRead, abandon.Token)
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode)
+        fake.Waiting.WaitAsync(TimeSpan.FromSeconds 30.).GetAwaiter().GetResult()
+        abandon.Cancel()
+        response.Dispose()
+        fake.Cancelled.WaitAsync(TimeSpan.FromSeconds 30.).GetAwaiter().GetResult()
+    run () // disposing the host waits for the request to end
+    Assert.Equal(2, fake.Requests.Length)

@@ -63,7 +63,10 @@ type Message =
 /// The service the researcher confirmed, as the dialog showed it.
 type Confirmed = { Host: string; Model: string }
 
-type Effect = Send of request: int * project: Guid * document: Guid * confirmed: Confirmed option
+type Effect =
+    | Send of request: int * project: Guid * document: Guid * confirmed: Confirmed option
+    /// Abandon the running request: its fetch is aborted and the server stops (FR-009).
+    | Cancel of request: int
 
 let initial = { Project = None; Document = None; State = Idle; Progress = None; Request = 0 }
 
@@ -71,6 +74,9 @@ let update (message: Message) (model: Model) : Model * Effect option =
     // A late result is dropped because only `Generating request` accepts its own number,
     // and every new request takes a fresh one.
     let reset model = { model with State = Idle; Progress = None }
+    // Leaving a running request aborts it (FR-009); other states have nothing in flight.
+    let abandon model =
+        reset model, (match model.State with Generating request -> Some (Cancel request) | _ -> None)
     match message with
     | Summarize ->
         match model.Project, model.Document, model.State with
@@ -78,7 +84,7 @@ let update (message: Message) (model: Model) : Model * Effect option =
             let request = model.Request + 1
             { model with State = Generating request; Progress = None; Request = request }, Some (Send (request, project, document, None))
         | _ -> model, None
-    | Dismiss -> reset model, None
+    | Dismiss -> abandon model
     | ConfirmSend ->
         match model.Project, model.Document, model.State with
         | Some project, Some document, Confirming (host, name) ->
@@ -98,12 +104,13 @@ let update (message: Message) (model: Model) : Model * Effect option =
         | Error (ConfirmationRequired (host, name)) -> { model with State = Confirming (host, name); Progress = None }, None
         | Error failure -> { model with State = Failed failure; Progress = None }, None
     | ReaderChanged (project, document) when (project, document) <> (model.Project, model.Document) ->
-        { reset model with Project = project; Document = document }, None
+        let abandoned, effect = abandon model
+        { abandoned with Project = project; Document = document }, effect
     | _ -> model, None
 
-/// Follows the reader's project and open document.
-let followReader (reader: Reader.Model) (model: Model) : Model =
-    update (ReaderChanged (reader.Project, reader.Open |> Option.map (fun document -> document.Id))) model |> fst
+/// Follows the reader's project and open document; leaving a running request's document cancels it.
+let followReader (reader: Reader.Model) (model: Model) : Model * Effect option =
+    update (ReaderChanged (reader.Project, reader.Open |> Option.map (fun document -> document.Id))) model
 
 /// Page numbers as ranges for the context line: "pages 1–3, 5" (a single page is "page 5").
 let pageRanges (pages: int list) : string =

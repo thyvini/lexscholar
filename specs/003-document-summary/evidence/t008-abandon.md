@@ -1,0 +1,16 @@
+# T008 abandon on dismiss, document change or project change (risky: concurrency)
+
+- RED: `scripts/check.sh T008` at the RED commit: 4 total, 2 failed. Dismiss and reader change while generating returned `None` where `Some (Cancel 1)` was expected. The contract test and the "second request ignored" test already held (the token was already passed to every service call by T006; `Summarize` already ignored a request while one ran).
+- GREEN: `scripts/check.sh T008`: `Tests: 4 total, 0 failed, 0 skipped.`
+- CI: full suite on the PR (see PR checks).
+
+## Decisions and limits
+
+- Client: `Summary.update` emits `Cancel request` when Dismiss or a reader change leaves a `Generating` state; `followReader` now returns that effect. `App.fs` keeps the `CancellationTokenSource` per request number and passes its token to the antiforgery call, the send and the line reads. Late events are dropped by the existing request-number match. Cancelling from `Confirming` has no request to abort.
+- Server: the aborted request ends with an information log naming only the document id; `ask` throws on a cancelled token before any service call, so no further chunk is sent whatever the capability does with the token.
+- Contract test uses handshakes on the fake (`Waiting`, `Cancelled`), no sleeps; it checks the fake saw the cancellation and received exactly two requests after the host stopped.
+- Sensitivity check (behaviour already existed): with the endpoint's `summarize` call given `CancellationToken.None` (temporary, uncommitted), the contract test failed with a timeout waiting for the fake to see the cancellation; reverted, 4 pass.
+- Not covered: the log line is not asserted (the harness has no log capture for the endpoint); the browser `fetch` abort itself is exercised only by manual validation (T012). The combine round cap (Greptile P2 from T006) still has no test: reaching it needs a service that shrinks the points by one per round, not cheap here.
+- Greptile P2 (cancellation guard in `ask` untested): must fix, cheap. Application test where `Complete` answers validly, cancels the token and ignores it; expects cancellation and one call only. Sensitivity: with the `ThrowIfCancellationRequested` line removed (uncommitted) it failed (`No exception was thrown`); restored, `scripts/check.sh T008`: 5 total, 0 failed.
+- GPT P2 (abandonment during PDF extraction or body reading is not logged): accepted risk. Those steps make no service call and send nothing; only the cancelled service call is logged.
+- GPT P2 (second-request guard test covers existing behaviour): sensitivity check done. With `Generating _` added to the states `Summarize` accepts in `Summary.fs` (temporary, uncommitted), `scripts/check.sh T008` failed the test (state moved to `Generating 2` instead of staying `Generating 1`): 5 total, 1 failed; reverted, 5 pass.
