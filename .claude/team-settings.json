@@ -2,6 +2,7 @@
   "env": {
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
   },
+  "subagentPromptCacheTtl": "1h",
   "permissions": {
     "defaultMode": "acceptEdits",
     "allow": [
@@ -27,6 +28,7 @@
       "Bash(git push --force-with-lease -u origin test/*)",
       "Bash(git push --force-with-lease -u origin docs/*)",
       "Bash(git push --force-with-lease -u origin chore/*)",
+      "Bash(git push --force-with-lease -u origin ci/*)",
       "Bash(gh pr *)",
       "Bash(gh api repos/thyvini/lexscholar/*)",
       "Bash(gh api 'repos/thyvini/lexscholar/*)"
