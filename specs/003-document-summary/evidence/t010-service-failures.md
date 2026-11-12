@@ -23,3 +23,6 @@ Tests that cover behaviour that already existed: breaking the cancellation arm i
 ## Greptile (2 x P2)
 - Stalling test server never ended its connection: must fix, done (cancelled on dispose).
 - No browser coverage of the parsed `detail` and the "Try again" button: must fix, added a Chromium/Firefox journey (400 first, then a summary); `scripts/check.sh T010` -> 25 total, 0 failed.
+
+## GPT review (1 x P2)
+Stalled test server's disposal could hang if the client never connected or left early: must fix, done. The stop token now also cancels the accept, header read and write, and the listener is stopped before the loop is awaited.

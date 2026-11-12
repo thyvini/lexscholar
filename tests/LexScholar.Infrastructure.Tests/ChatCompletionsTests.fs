@@ -148,15 +148,15 @@ type private StallingBodyServer() =
     let loop =
         task {
             try
-                use! client = listener.AcceptTcpClientAsync()
+                use! client = listener.AcceptTcpClientAsync(stop.Token)
                 let stream = client.GetStream()
                 let buffer = Array.zeroCreate<byte> 65536
                 let mutable text = ""
                 while not (text.Contains "\r\n\r\n") do
-                    let! n = stream.ReadAsync(buffer, 0, buffer.Length)
+                    let! n = stream.ReadAsync(buffer, 0, buffer.Length, stop.Token)
                     text <- text + Encoding.UTF8.GetString(buffer, 0, n)
                 let head = Encoding.UTF8.GetBytes "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 500\r\n\r\n{\"choices\""
-                do! stream.WriteAsync(head, 0, head.Length)
+                do! stream.WriteAsync(head, 0, head.Length, stop.Token)
                 do! Task.Delay(Timeout.Infinite, stop.Token)
             with _ -> () }
     member _.Port = (listener.LocalEndpoint :?> IPEndPoint).Port
@@ -164,9 +164,10 @@ type private StallingBodyServer() =
     interface IDisposable with
         // Ends the stalled connection so the accepted socket is closed with the fixture.
         member _.Dispose() =
+            // Cancelling ends the accept, the header read and the stall, whatever the client did.
             stop.Cancel()
-            loop.GetAwaiter().GetResult()
             listener.Stop()
+            loop.GetAwaiter().GetResult()
             stop.Dispose()
 
 [<Fact; Trait("Task", "T010")>]
