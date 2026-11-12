@@ -10,6 +10,7 @@ open Bolero.Html
 open Elmish
 open Microsoft.AspNetCore.Components
 open Microsoft.AspNetCore.Components.Forms
+open Microsoft.AspNetCore.Components.WebAssembly.Http
 open LexScholar.Domain
 open LexScholar.Client.Projects
 
@@ -162,13 +163,83 @@ module Api =
             | Library.InvalidRole -> Reader.InvalidRole
             | _ -> Reader.RequestFailed) }
 
-/// The whole page: projects, shared library and native reader.
-type State = { Projects: Model; Library: Library.Model; Reader: Reader.Model }
+    let private summaryFailure (code: string) =
+        match code with
+        | "summary_service_not_configured" -> Summary.NotConfigured
+        | "document_unavailable" -> Summary.Unavailable
+        | "no_text" -> Summary.NoText
+        | "not_enough_text" -> Summary.NotEnoughText
+        | "too_many_pages" -> Summary.TooManyPages
+        | "service_failed" -> Summary.ServiceFailed
+        | _ -> Summary.RequestFailed
+
+    let private problemCode (body: string) =
+        try
+            use json = JsonDocument.Parse(body)
+            json.RootElement.GetProperty("code").GetString()
+        with _ -> ""
+
+    let private summaryEvent (element: JsonElement) : Result<Summary.Generated, Summary.Failure> option =
+        let pages (name: string) = element.GetProperty(name).EnumerateArray() |> Seq.map (fun page -> page.GetInt32()) |> Seq.toList
+        match element.GetProperty("type").GetString() with
+        | "summary" ->
+            Some (Ok { Summary.DocumentId = element.GetProperty("documentId").GetGuid()
+                       Summary.Points =
+                           element.GetProperty("points").EnumerateArray()
+                           |> Seq.map (fun point ->
+                               { Summary.Text = point.GetProperty("text").GetString()
+                                 Summary.Pages = point.GetProperty("pages").EnumerateArray() |> Seq.map (fun page -> page.GetInt32()) |> Seq.toList })
+                           |> Seq.toList
+                       Summary.PagesCovered = pages "pagesCovered"
+                       Summary.UnreadablePages = pages "unreadablePages"
+                       Summary.OmittedPoints = element.GetProperty("omittedPoints").GetInt32()
+                       Summary.GeneratedAt = element.GetProperty("generatedAt").GetDateTimeOffset()
+                       Summary.ServiceHost = element.GetProperty("serviceHost").GetString()
+                       Summary.Model = element.GetProperty("model").GetString() })
+        | "failed" -> Some (Error (summaryFailure (element.GetProperty("code").GetString())))
+        // Progress events arrive here too; the panel does not show them yet.
+        | _ -> None
+
+    /// Requests a summary and reads the NDJSON stream until its one `summary` or
+    /// `failed` event. Failures never show response details.
+    let summarize (http: HttpClient) (projectId: Guid) (documentId: Guid) = async {
+        try
+            use! tokenResponse = http.GetAsync("api/antiforgery") |> Async.AwaitTask
+            if not tokenResponse.IsSuccessStatusCode then return Error Summary.RequestFailed
+            else
+                let! tokenBody = tokenResponse.Content.ReadAsStringAsync() |> Async.AwaitTask
+                use tokenJson = JsonDocument.Parse(tokenBody)
+                use request = new HttpRequestMessage(HttpMethod.Post, $"api/projects/{projectId:D}/documents/{documentId:D}/summary")
+                request.Headers.Add("X-CSRF-TOKEN", tokenJson.RootElement.GetProperty("requestToken").GetString())
+                request.Content <- new StringContent("""{"confirmSend":false}""", Encoding.UTF8, "application/json")
+                request.SetBrowserResponseStreamingEnabled(true) |> ignore
+                use! response = http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead) |> Async.AwaitTask
+                if not response.IsSuccessStatusCode then
+                    let! body = response.Content.ReadAsStringAsync() |> Async.AwaitTask
+                    return Error (summaryFailure (problemCode body))
+                else
+                    use! stream = response.Content.ReadAsStreamAsync() |> Async.AwaitTask
+                    use reader = new IO.StreamReader(stream)
+                    let rec next () = async {
+                        match! reader.ReadLineAsync() |> Async.AwaitTask with
+                        | null -> return Error Summary.RequestFailed
+                        | line when String.IsNullOrWhiteSpace line -> return! next ()
+                        | line ->
+                            use json = JsonDocument.Parse(line)
+                            match summaryEvent json.RootElement with
+                            | Some outcome -> return outcome
+                            | None -> return! next () }
+                    return! next ()
+        with _ -> return Error Summary.RequestFailed }
+
+/// The whole page: projects, shared library, native reader and its summary.
+type State = { Projects: Model; Library: Library.Model; Reader: Reader.Model; Summary: Summary.Model }
 
 type Msg =
     | ProjectsMsg of Message
     | LibraryMsg of Library.Message
     | ReaderMsg of Reader.Message
+    | SummaryMsg of Summary.Message
 
 module private Ui =
     let command http = function
@@ -213,8 +284,16 @@ module private Ui =
             state, Cmd.OfAsync.perform (fun () -> Api.changeRole http projectId documentId role) () (fun result -> ReaderMsg (Reader.RoleChanged (projectId, result)))
         | None -> state, Cmd.none
 
-    let update http msg state =
+    let private updateCore http msg state =
         match msg with
+        | SummaryMsg message ->
+            let summary, effect = Summary.update message state.Summary
+            { state with Summary = summary },
+            match effect with
+            | Some (Summary.Send (request, projectId, documentId)) ->
+                Cmd.OfAsync.perform (fun () -> Api.summarize http projectId documentId) ()
+                    (fun result -> SummaryMsg (Summary.Responded (request, result)))
+            | None -> Cmd.none
         | ProjectsMsg message ->
             let projects, effect = Projects.update message state.Projects
             let state = { state with Projects = projects }
@@ -234,6 +313,11 @@ module private Ui =
             else state, projectCommand
         | LibraryMsg message -> updateLibrary http message state
         | ReaderMsg message -> updateReader http message state
+
+    /// The summary follows the reader's project and open document after every message.
+    let update http msg state =
+        let state, command = updateCore http msg state
+        { state with Summary = Summary.followReader state.Reader state.Summary }, command
 
     let errorText = function
         | InvalidName -> "Enter a project name that is not blank."
@@ -355,6 +439,77 @@ module private Ui =
             }
         }
 
+    let summaryFailureText = function
+        | Summary.NotConfigured ->
+            "Summaries need a summarization service. Set LexScholar:Summary:Endpoint and LexScholar:Summary:Model in the app's settings file, then restart LexScholar."
+        | Summary.Unavailable ->
+            "This document's stored file is missing, unreadable or not the recorded size. Its library record and project associations are unchanged."
+        | Summary.NoText -> "This document has no readable text to summarize (for example, a scanned PDF without a text layer). Nothing was sent."
+        | Summary.NotEnoughText -> "This document doesn't contain enough readable text for a summary."
+        | Summary.TooManyPages -> "Documents of more than 100 pages aren't supported yet. Nothing was sent."
+        | Summary.ServiceFailed -> "The summary could not be produced. Please try again."
+        | Summary.RequestFailed -> "The request failed. Please try again."
+
+    /// The context needed to understand and reproduce a summary (FR-008).
+    let summaryContext (document: Reader.Document) (generated: Summary.Generated) =
+        let generatedAt = generated.GeneratedAt.LocalDateTime.ToString("yyyy-MM-dd HH:mm")
+        let unreadable =
+            if generated.UnreadablePages.IsEmpty then ""
+            else $" Not readable (no text layer): {Summary.pageRanges generated.UnreadablePages}."
+        let omitted =
+            if generated.OmittedPoints = 0 then ""
+            else $" {generated.OmittedPoints} generated points were left out because their citations could not be verified."
+        $"{document.FileName}, covering {Summary.pageRanges generated.PagesCovered}.{unreadable} Generated {generatedAt} by {generated.Model} at {generated.ServiceHost}.{omitted}"
+
+    /// The summary controls and panel of the open document. Citations are plain
+    /// page-number buttons (`button.citation`, `data-page`) that later slices wire to the reader.
+    let summaryView (document: Reader.Document) (summary: Summary.Model) dispatch =
+        concat {
+            cond summary.State <| function
+                | Summary.Generating _ ->
+                    span {
+                        "role" => "status"
+                        "Summarizing… "
+                        button { attr.``type`` "button"; on.click (fun _ -> dispatch Summary.Dismiss); "Dismiss" }
+                    }
+                | Summary.Shown _ -> empty ()
+                | Summary.Idle | Summary.Failed _ ->
+                    button { attr.``type`` "button"; on.click (fun _ -> dispatch Summary.Summarize); "Summarize" }
+            cond summary.State <| function
+                | Summary.Failed failure -> p { attr.``class`` "error"; "role" => "alert"; text (summaryFailureText failure) }
+                | _ -> empty ()
+            cond summary.State <| function
+                | Summary.Shown generated ->
+                    section {
+                        attr.``class`` "summary"
+                        h3 { "Generated summary" }
+                        p {
+                            attr.``class`` "summary-label"
+                            strong { "Generated by an AI service for your review." }
+                            " It is not verified and not your own text. Check each point against the cited pages."
+                        }
+                        p { attr.``class`` "summary-context"; text (summaryContext document generated) }
+                        ul {
+                            attr.``class`` "summary-points"
+                            forEach generated.Points <| fun point ->
+                                li {
+                                    span { attr.``class`` "point-text"; text point.Text }
+                                    " "
+                                    forEach point.Pages <| fun page ->
+                                        button {
+                                            attr.``type`` "button"
+                                            attr.``class`` "citation"
+                                            "data-page" => string page
+                                            attr.title $"Page {page}"
+                                            text (string page)
+                                        }
+                                }
+                        }
+                        button { attr.``type`` "button"; on.click (fun _ -> dispatch Summary.Dismiss); "Dismiss" }
+                    }
+                | _ -> empty ()
+        }
+
     let view (state: State) dispatch =
         let model = state.Projects
         let busy = model.Busy.IsSome
@@ -431,6 +586,7 @@ module private Ui =
                         p { "Use your browser's PDF viewer controls to navigate pages." }
                         a { attr.href document.ContentUrl; "target" => "_blank"; "rel" => "noopener"; "Open in new tab" }
                         button { attr.``type`` "button"; on.click (fun _ -> dispatch' (ReaderMsg Reader.Close)); "Close" }
+                        summaryView document state.Summary (SummaryMsg >> dispatch')
                         iframe {
                             attr.``class`` "reader-frame"
                             "title" => document.FileName
@@ -449,7 +605,7 @@ type App() =
         let http = new HttpClient(BaseAddress = Uri(this.Navigation.BaseUri))
         let start _ =
             let library, libraryEffect = Library.update Library.LoadLibrary Library.initial
-            { Projects = { initial with Busy = Some Loading }; Library = library; Reader = Reader.initial },
+            { Projects = { initial with Busy = Some Loading }; Library = library; Reader = Reader.initial; Summary = Summary.initial },
             Cmd.batch [ Ui.command http Fetch |> Cmd.map ProjectsMsg
                         libraryEffect |> Option.map (Ui.libraryCommand http) |> Option.defaultValue Cmd.none ]
         Program.mkProgram start (Ui.update http) Ui.view
