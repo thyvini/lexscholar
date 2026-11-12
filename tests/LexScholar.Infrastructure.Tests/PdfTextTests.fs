@@ -79,3 +79,14 @@ let ``unknown, missing or resized originals are not found or unavailable`` () =
         File.SetUnixFileMode(path, UnixFileMode.UserRead ||| UnixFileMode.UserWrite)
         File.Delete(path)
         Assert.Equal(Error Summarize.ExtractionError.DocumentUnavailable, extract workspace document.Id))
+
+[<Fact; Trait("Task", "T002")>]
+let ``an original that cannot be parsed is reported unavailable, not thrown`` () =
+    withWorkspace (fun workspace ->
+        let document = import workspace "article-en.pdf"
+        let path = Path.Combine(DocumentStore.originalsDirectory workspace, document.StorageKey)
+        // Same length, so the availability check passes and parsing is what fails.
+        File.SetUnixFileMode(path, UnixFileMode.UserRead ||| UnixFileMode.UserWrite)
+        File.WriteAllBytes(path, Array.create (int document.ByteLength) (byte 'x'))
+        File.SetUnixFileMode(path, UnixFileMode.UserRead)
+        Assert.Equal(Error Summarize.ExtractionError.DocumentUnavailable, extract workspace document.Id))
