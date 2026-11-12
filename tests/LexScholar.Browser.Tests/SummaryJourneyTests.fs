@@ -98,3 +98,22 @@ let ``without a configured service the researcher is told how to configure one``
         let alert = page.GetByRole(AriaRole.Alert).Filter(LocatorFilterOptions(HasText = "LexScholar:Summary:Endpoint"))
         do! Assertions.Expect(alert).ToContainTextAsync("LexScholar:Summary:Model")
         do! Assertions.Expect(panel page).ToHaveCountAsync(0) })
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T005"); Trait("Category", "Browser")>]
+let ``selecting a citation shows the cited page in the reader, also when selected again`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use fake = new FakeChatService(Reply answer)
+        use harness = TestHarness.Start(serveClient = true, settings = settings, summaryHandler = fake)
+        let! page = openApp browser harness
+        do! arrange page
+        do! click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = "Summarize", Exact = true)))
+        let frame = page.Locator("iframe.reader-frame")
+        let citation = (panel page).Locator("button.citation[data-page='2']")
+        do! click citation
+        do! Assertions.Expect(frame).ToHaveAttributeAsync("src", Text.RegularExpressions.Regex("/content#page=2$"))
+        // Mark the current frame element; a re-created frame loses the mark.
+        let! _ = frame.EvaluateAsync("e => e.setAttribute('data-mark', 'old')")
+        do! Assertions.Expect(frame).ToHaveAttributeAsync("data-mark", "old")
+        do! click citation
+        do! Assertions.Expect(frame).Not.ToHaveAttributeAsync("data-mark", "old")
+        do! Assertions.Expect(frame).ToHaveAttributeAsync("src", Text.RegularExpressions.Regex("/content#page=2$")) })

@@ -22,6 +22,10 @@ type Model =
       Opening: Document option
       /// The document shown in the viewer.
       Open: Document option
+      /// The page a citation asked for, if any; the frame shows it.
+      Page: int option
+      /// Counts page requests so the frame is re-created even for a repeated page.
+      Navigation: int
       /// The document whose role is being changed; one change at a time.
       ChangingRole: Guid option
       /// Errors from a pending mutation on a previous project visit must not update this visit.
@@ -37,6 +41,8 @@ type Message =
     | Open of Document
     | ContentChecked of request: int * Result<unit, Failure>
     | Close
+    /// Show a cited page of the open document.
+    | ShowPage of int
     | ChangeRole of documentId: Guid * DocumentRole
     | RoleChanged of projectId: Guid * Result<unit, Failure>
 
@@ -47,7 +53,7 @@ type Effect =
     | RefreshProject
 
 let initial =
-    { Project = None; Opening = None; Open = None; ChangingRole = None; RoleStale = false; Error = None; CheckRequest = 0 }
+    { Project = None; Opening = None; Open = None; Page = None; Navigation = 0; ChangingRole = None; RoleStale = false; Error = None; CheckRequest = 0 }
 
 /// Maps an HTTP problem response to a failure; anything unexpected is a generic failure.
 let parseFailure (status: int) (body: string) : Failure =
