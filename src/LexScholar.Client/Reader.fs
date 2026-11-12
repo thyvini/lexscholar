@@ -69,7 +69,7 @@ let parseFailure (status: int) (body: string) : Failure =
 
 let update (message: Message) (model: Model) : Model * Effect option =
     let close model =
-        { model with Open = None; Opening = None; CheckRequest = model.CheckRequest + 1; Error = None }
+        { model with Open = None; Opening = None; Page = None; CheckRequest = model.CheckRequest + 1; Error = None }
     match message with
     | ActiveProjectChanged project when project <> model.Project ->
         { close model with Project = project; RoleStale = model.ChangingRole.IsSome }, None
@@ -78,13 +78,14 @@ let update (message: Message) (model: Model) : Model * Effect option =
         close model, None
     | Open document when model.Project.IsSome ->
         let request = model.CheckRequest + 1
-        { model with Opening = Some document; Open = None; Error = None; CheckRequest = request },
+        { model with Opening = Some document; Open = None; Page = None; Error = None; CheckRequest = request },
         Some (CheckContent (request, document.ContentUrl))
     | ContentChecked (request, result) when request = model.CheckRequest && model.Opening.IsSome ->
         match result with
         | Ok () -> { model with Open = model.Opening; Opening = None }, None
         | Error error -> { model with Opening = None; Error = Some error }, None
     | Close -> close model, None
+    | ShowPage page when model.Open.IsSome -> { model with Page = Some page; Navigation = model.Navigation + 1 }, None
     | ChangeRole (documentId, role) when model.Project.IsSome && model.ChangingRole.IsNone ->
         { model with ChangingRole = Some documentId; RoleStale = false; Error = None },
         Some (SendRole (model.Project.Value, documentId, role))
