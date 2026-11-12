@@ -25,39 +25,12 @@ type private TrackingReadStream(bytes: byte array) =
 
 let private stagingKey () = StagingKey (Guid.NewGuid())
 
-let private notImplemented<'a> () = Task.FromException<'a>(NotImplementedException())
-
 [<Fact; Trait("Task", "T011")>]
 let ``application contracts do not depend on host or infrastructure assemblies`` () =
-    let references = typeof<ProjectOperations>.Assembly.GetReferencedAssemblies() |> Array.map (fun name -> name.Name)
+    let references = typeof<Projects.Store>.Assembly.GetReferencedAssemblies() |> Array.map (fun name -> name.Name)
     let forbidden = [ "LexScholar.Infrastructure"; "LexScholar.Server"; "Microsoft.EntityFrameworkCore"; "Microsoft.Data.Sqlite"; "Microsoft.AspNetCore" ]
     for prefix in forbidden do
         Assert.False(references |> Array.exists (fun name -> name.StartsWith(prefix, StringComparison.Ordinal)), $"Application references {prefix}.")
-
-[<Fact; Trait("Task", "T011")>]
-let ``existing project and library capabilities remain individually consumable`` () =
-    use cancellation = new CancellationTokenSource()
-    let mutable projectToken = CancellationToken.None
-    let mutable libraryToken = CancellationToken.None
-    let projects : ProjectOperations =
-        { List = fun token -> projectToken <- token; Task.FromResult({ ActiveProjectId = None; Projects = [] })
-          Create = fun _ _ -> notImplemented<Project>()
-          Select = fun _ _ -> notImplemented<unit>() }
-    let library : LibraryOperations =
-        { List = fun token -> libraryToken <- token; Task.FromResult([])
-          Import = fun _ _ _ -> notImplemented<ImportResult>()
-          ListForProject = fun _ _ -> notImplemented<ProjectDocumentView list>()
-          Associate = fun _ _ _ _ -> notImplemented<ProjectDocumentView>()
-          ChangeRole = fun _ _ _ _ -> notImplemented<ProjectDocumentView>()
-          RemoveAssociation = fun _ _ _ -> notImplemented<unit>() }
-    let readProjects (list: CancellationToken -> Task<ProjectList>) = list cancellation.Token
-    let readLibrary (list: CancellationToken -> Task<Document list>) = list cancellation.Token
-    let projectList = readProjects projects.List |> fun result -> result.GetAwaiter().GetResult()
-    let documentList = readLibrary library.List |> fun result -> result.GetAwaiter().GetResult()
-    Assert.Empty(projectList.Projects)
-    Assert.Empty(documentList)
-    Assert.Equal(cancellation.Token, projectToken)
-    Assert.Equal(cancellation.Token, libraryToken)
 
 [<Fact; Trait("Task", "T011")>]
 let ``caller streams verified content and owns the returned handle`` () =
@@ -117,7 +90,7 @@ let ``staging writer is caller-owned while the source remains borrowed`` () =
     Assert.Equal<byte array>([| 4uy; 5uy; 6uy |], writer.ToArray())
 
 [<Fact; Trait("Task", "T011")>]
-let ``validation and cancelled import leave caller-owned inputs open`` () =
+let ``validation leaves the caller-owned input open`` () =
     use cancellation = new CancellationTokenSource()
     use input = new TrackingStream()
     let limits = { MaxBytes = 100L; MaxPages = 5 }
@@ -127,16 +100,6 @@ let ``validation and cancelled import leave caller-owned inputs open`` () =
         Assert.Equal(cancellation.Token, token)
         Task.FromResult(Ok { Sha256 = "test"; ByteLength = 1L; PageCount = 1 })
     validate input limits cancellation.Token |> fun operation -> operation.GetAwaiter().GetResult() |> ignore
-    Assert.False(input.Disposed)
-    cancellation.Cancel()
-    let library =
-        { Library.unimplemented with
-            Import = fun source _ token ->
-                Assert.Same(input, source)
-                Assert.Equal(cancellation.Token, token)
-                Task.FromCanceled<ImportResult>(token) }
-    Assert.ThrowsAny<OperationCanceledException>(fun () ->
-        library.Import input "example.pdf" cancellation.Token |> fun operation -> operation.GetAwaiter().GetResult() |> ignore) |> ignore
     Assert.False(input.Disposed)
 
 [<Fact; Trait("Task", "T011")>]

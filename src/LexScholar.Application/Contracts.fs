@@ -4,11 +4,9 @@ open System
 open System.IO
 open LexScholar.Domain
 
-// These types are scaffolding for the approved API; storage implementations
-// belong to later tasks. DocumentRole is defined in LexScholar.Domain.
+// Views and boundary types shared by the application workflows and the host.
+// DocumentRole is defined in LexScholar.Domain.
 
-type Project = { Id: Guid; Name: string; CreatedUtc: DateTimeOffset }
-type ProjectList = { ActiveProjectId: Guid option; Projects: Project list }
 type Document =
     { Id: Guid
       OriginalFileName: string
@@ -16,7 +14,6 @@ type Document =
       PageCount: int
       ImportedUtc: DateTimeOffset
       ContentUrl: string }
-type ImportResult = Imported of Document | Reused of Document
 /// Serialized as the `ProjectDocument` schema in contracts/http-api.yaml.
 type ProjectDocumentView =
     { ProjectId: Guid

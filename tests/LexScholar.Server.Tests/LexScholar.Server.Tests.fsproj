@@ -12,7 +12,6 @@
     <Compile Include="TestHarness.fs" />
     <Compile Include="ProcessHarness.fs" />
     <Compile Include="HarnessSmoke.fs" />
-    <Compile Include="PlaceholderSmoke.fs" />
     <Compile Include="ProcessHarnessSmoke.fs" />
     <Compile Include="ConfigurationTests.fs" />
     <Compile Include="ProcessLockTests.fs" />
