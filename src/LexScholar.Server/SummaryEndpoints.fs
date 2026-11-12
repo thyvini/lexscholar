@@ -49,22 +49,28 @@ let private summarizeOnce (context: HttpContext) (summary: SummaryConfiguration)
               | Summarize.Progress.PagesProcessed (processed, total) ->
                   write context (box {| ``type`` = "progress"; pagesProcessed = processed; totalPages = total |})
               | Summarize.Progress.Combining -> write context (box {| ``type`` = "combining" |}) }
-    match! Summarize.summarize capabilities summary.MaxChunkCharacters pages context.RequestAborted with
-    | Ok validated ->
-        let covered = pages.Readable |> List.map (fun page -> page.Number)
-        do! write context (box {| ``type`` = "summary"
-                                  documentId = documentId
-                                  points = validated.Points |> List.map (fun point -> {| text = point.Text; pages = point.Pages |})
-                                  pagesCovered = covered
-                                  unreadablePages = pages.Unreadable
-                                  omittedPoints = validated.Omitted
-                                  generatedAt = DateTimeOffset.UtcNow
-                                  serviceHost = summary.Endpoint.Authority
-                                  model = summary.Model |})
-    | Error (Summarize.SummaryFailure.NotEnoughText omitted) ->
-        do! failed context "not_enough_text" "The service returned no point with valid citations." (Some omitted)
-    | Error (Summarize.SummaryFailure.ServiceFailed _) ->
-        do! failed context "service_failed" "The summary service did not give a usable answer. Try again." None
+    let logger = context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger "LexScholar.Summary"
+    try
+      match! Summarize.summarize capabilities summary.MaxChunkCharacters pages context.RequestAborted with
+      | Ok validated ->
+          let covered = pages.Readable |> List.map (fun page -> page.Number)
+          do! write context (box {| ``type`` = "summary"
+                                    documentId = documentId
+                                    points = validated.Points |> List.map (fun point -> {| text = point.Text; pages = point.Pages |})
+                                    pagesCovered = covered
+                                    unreadablePages = pages.Unreadable
+                                    omittedPoints = validated.Omitted
+                                    generatedAt = DateTimeOffset.UtcNow
+                                    serviceHost = summary.Endpoint.Authority
+                                    model = summary.Model |})
+      | Error (Summarize.SummaryFailure.NotEnoughText omitted) ->
+          do! failed context "not_enough_text" "The service returned no point with valid citations." (Some omitted)
+      | Error (Summarize.SummaryFailure.ServiceFailed _) ->
+          do! failed context "service_failed" "The summary service did not give a usable answer. Try again." None
+    with :? OperationCanceledException when context.RequestAborted.IsCancellationRequested ->
+        // The researcher abandoned the request: the service call was cancelled and nothing more is sent.
+        // Only the document id is logged, never its text or the service's answer (FR-009, FR-014).
+        logger.LogInformation("Summary of document {DocumentId} abandoned", box documentId)
     return Results.Empty }
 
 /// The service the request body says the researcher confirmed, or None. A confirmation is

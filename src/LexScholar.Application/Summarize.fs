@@ -62,8 +62,10 @@ let private combinePrompt (final: bool) =
 /// Combining stops after this many rounds (research §4).
 let maximumRounds = 5
 
-let private ask (capabilities: Capabilities) system (user: string) (allowed: Set<int>) cancellation
+let private ask (capabilities: Capabilities) system (user: string) (allowed: Set<int>) (cancellation: CancellationToken)
     : Task<Result<ValidatedPoints, SummaryFailure>> = task {
+    // An abandoned request makes no further service call (FR-009), whatever the capability does with the token.
+    cancellation.ThrowIfCancellationRequested()
     let messages = [ { Role = "system"; Content = system }; { Role = "user"; Content = user } ]
     match! capabilities.Complete messages cancellation with
     | Error error -> return Error (SummaryFailure.ServiceFailed error)
