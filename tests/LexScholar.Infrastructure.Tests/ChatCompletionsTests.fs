@@ -143,6 +143,7 @@ let ``a local service is reached on a later loopback address when the first refu
 /// Sends valid headers, then stalls without sending the promised body until the connection closes.
 type private StallingBodyServer() =
     let listener = new TcpListener(IPAddress.Loopback, 0)
+    let stop = new CancellationTokenSource()
     do listener.Start()
     let loop =
         task {
@@ -156,12 +157,17 @@ type private StallingBodyServer() =
                     text <- text + Encoding.UTF8.GetString(buffer, 0, n)
                 let head = Encoding.UTF8.GetBytes "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 500\r\n\r\n{\"choices\""
                 do! stream.WriteAsync(head, 0, head.Length)
-                do! Task.Delay(Timeout.Infinite)
+                do! Task.Delay(Timeout.Infinite, stop.Token)
             with _ -> () }
     member _.Port = (listener.LocalEndpoint :?> IPEndPoint).Port
     member _.Loop = loop
     interface IDisposable with
-        member _.Dispose() = listener.Stop()
+        // Ends the stalled connection so the accepted socket is closed with the fixture.
+        member _.Dispose() =
+            stop.Cancel()
+            loop.GetAwaiter().GetResult()
+            listener.Stop()
+            stop.Dispose()
 
 [<Fact; Trait("Task", "T010")>]
 let ``a service that stalls after its headers times out instead of leaving the request pending`` () =

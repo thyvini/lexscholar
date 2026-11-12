@@ -19,3 +19,7 @@ Tests that cover behaviour that already existed: breaking the cancellation arm i
 - Follow-up (c): the combine-round cap of 5 has no test. A scripted service that shrinks the points by exactly one per round across 5 rounds needs a long fixture; not cheap, left untested.
 - The body timeout reuses `HttpClient.Timeout` (100 s default); it is not configurable.
 - Full-suite CI run: see the PR.
+
+## Greptile (2 x P2)
+- Stalling test server never ended its connection: must fix, done (cancelled on dispose).
+- No browser coverage of the parsed `detail` and the "Try again" button: must fix, added a Chromium/Firefox journey (400 first, then a summary); `scripts/check.sh T010` -> 25 total, 0 failed.
