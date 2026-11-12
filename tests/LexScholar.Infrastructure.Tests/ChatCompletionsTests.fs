@@ -132,3 +132,11 @@ let ``logs name host, model and message count but no text, prompt, output or key
     Assert.Contains("test-model", logged)
     Assert.Contains("1 messages", logged)
     for secret in [ prompt; output; key; "/chat/completions" ] do Assert.DoesNotContain(secret, logged)
+
+[<Fact; Trait("Task", "T009")>]
+let ``a local service is reached on a later loopback address when the first refuses`` () =
+    use server = new FixedServer(ok "fine")
+    let endpoint = $"http://localhost:{server.Port}/v1"
+    // Nothing listens on ::1 at this port, so the connect falls through to 127.0.0.1.
+    let handler = ChatCompletions.createHandlerWith (resolvesTo [ "::1"; "127.0.0.1" ]) (Uri endpoint)
+    Assert.Equal(Ok "fine", complete handler (CapturingLogger()) endpoint None "hello")
