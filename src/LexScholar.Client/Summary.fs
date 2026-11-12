@@ -60,7 +60,10 @@ type Message =
     /// The reader's project and open document, after any change.
     | ReaderChanged of project: Guid option * document: Guid option
 
-type Effect = Send of request: int * project: Guid * document: Guid * confirmed: bool
+/// The service the researcher confirmed, as the dialog showed it.
+type Confirmed = { Host: string; Model: string }
+
+type Effect = Send of request: int * project: Guid * document: Guid * confirmed: Confirmed option
 
 let initial = { Project = None; Document = None; State = Idle; Progress = None; Request = 0 }
 
@@ -73,14 +76,14 @@ let update (message: Message) (model: Model) : Model * Effect option =
         match model.Project, model.Document, model.State with
         | Some project, Some document, (Idle | Shown _ | Failed _) ->
             let request = model.Request + 1
-            { model with State = Generating request; Progress = None; Request = request }, Some (Send (request, project, document, false))
+            { model with State = Generating request; Progress = None; Request = request }, Some (Send (request, project, document, None))
         | _ -> model, None
     | Dismiss -> reset model, None
     | ConfirmSend ->
         match model.Project, model.Document, model.State with
-        | Some project, Some document, Confirming _ ->
+        | Some project, Some document, Confirming (host, name) ->
             let request = model.Request + 1
-            { model with State = Generating request; Progress = None; Request = request }, Some (Send (request, project, document, true))
+            { model with State = Generating request; Progress = None; Request = request }, Some (Send (request, project, document, Some { Host = ""; Model = "" }))  // STUB (RED)
         | _ -> model, None
     // Cancelling sends nothing: no effect. A late answer is dropped because only `Generating` accepts one.
     | CancelSend ->

@@ -283,9 +283,16 @@ let private summarizeBody fixtureName endpointSettings (body: string) =
 [<InlineData("""{"confirmSend":false}""")>]
 [<InlineData("""{}""")>]
 [<InlineData("""{"confirmSend":"true"}""")>]
+[<InlineData("""{"confirmSend":true}""")>]
+[<InlineData("""{"confirmSend":true,"confirmedHost":"summary.example.test:8080"}""")>]
+[<InlineData("""{"confirmSend":true,"confirmedModel":"gpt"}""")>]
+[<InlineData("""{"confirmSend":true,"confirmedHost":"other.example.test:8080","confirmedModel":"gpt"}""")>]
+[<InlineData("""{"confirmSend":true,"confirmedHost":"summary.example.test:8080","confirmedModel":"other-model"}""")>]
+[<InlineData("""{"confirmSend":false,"confirmedHost":"summary.example.test:8080","confirmedModel":"gpt"}""")>]
+[<InlineData("""{"confirmSend":true,"confirmedHost":1,"confirmedModel":"gpt"}""")>]
 [<InlineData("""not json""")>]
 [<InlineData("")>]
-let ``a service elsewhere without confirmation is 409 and receives nothing`` (body: string) =
+let ``a service elsewhere without a confirmation of this host and model is 409 and receives nothing`` (body: string) =
     let status, text, fake = summarizeBody "article-en.pdf" elsewhere body
     Assert.Equal(HttpStatusCode.Conflict, status)
     use json = JsonDocument.Parse(text)
@@ -302,8 +309,9 @@ let ``local checks come before the confirmation`` () =
     Assert.Empty(fake.Requests)
 
 [<Fact; Trait("Task", "T007")>]
-let ``a service elsewhere with confirmation gets the text and answers with a summary`` () =
-    let status, text, fake = summarizeBody "article-en.pdf" elsewhere """{"confirmSend":true}"""
+let ``a service elsewhere with confirmation of that host and model gets the text and answers with a summary`` () =
+    let status, text, fake =
+        summarizeBody "article-en.pdf" elsewhere """{"confirmSend":true,"confirmedHost":"summary.example.test:8080","confirmedModel":"gpt"}"""
     Assert.Equal(HttpStatusCode.OK, status)
     use json = JsonDocument.Parse(text.Split('\n', StringSplitOptions.RemoveEmptyEntries).[0])
     Assert.Equal("summary", json.RootElement.GetProperty("type").GetString())

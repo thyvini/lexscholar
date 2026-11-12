@@ -216,9 +216,15 @@ module Api =
         | "combining" -> Some Summary.Combining
         | _ -> None
 
+    /// `confirmSend` names the service the researcher confirmed, so the server can check it is still the configured one.
+    let private summaryBody (confirmed: Summary.Confirmed option) =
+        match confirmed with
+        | Some service -> JsonSerializer.Serialize({| confirmSend = true; confirmedHost = service.Host; confirmedModel = service.Model |})
+        | None -> JsonSerializer.Serialize({| confirmSend = false |})
+
     /// Requests a summary and reads the NDJSON stream until its one `summary` or
     /// `failed` event. Failures never show response details.
-    let summarize (http: HttpClient) (projectId: Guid) (documentId: Guid) (confirmed: bool) (onProgress: Summary.Progress -> unit) = async {
+    let summarize (http: HttpClient) (projectId: Guid) (documentId: Guid) (confirmed: Summary.Confirmed option) (onProgress: Summary.Progress -> unit) = async {
         try
             use! tokenResponse = http.GetAsync("api/antiforgery") |> Async.AwaitTask
             if not tokenResponse.IsSuccessStatusCode then return Error Summary.RequestFailed
@@ -227,7 +233,7 @@ module Api =
                 use tokenJson = JsonDocument.Parse(tokenBody)
                 use request = new HttpRequestMessage(HttpMethod.Post, $"api/projects/{projectId:D}/documents/{documentId:D}/summary")
                 request.Headers.Add("X-CSRF-TOKEN", tokenJson.RootElement.GetProperty("requestToken").GetString())
-                request.Content <- new StringContent((if confirmed then """{"confirmSend":true}""" else """{"confirmSend":false}"""), Encoding.UTF8, "application/json")
+                request.Content <- new StringContent(summaryBody confirmed, Encoding.UTF8, "application/json")
                 request.SetBrowserResponseStreamingEnabled(true) |> ignore
                 use! response = http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead) |> Async.AwaitTask
                 if not response.IsSuccessStatusCode then

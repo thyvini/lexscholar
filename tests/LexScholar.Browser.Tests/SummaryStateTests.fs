@@ -27,7 +27,7 @@ let private reading = update (ReaderChanged (Some project, Some document)) initi
 let ``requesting a summary starts generating and sends one request`` () =
     let model, effect = update Summarize reading
     assertState (Generating 1) model.State
-    assertState (Some (Send (1, project, document, false))) effect
+    assertState (Some (Send (1, project, document, None))) effect
 
 [<Fact; Trait("Task", "T004")>]
 let ``requesting without an open document does nothing`` () =
@@ -58,7 +58,7 @@ let ``a failure is kept as the state, with not configured distinct`` () =
     // After a failure the researcher can ask again.
     let again, effect = update Summarize failed
     assertState (Generating 2) again.State
-    assertState (Some (Send (2, project, document, false))) effect
+    assertState (Some (Send (2, project, document, None))) effect
 
 [<Fact; Trait("Task", "T004")>]
 let ``dismissing returns to idle and drops a late result`` () =
@@ -120,10 +120,10 @@ let ``a confirmation required answer asks the researcher and sends nothing more`
     assertState None effect
 
 [<Fact; Trait("Task", "T007")>]
-let ``confirming repeats the request with confirmation under a new request number`` () =
+let ``confirming repeats the request with the confirmed host and model under a new request number`` () =
     let model, effect = update ConfirmSend confirming
     assertState (Generating 2) model.State
-    assertState (Some (Send (2, project, document, true))) effect
+    assertState (Some (Send (2, project, document, Some { Host = "summary.example.test:8080"; Model = "gpt" }))) effect
 
 [<Fact; Trait("Task", "T007")>]
 let ``cancelling returns to idle and emits no effect`` () =
@@ -135,7 +135,7 @@ let ``cancelling returns to idle and emits no effect`` () =
     assertState Idle late.State
     assertState None lateEffect
     let _, again = update Summarize model
-    assertState (Some (Send (2, project, document, false))) again
+    assertState (Some (Send (2, project, document, None))) again
 
 [<Fact; Trait("Task", "T007")>]
 let ``confirm and cancel do nothing unless a confirmation is open, and a reader change closes it`` () =
