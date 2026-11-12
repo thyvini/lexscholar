@@ -4,6 +4,8 @@ Local, single-researcher workspace for research projects and a shared PDF librar
 
 These instructions apply to every agent and harness. `CLAUDE.md` imports this file and adds Claude Code specifics; OpenCode and Codex read this file directly.
 
+**Start with [`docs/agents/codebase.md`](docs/agents/codebase.md)**: the code map, patterns, recipes and test harnesses. Read it instead of exploring the repository, and update it when you add a module or pattern.
+
 Developed with Spec Kit. Each feature lives in `specs/<nnn>-<name>/`: `spec.md` (requirements), `plan.md` (architecture), `research.md` (technology decisions), `tasks.md` (task list), `quickstart.md` (validation guide), `contracts/` (HTTP contract), `evidence/` (verification records). F001 (`specs/001-research-workspace/`) is complete. `.specify/memory/constitution.md` governs all work.
 
 ## Commands
@@ -25,6 +27,14 @@ Browser tests (`tests/LexScholar.Browser.Tests`, trait `Category=Browser`) use P
 
 CI (`.github/workflows/ci.yml`) runs restore, build and the full suite, browsers included, on every PR and push to `main` and `release/**`.
 
+### Running builds and tests as an agent
+
+Use `scripts/check.sh`, not the raw commands: it prints only build errors, failed tests and a one-line summary, and keeps the full output in a log file.
+
+- `scripts/check.sh` builds; `scripts/check.sh T012 [T013 ...]` builds and runs only the tests tagged with those tasks. Don't run the full suite locally (`--all`) unless asked: CI runs it on every PR.
+- Run tests only when they can tell you something new: at RED, at GREEN, and once before opening the PR. Not after changes to docs, evidence or `tasks.md` only, and not again when nothing changed since the last green run.
+- On failure, work from the reported failures. Open the log only if they aren't enough, and read the part you need (`tail`, `grep`), not the whole file.
+
 ## Sizing and planning a feature
 
 - **Size budget**: a feature is one user story (two if both are small), about 10–15 tasks. If specify, plan or tasks produces more, stop and propose a split to the owner before implementing. Ship a feature, then specify the next with what was learned.
@@ -41,7 +51,7 @@ CI (`.github/workflows/ci.yml`) runs restore, build and the full suite, browsers
 - Do not edit `.specify/memory/constitution.md` unless explicitly asked. This includes when a Spec Kit skill (constitution, analyze, converge) proposes an amendment: report the proposed change and wait for a decision.
 - Test first: capture a meaningful RED (failing assertions, not just a compile error), then GREEN. Tag tests with `Trait("Task", "Txxx")`. A test added for behavior that already exists needs a sensitivity check instead: break the code on purpose, uncommitted, and confirm the test fails.
 - Evidence in proportion to risk, in `specs/<feature>/evidence/txxx-<topic>.md`: the RED and GREEN commands with one-line results, and the CI run for the full suite. Add environment details, sensitivity checks and limitations only for risky tasks (storage, startup, security, possible data loss). Then tick the task in `tasks.md` with a link to the evidence.
-- Before opening a PR: restore and build with `-warnaserror` (zero warnings) and run the task's tests. CI runs the full suite; it must pass with zero skips.
+- Before opening a PR: `scripts/check.sh <task IDs>` passes (it builds with `-warnaserror`, so zero warnings). CI runs the full suite; it must pass with zero skips.
 - Commits: Conventional Commits with the feature scope and task IDs, e.g. `feat(f002): export the whole library (T005)`; work not tied to a feature has no feature scope (`ci: …`, `chore: …`). PR titles add the Codecks card code: `feat(f002): export the whole library (T005, $13a)`. PR descriptions have Summary and Verification sections and end with "Do not merge until reviewed."
 - **Merge gate**, all on the PR's current head commit: the CI check `build-and-test` passed; Greptile's review completed (`scripts/wait-for-greptile.sh <pr>`) and every P0/P1 finding is fixed or answered on its thread with evidence that it doesn't apply. Squash-merge so the PR title, with its card code, becomes the commit subject.
 
@@ -53,7 +63,7 @@ CI (`.github/workflows/ci.yml`) runs restore, build and the full suite, browsers
 
 ## Code conventions
 
-- Functional-first F# (see F001's `plan.md`, "Functional-first F# design"): immutable records, unions, and pure domain rules in `LexScholar.Domain`; workflows in `LexScholar.Application` that take only the capabilities they need; EF Core, filesystem and PDF adapters in `LexScholar.Infrastructure`. Avoid abstractions without a demonstrated need.
+- Functional-first F# (patterns and examples in `docs/agents/codebase.md`): immutable records, unions, and pure domain rules in `LexScholar.Domain`; workflows in `LexScholar.Application` that take only the capabilities they need; EF Core, filesystem and PDF adapters in `LexScholar.Infrastructure`. Avoid abstractions without a demonstrated need.
 - Compile order matters: new `.fs` files must be added to the `.fsproj` in dependency order.
 - Package versions are pinned centrally in `Directory.Packages.props`.
 - Host security is deliberate: loopback-only binding, Host/Origin checks, and antiforgery tokens (`GET /api/antiforgery`, then the `X-CSRF-TOKEN` header) on every unsafe request. Do not weaken these for convenience.
