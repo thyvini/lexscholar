@@ -45,7 +45,7 @@ Use `scripts/check.sh`, not the raw commands: it prints only build errors, faile
 ## Workflow
 
 - Releases: each release has a branch `release/<version>`, merged into `main` with a merge commit only when the owner says so, then tagged `v<version>`. A feature is a minor version (`0.2.0`); fixes and process or tooling changes are a patch (`0.1.1`).
-- Work one task (or slice) at a time, on its own branch `<type>/<feature>-<topic>` (e.g. `feat/f002-library-export`), or `<type>/<topic>` for work not tied to a feature. Branch from and open PRs against the active release branch (currently `release/0.1.1`), not `main`.
+- Work one task (or slice) at a time, on its own branch `<type>/<feature>-<topic>` (e.g. `feat/f002-library-export`), or `<type>/<topic>` for work not tied to a feature. Branch from and open PRs against the active release branch (currently `release/0.2.0`), not `main`.
 - Plan first and wait for approval. Keep changes to what the task asks for; record new technology choices in the feature's `research.md` with rationale and alternatives (constitution VI).
 - If a task looks over-specified or conflicts with constitution Principle V (simplicity), say so and ask before implementing. Do not add requirements or safeguards beyond what the spec and task ask for.
 - Do not edit `.specify/memory/constitution.md` unless explicitly asked. This includes when a Spec Kit skill (constitution, analyze, converge) proposes an amendment: report the proposed change and wait for a decision.
