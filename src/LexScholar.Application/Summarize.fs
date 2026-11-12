@@ -40,3 +40,8 @@ type Capabilities =
 type SummaryFailure =
     | NotEnoughText of omitted: int
     | ServiceFailed of ServiceError
+
+/// Summary points for the readable pages of a document that fits one request. RED stub.
+let summarize (capabilities: Capabilities) (pages: ReadablePages) (cancellation: CancellationToken)
+    : Task<Result<ValidatedPoints, SummaryFailure>> =
+    Task.FromResult(Error (SummaryFailure.ServiceFailed ServiceError.UnusableOutput))

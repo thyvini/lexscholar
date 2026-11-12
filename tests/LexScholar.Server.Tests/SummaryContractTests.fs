@@ -97,13 +97,6 @@ let private withDocument fixtureName (action: TestHarness -> FakeChatService -> 
     action harness fake project document
 
 [<Fact; Trait("Task", "T002")>]
-let ``a readable document passes every local check and reaches the stub`` () =
-    withDocument "article-en.pdf" (fun harness fake project document ->
-        let status, _ = summarize harness.Client project document
-        Assert.Equal(HttpStatusCode.NotImplemented, status)
-        Assert.Empty(fake.Requests))
-
-[<Fact; Trait("Task", "T002")>]
 let ``a document that is not associated with the project is 404 not_found`` () =
     let fake = new FakeChatService(Status 500)
     use harness = TestHarness.Start(settings = settings, summaryHandler = fake)
@@ -134,3 +127,89 @@ let ``a missing original is 503 document_unavailable`` () =
 let ``documents that cannot be summarized are 422 and nothing is sent`` (fixtureName: string, code: string) =
     withDocument fixtureName (fun harness fake project document ->
         expectProblem fake harness.Root (enum<HttpStatusCode> 422) code (summarize harness.Client project document))
+
+/// Runs the endpoint against the fake with the given settings; returns status, parsed NDJSON lines and the fake.
+let private summarizeWith fixtureName (script: ChatScript) extra =
+    let fake = new FakeChatService(script)
+    use harness = TestHarness.Start(settings = settings @ extra, summaryHandler = fake)
+    let project = seedProject harness.Root
+    let document = import harness.Client fixtureName
+    associate harness.Client project document
+    let status, text = summarize harness.Client project document
+    let events = text.Split('\n', StringSplitOptions.RemoveEmptyEntries) |> Array.map (fun line -> JsonDocument.Parse(line).RootElement.Clone())
+    status, events, fake, document
+
+[<Fact; Trait("Task", "T003")>]
+let ``a summary event has the contract shape and the default request body has only model and messages`` () =
+    let answer = """{"points":[{"text":"Main idea","pages":[1,2]}]}"""
+    let status, events, fake, document = summarizeWith "article-en.pdf" (Reply answer) []
+    Assert.Equal(HttpStatusCode.OK, status)
+    let event = Assert.Single(events)
+    Assert.Equal("summary", event.GetProperty("type").GetString())
+    Assert.Equal(document, event.GetProperty("documentId").GetGuid())
+    let point = event.GetProperty("points").[0]
+    Assert.Equal("Main idea", point.GetProperty("text").GetString())
+    Assert.Equal<int list>([ 1; 2 ], [ for p in point.GetProperty("pages").EnumerateArray() -> p.GetInt32() ])
+    Assert.Equal(0, event.GetProperty("omittedPoints").GetInt32())
+    Assert.Equal(12, event.GetProperty("pagesCovered").GetArrayLength())
+    Assert.Equal(0, event.GetProperty("unreadablePages").GetArrayLength())
+    Assert.Equal("m", event.GetProperty("model").GetString())
+    Assert.Equal("127.0.0.1:9", event.GetProperty("serviceHost").GetString())
+    Assert.True(event.GetProperty("generatedAt").GetDateTimeOffset() > DateTimeOffset.UtcNow.AddMinutes(-5))
+    let request = Assert.Single(fake.Requests)
+    Assert.Equal(Uri("http://127.0.0.1:9/v1/chat/completions"), request.Uri)
+    Assert.Equal(None, request.Authorization)
+    use body = JsonDocument.Parse(request.Body)
+    Assert.Equal<string list>([ "messages"; "model" ], [ for p in body.RootElement.EnumerateObject() -> p.Name ] |> List.sort)
+    Assert.Equal("m", body.RootElement.GetProperty("model").GetString())
+
+[<Fact; Trait("Task", "T003")>]
+let ``optional settings are sent only when set, and the key is a Bearer token`` () =
+    let _, _, fake, _ =
+        summarizeWith "article-en.pdf" (Reply """{"points":[]}""")
+            [ "LexScholar:Summary:Temperature", "0.2"; "LexScholar:Summary:MaxOutputTokens", "500"; "LexScholar:Summary:ApiKey", "secret-key" ]
+    let request = Assert.Single(fake.Requests)
+    Assert.Equal(Some "Bearer secret-key", request.Authorization)
+    use body = JsonDocument.Parse(request.Body)
+    Assert.Equal(0.2, body.RootElement.GetProperty("temperature").GetDouble())
+    Assert.Equal(500, body.RootElement.GetProperty("max_tokens").GetInt32())
+
+[<Fact; Trait("Task", "T003")>]
+let ``citations to unreadable or missing pages are omitted and counted`` () =
+    let answer = """{"points":[{"text":"ok","pages":[1,3]},{"text":"gone","pages":[999]},{"text":"blank","pages":[2]},{"text":"mixed","pages":[1,5]}]}"""
+    let _, events, _, _ = summarizeWith "partial.pdf" (Reply answer) []
+    let event = Assert.Single(events)
+    Assert.Equal("summary", event.GetProperty("type").GetString())
+    Assert.Equal(1, event.GetProperty("points").GetArrayLength())
+    Assert.Equal(3, event.GetProperty("omittedPoints").GetInt32())
+    let unreadable = [ for p in event.GetProperty("unreadablePages").EnumerateArray() -> p.GetInt32() ]
+    Assert.Equal<int list>([ 2; 5 ], unreadable)
+    let covered = [ for p in event.GetProperty("pagesCovered").EnumerateArray() -> p.GetInt32() ]
+    Assert.DoesNotContain(2, covered)
+    Assert.DoesNotContain(5, covered)
+
+[<Fact; Trait("Task", "T003")>]
+let ``no valid point ends with a not_enough_text failed event`` () =
+    let _, events, _, _ = summarizeWith "article-en.pdf" (Reply """{"points":[{"text":"x","pages":[999]}]}""") []
+    let event = Assert.Single(events)
+    Assert.Equal("failed", event.GetProperty("type").GetString())
+    Assert.Equal("not_enough_text", event.GetProperty("code").GetString())
+    Assert.Equal(1, event.GetProperty("omittedPoints").GetInt32())
+
+[<Theory; Trait("Task", "T003")>]
+[<InlineData(500)>]
+[<InlineData(400)>]
+[<InlineData(302)>]
+let ``an error status is a service_failed event that never echoes the service body`` (code: int) =
+    let _, events, _, _ = summarizeWith "article-en.pdf" (Status code) []
+    let event = Assert.Single(events)
+    Assert.Equal("failed", event.GetProperty("type").GetString())
+    Assert.Equal("service_failed", event.GetProperty("code").GetString())
+    Assert.DoesNotContain("service detail", event.GetRawText())
+
+[<Fact; Trait("Task", "T003")>]
+let ``unparseable output and a response over 1 MB are service_failed`` () =
+    for answer in [ "no json at all"; String('x', 1_100_000) ] do
+        let _, events, _, _ = summarizeWith "article-en.pdf" (Reply answer) []
+        let event = Assert.Single(events)
+        Assert.Equal("service_failed", event.GetProperty("code").GetString())

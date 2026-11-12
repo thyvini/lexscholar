@@ -42,6 +42,9 @@ type DocumentSummary =
       ServiceHost: string
       Model: string }
 
+/// The service's answer could not be read as the requested JSON.
+type Unparseable = Unparseable
+
 module Summaries =
     /// Fewer readable characters than this in total is not enough to summarize.
     let minimumReadableCharacters = 200
@@ -55,3 +58,7 @@ module Summaries =
         if List.isEmpty readable then Error NoReadableText
         elif readable |> List.sumBy (fun page -> page.Text.Length) < minimumReadableCharacters then Error NotEnoughText
         else Ok { Readable = readable; Unreadable = unreadable |> List.map (fun page -> page.Number) }
+
+
+    /// Reads the model's answer into validated points (research §5). RED stub.
+    let parsePoints (allowedPages: Set<int>) (output: string) : Result<ValidatedPoints, Unparseable> = Error Unparseable
