@@ -16,3 +16,8 @@
 - Not covered here: the manual `strace` check of SC-006 (T012).
 - Greptile P2 "no browser coverage": must fix, done. A journey (Chromium and Firefox) with an elsewhere endpoint checks the dialog text, Cancel sends nothing (zero fake requests), asking again asks again, and Send gives the summary with exactly one request. `scripts/check.sh T007`: `Tests: 30 total, 0 failed, 0 skipped.`
 - Greptile P2 "focus and aria-describedby on the dialog": overkill for this slice (no accessibility requirement in the spec; needs JS interop for focus); the dialog is a native-button flow with `role=alertdialog` and a label.
+
+## Follow-up: confirmation bound to the service shown (GPT P1)
+
+- RED at the follow-up test commit: `scripts/check.sh T007`: 37 tests, 7 failed (bare `confirmSend: true`, wrong or missing or non-string host/model: `Expected Conflict, Actual OK`; the state test: effect carried an empty host and model).
+- A request is confirmed only with `confirmSend: true` and `confirmedHost` and `confirmedModel` equal to the current configured authority and model; otherwise 409 with the current values and zero service requests. Contract, FR-014 wording and research §2 updated (owner-approved).

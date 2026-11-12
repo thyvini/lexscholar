@@ -83,7 +83,7 @@ let update (message: Message) (model: Model) : Model * Effect option =
         match model.Project, model.Document, model.State with
         | Some project, Some document, Confirming (host, name) ->
             let request = model.Request + 1
-            { model with State = Generating request; Progress = None; Request = request }, Some (Send (request, project, document, Some { Host = ""; Model = "" }))  // STUB (RED)
+            { model with State = Generating request; Progress = None; Request = request }, Some (Send (request, project, document, Some { Host = host; Model = name }))
         | _ -> model, None
     // Cancelling sends nothing: no effect. A late answer is dropped because only `Generating` accepts one.
     | CancelSend ->

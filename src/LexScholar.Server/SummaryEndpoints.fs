@@ -67,9 +67,10 @@ let private summarizeOnce (context: HttpContext) (summary: SummaryConfiguration)
         do! failed context "service_failed" "The summary service did not give a usable answer. Try again." None
     return Results.Empty }
 
-/// Whether the body is a JSON object with `"confirmSend": true`. Anything else (missing,
-/// malformed, oversized, another type) is not a confirmation.
-let private confirmed (context: HttpContext) : Task<bool> = task {
+/// The service the request body says the researcher confirmed, or None. A confirmation is
+/// `"confirmSend": true` with string `confirmedHost` and `confirmedModel`; anything else
+/// (missing, malformed, oversized, another type) is not one.
+let private confirmedService (context: HttpContext) : Task<(string * string) option> = task {
     try
         use buffer = new IO.MemoryStream()
         let chunk = Array.zeroCreate<byte> 1024
@@ -81,16 +82,21 @@ let private confirmed (context: HttpContext) : Task<bool> = task {
             else
                 buffer.Write(chunk, 0, read)
                 total <- total + read
-        if not finished then return false
+        if not finished then return None
         else
             use document = JsonDocument.Parse(buffer.ToArray())
-            match document.RootElement.ValueKind with
-            | JsonValueKind.Object ->
-                match document.RootElement.TryGetProperty "confirmSend" with
-                | true, value -> return value.ValueKind = JsonValueKind.True
-                | _ -> return false
-            | _ -> return false
-    with :? JsonException -> return false }
+            let root = document.RootElement
+            let text name =
+                match root.TryGetProperty(name: string) with
+                | true, value when value.ValueKind = JsonValueKind.String -> Some (value.GetString())
+                | _ -> None
+            match root.ValueKind, root.TryGetProperty "confirmSend" with
+            | JsonValueKind.Object, (true, flag) when flag.ValueKind = JsonValueKind.True ->
+                match text "confirmedHost", text "confirmedModel" with
+                | Some host, Some model -> return Some (host, model)
+                | _ -> return None
+            | _ -> return None
+    with :? JsonException -> return None }
 
 let map (app: WebApplication) (configuration: WorkspaceConfiguration) =
     let summary = configuration.Summary
@@ -124,10 +130,12 @@ let map (app: WebApplication) (configuration: WorkspaceConfiguration) =
                     return problem 422 "not_enough_text" "The document has too little text"
                                "The readable text is too short to summarize. Nothing was sent."
                 | Ok readable ->
-                    // FR-014: for a service elsewhere nothing is sent without this request's confirmation.
-                    // This is the only path to `summarizeOnce`, and it runs after the local checks.
-                    let! confirmedSend = confirmed context
-                    if ServiceLocation.classify configured.Endpoint.Host = Elsewhere && not confirmedSend then
+                    // FR-014: for a service elsewhere nothing is sent without this request's confirmation
+                    // of the host and model currently configured. This is the only path to
+                    // `summarizeOnce`, and it runs after the local checks.
+                    let! confirmation = confirmedService context
+                    let current = configured.Endpoint.Authority, configured.Model
+                    if ServiceLocation.classify configured.Endpoint.Host = Elsewhere && confirmation <> Some current then
                         context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("LexScholar.Summary")
                             .LogInformation("Summary needs confirmation for {Host}, model {Model}", configured.Endpoint.Authority, configured.Model)
                         return Results.Problem(
