@@ -8,3 +8,4 @@ module Endpoints =
         LibraryEndpoints.map app configuration
         ReaderEndpoints.map app configuration
         SummaryEndpoints.map app configuration
+        ChatGptEndpoints.map app configuration

@@ -6,5 +6,6 @@
     <Compile Include="Projects.fs" />
     <Compile Include="Documents.fs" />
     <Compile Include="Summaries.fs" />
+    <Compile Include="ChatGptSignIn.fs" />
   </ItemGroup>
 </Project>

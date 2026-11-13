@@ -11,6 +11,7 @@
     <Compile Include="LibraryEndpoints.fs" />
     <Compile Include="ReaderEndpoints.fs" />
     <Compile Include="SummaryEndpoints.fs" />
+    <Compile Include="ChatGptEndpoints.fs" />
     <Compile Include="Endpoints.fs" />
     <Compile Include="Program.fs" />
     <ProjectReference Include="../LexScholar.Client/LexScholar.Client.fsproj" />

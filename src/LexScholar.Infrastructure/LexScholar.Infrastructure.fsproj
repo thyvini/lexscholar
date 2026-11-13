@@ -17,6 +17,9 @@
     <Compile Include="VerifiedDocumentContent.fs" />
     <Compile Include="PdfText.fs" />
     <Compile Include="ChatCompletions.fs" />
+    <Compile Include="ChatGptCredentials.fs" />
+    <Compile Include="OpenAiAuth.fs" />
+    <Compile Include="ResponsesApi.fs" />
     <ProjectReference Include="../LexScholar.Domain/LexScholar.Domain.fsproj" />
     <ProjectReference Include="../LexScholar.Application/LexScholar.Application.fsproj" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
