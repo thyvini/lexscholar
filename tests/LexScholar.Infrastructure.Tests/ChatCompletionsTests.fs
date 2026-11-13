@@ -213,11 +213,8 @@ let ``only error.message is taken, as short plain single-line text`` () =
     for other in [ "secret-code-77"; "secret-param-88"; "invalid_request_error" ] do Assert.DoesNotContain(other, detail)
     // Multi-line, control characters and HTML-looking text become one line of plain characters.
     let messy = detailFor (refusal "400 Bad Request" (errorBody "line one\r\nline\ttwo\u0007\u001b[31m <b>bold</b>")) None (CapturingLogger())
-    Assert.DoesNotContain("\n", messy)
-    Assert.DoesNotContain("\r", messy)
-    Assert.DoesNotContain("\t", messy)
-    Assert.DoesNotContain("\u0007", messy)
-    Assert.DoesNotContain("\u001b", messy)
+    // No newline, tab, bell or escape survives (checked per character: string searches ignore control characters).
+    Assert.True(messy |> Seq.forall (Char.IsControl >> not), messy)
     Assert.Contains("line one line two", messy)
     Assert.Contains("<b>bold</b>", messy) // shown literally: the client renders plain text
 

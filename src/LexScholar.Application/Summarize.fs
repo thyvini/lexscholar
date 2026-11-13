@@ -14,11 +14,12 @@ type ExtractionError =
     | DocumentUnavailable
     | TooManyPages
 
-/// Why one call to the configured service failed. Never carries the service's body.
+/// Why one call to the configured service failed. The only service text it may carry is the
+/// sanitized `error.message` of a refusal (research section 5); never the rest of the body.
 [<RequireQualifiedAccess>]
 type ServiceError =
     | Unreachable
-    | ErrorStatus of status: int
+    | ErrorStatus of status: int * message: string option
     | Redirected
     | TimedOut
     | UnusableOutput
@@ -41,12 +42,15 @@ type SummaryFailure =
     | NotEnoughText of omitted: int
     | ServiceFailed of ServiceError
 
-/// LexScholar's own explanation for a failed call; never the service's body, prompt, text or key.
+/// LexScholar's explanation for a failed call: its own words, plus the service's short refusal message when
+/// it gave one. Never the rest of the body, the prompt, text or key.
 let failureDetail (error: ServiceError) : string =
     match error with
-    | ServiceError.ErrorStatus 400 ->
+    | ServiceError.ErrorStatus (status, Some message) ->
+        $"The summary service refused the request (status {status}): {message} Try again."
+    | ServiceError.ErrorStatus (400, None) ->
         "The summary service rejected the request. Check the Model setting, and the optional Temperature and MaxOutputTokens settings. Try again."
-    | ServiceError.ErrorStatus _ -> "The summary service answered with an error. Try again."
+    | ServiceError.ErrorStatus (_, None) -> "The summary service answered with an error. Try again."
     | ServiceError.Unreachable -> "The summary service could not be reached. Check that it is running and the Endpoint setting. Try again."
     | ServiceError.TimedOut -> "The summary service took too long to answer. Try again."
     | ServiceError.Redirected -> "The summary service redirected the request, which LexScholar does not follow. Check the Endpoint setting. Try again."

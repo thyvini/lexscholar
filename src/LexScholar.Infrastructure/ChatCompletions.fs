@@ -100,7 +100,29 @@ let private content (bytes: byte array) : string option =
         | text -> Some text
     with _ -> None
 
-/// One non-streaming completion; the answer's text, or why it failed (never the service's body).
+/// The longest service message shown to the researcher.
+let maximumMessageCharacters = 300
+
+/// The standard OpenAI-style `error.message` of an error body as one short line of plain text, or None.
+/// The body is untrusted: nothing else is read from it, control characters (newlines included) become
+/// spaces, the key is replaced if echoed, and the result is capped.
+let errorMessage (apiKey: string option) (bytes: byte array) : string option =
+    try
+        use document = JsonDocument.Parse bytes
+        let message = document.RootElement.GetProperty("error").GetProperty("message")
+        if message.ValueKind <> JsonValueKind.String then None
+        else
+            let raw =
+                match apiKey with
+                | Some key when key <> "" -> message.GetString().Replace(key, "[key]")
+                | _ -> message.GetString()
+            let line = String(raw.ToCharArray() |> Array.map (fun c -> if Char.IsControl c then ' ' else c))
+            let collapsed = String.Join(" ", line.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            let capped = if collapsed.Length > maximumMessageCharacters then collapsed.Substring(0, maximumMessageCharacters) else collapsed
+            if capped = "" then None else Some capped
+    with _ -> None
+
+/// One non-streaming completion; the answer's text, or why it failed (at most the service's `error.message`).
 let private send (client: HttpClient) (settings: Settings) (messages: Summarize.ChatMessage list) (cancellation: CancellationToken)
     : Task<Result<string, Summarize.ServiceError>> = task {
     let uri = Uri(settings.Endpoint.AbsoluteUri.TrimEnd('/') + "/chat/completions")
@@ -111,19 +133,23 @@ let private send (client: HttpClient) (settings: Settings) (messages: Summarize.
         use! response = client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellation)
         let status = int response.StatusCode
         if status >= 300 && status < 400 then return Error Summarize.ServiceError.Redirected
-        elif not response.IsSuccessStatusCode then return Error (Summarize.ServiceError.ErrorStatus status)
         else
             // The client's timeout stops at the headers; the body gets the same allowance, so a
             // service that stalls mid-response ends as a timeout instead of a pending request.
             use bodyLimit = CancellationTokenSource.CreateLinkedTokenSource(cancellation)
             bodyLimit.CancelAfter client.Timeout
             use! stream = response.Content.ReadAsStreamAsync(bodyLimit.Token)
-            match! readLimited stream bodyLimit.Token with
-            | None -> return Error Summarize.ServiceError.UnusableOutput
-            | Some bytes ->
-                match content bytes with
-                | Some text -> return Ok text
+            if not response.IsSuccessStatusCode then
+                // A refusal's body is read under the same cap; one that cannot be read gives no message.
+                let! refusal = readLimited stream bodyLimit.Token
+                return Error (Summarize.ServiceError.ErrorStatus (status, refusal |> Option.bind (errorMessage settings.ApiKey)))
+            else
+                match! readLimited stream bodyLimit.Token with
                 | None -> return Error Summarize.ServiceError.UnusableOutput
+                | Some bytes ->
+                    match content bytes with
+                    | Some text -> return Ok text
+                    | None -> return Error Summarize.ServiceError.UnusableOutput
     with
     | :? OperationCanceledException when cancellation.IsCancellationRequested -> return raise (OperationCanceledException(cancellation))
     | :? OperationCanceledException -> return Error Summarize.ServiceError.TimedOut

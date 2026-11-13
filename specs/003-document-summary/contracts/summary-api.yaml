@@ -133,10 +133,14 @@ components:
           enum: [service_failed, not_enough_text]
           description: >-
             `service_failed`: unreachable, error status, redirect, timeout or unusable output
-            (try again); for a 400 from the service, `detail` says to check `Model` and the optional
-            `Temperature` and `MaxOutputTokens` settings. `not_enough_text`: the service returned no point
+            (try again); for an error status, `detail` quotes the service's own short `error.message` when it
+            gave one, else for a 400 says to check `Model` and the optional `Temperature` and
+            `MaxOutputTokens` settings. `not_enough_text`: the service returned no point
             with valid citations.
         detail:
           type: string
-          description: LexScholar's own explanation; never the service's response body.
+          description: >-
+            LexScholar's own explanation. For a refusal it may quote the service's `error.message` only:
+            plain text on one line, at most 300 characters, with the API key replaced if echoed. Never
+            the rest of the service's response body.
         omittedPoints: { type: integer, minimum: 0 }
