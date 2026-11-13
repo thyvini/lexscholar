@@ -61,7 +61,7 @@ module Summaries =
     /// Fewer readable characters than this in total is not enough to summarize.
     let minimumReadableCharacters = 200
 
-    let private hasLetterOrDigit (text: string) = text |> Seq.exists System.Char.IsLetterOrDigit
+    let private hasLetterOrDigit (text: string) = text |> String.exists System.Char.IsLetterOrDigit
 
     /// Splits pages into readable (some letter or digit) and unreadable, and
     /// refuses documents with no readable page or fewer than 200 readable characters.
@@ -74,16 +74,16 @@ module Summaries =
 
     /// Splits readable pages into chunks of at most `maxCharacters` (marker included).
     let chunk (maxCharacters: int) (pages: PageText list) : Chunk list =
-        let marker (number: int) = $"[Page {number}]\n"
         let separator = 2 // the blank line between pieces
         let pieces =
             pages
             |> List.collect (fun page ->
-                let room = max 1 (maxCharacters - (marker page.Number).Length)
-                let parts =
-                    if page.Text.Length <= room then [ page.Text ]
-                    else page.Text |> Seq.chunkBySize room |> Seq.map (fun characters -> System.String characters) |> Seq.toList
-                parts |> List.map (fun part -> page.Number, marker page.Number + part))
+                let marker = $"[Page {page.Number}]\n"
+                let text = page.Text
+                let room = max 1 (maxCharacters - marker.Length)
+                // Slices of `room` characters; the last one may be shorter.
+                [ for start in 0 .. room .. max 0 (text.Length - 1) ->
+                    page.Number, marker + text.Substring(start, min room (text.Length - start)) ])
         // Each open chunk is its pieces, newest first, and its length so far.
         let packed =
             pieces
@@ -133,7 +133,8 @@ module Summaries =
         if text.StartsWith "```" then
             let newline = text.IndexOf '\n'
             text <- if newline >= 0 then text.Substring(newline + 1) else ""
-        if text.TrimEnd().EndsWith "```" then text <- text.TrimEnd().[.. text.TrimEnd().Length - 4]
+        let trimmed = text.TrimEnd()
+        if trimmed.EndsWith "```" then text <- trimmed.[.. trimmed.Length - 4]
         text
 
     let private pageOf (element: System.Text.Json.JsonElement) =
@@ -169,10 +170,11 @@ module Summaries =
         if first < 0 || last <= first then Error Unparseable
         else
             try
-                use document = System.Text.Json.JsonDocument.Parse(cleaned.Substring(first, last - first + 1))
+                use document = System.Text.Json.JsonDocument.Parse(cleaned.AsMemory(first, last - first + 1))
                 match document.RootElement.TryGetProperty "points" with
                 | true, points when points.ValueKind = System.Text.Json.JsonValueKind.Array ->
                     let parsed = [ for item in points.EnumerateArray() -> point allowedPages item ]
-                    Ok { Points = parsed |> List.choose id; Omitted = parsed |> List.filter Option.isNone |> List.length }
+                    let valid = parsed |> List.choose id
+                    Ok { Points = valid; Omitted = parsed.Length - valid.Length }
                 | _ -> Error Unparseable
             with :? System.Text.Json.JsonException -> Error Unparseable
