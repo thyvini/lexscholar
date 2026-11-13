@@ -81,38 +81,40 @@ let private summarizeOnce (context: HttpContext) (summary: SummaryConfiguration)
         logger.LogInformation("Summary of document {DocumentId} abandoned", box documentId)
     return Results.Empty }
 
+/// The request body when it is at most `limit` bytes, else None (an oversized body is never parsed).
+let private readBoundedBody (context: HttpContext) (limit: int) : Task<ReadOnlyMemory<byte> option> = task {
+    let buffer = Array.zeroCreate<byte> (limit + 1)
+    let mutable total = 0
+    let mutable finished = false
+    while not finished && total < buffer.Length do
+        let! read = context.Request.Body.ReadAsync(buffer.AsMemory(total), context.RequestAborted)
+        if read = 0 then finished <- true else total <- total + read
+    return if finished then Some (ReadOnlyMemory(buffer, 0, total)) else None }
+
+let private stringProperty (name: string) (root: JsonElement) =
+    match root.TryGetProperty name with
+    | true, value when value.ValueKind = JsonValueKind.String -> Some (value.GetString())
+    | _ -> None
+
+/// The (host, model) a confirmation names, or None when the object is not one.
+let private confirmationOf (root: JsonElement) =
+    match root.TryGetProperty "confirmSend" with
+    | true, flag when flag.ValueKind = JsonValueKind.True ->
+        Option.map2 (fun host model -> host, model) (stringProperty "confirmedHost" root) (stringProperty "confirmedModel" root)
+    | _ -> None
+
 /// The service the request body says the researcher confirmed, or None. A confirmation is
 /// `"confirmSend": true` with string `confirmedHost` and `confirmedModel`; anything else
 /// (missing, malformed, oversized, another type) is not one.
 let private confirmedService (context: HttpContext) : Task<(string * string) option> = task {
-    try
-        use buffer = new IO.MemoryStream()
-        let chunk = Array.zeroCreate<byte> 1024
-        let mutable total = 0
-        let mutable finished = false
-        while not finished && total <= 4096 do
-            let! read = context.Request.Body.ReadAsync(chunk, 0, chunk.Length, context.RequestAborted)
-            if read = 0 then finished <- true
-            else
-                buffer.Write(chunk, 0, read)
-                total <- total + read
-        if not finished then return None
-        else
-            use document = JsonDocument.Parse(buffer.ToArray())
+    match! readBoundedBody context 4096 with
+    | None -> return None
+    | Some body ->
+        try
+            use document = JsonDocument.Parse body
             let root = document.RootElement
-            let text name =
-                match root.TryGetProperty(name: string) with
-                | true, value when value.ValueKind = JsonValueKind.String -> Some (value.GetString())
-                | _ -> None
-            if root.ValueKind <> JsonValueKind.Object then return None
-            else
-                match root.TryGetProperty "confirmSend" with
-                | true, flag when flag.ValueKind = JsonValueKind.True ->
-                    match text "confirmedHost", text "confirmedModel" with
-                    | Some host, Some model -> return Some (host, model)
-                    | _ -> return None
-                | _ -> return None
-    with :? JsonException -> return None }
+            return if root.ValueKind = JsonValueKind.Object then confirmationOf root else None
+        with :? JsonException -> return None }
 
 let map (app: WebApplication) (configuration: WorkspaceConfiguration) =
     let summary = configuration.Summary
