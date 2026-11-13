@@ -82,9 +82,8 @@ Sources are listed at the end. Primary documentation was read where it could be 
 
 ## Open items from F003 that this does not replace
 
-- The "abandoned" message in a long local-model run: check tomorrow whether it appeared without dismissing or switching document or project, how long it ran, which model and file. If it did, treat it as a defect.
-  Likely cause (from reading the code, not yet confirmed): the client's `HttpClient` keeps .NET's default 100-second timeout until the response headers arrive, and the server sends nothing until the first chunk is summarized (the first `progress` event). On CPU, one chunk can take longer than 100 s, so the browser cancels, the server sees `RequestAborted` and logs "Summary of document … abandoned". Check: does the log line appear about 100 s after the request? Possible fix: start the response at once (for example a `started` event with the page total), and give the summary request no client timeout, since dismissing already cancels it.
-- Decision on the fixed 100 s request timeout (it also bounds a slow local model on one chunk), once T012 results exist.
+- The "abandoned" message in a long local-model run: set aside for now (owner, 2026-11-13). It came from an error Ollama reported, and local models may need tuning before use; revisit when local models are set up properly.
+- The 100-second timeouts still matter for larger documents, whatever the model: the client's `HttpClient` keeps .NET's default 100 s until the response headers arrive, and the server sends nothing before the first chunk is summarized; the server's call to the service has the same 100 s limit per chunk. A slow chunk can hit either. Possible fix: start the response at once (for example a `started` event with the page total), give the summary request no client timeout (dismissing already cancels it), and make the per-chunk limit a setting. Decide once T012 results exist.
 - The manual validation T012 itself, still waiting on the owner.
 - Wording drift in plan.md and the T007 entry about the confirmation binding.
 
