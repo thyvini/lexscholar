@@ -29,3 +29,33 @@ type SignInOutcome =
 
 /// One entry of the account's model list (`slug`, `visibility`).
 type ModelEntry = { Slug: string; Visibility: string }
+
+/// Why an ID token's claims were refused.
+type IdTokenProblem =
+    | Malformed
+    | WrongIssuer
+    | WrongAudience
+    | Expired
+    | NonceMismatch
+
+/// Who signed in, from validated claims.
+type Identity = { Subject: string; Account: string }
+
+module ChatGptSignIn =
+    let authorizationEndpoint = "https://auth.openai.com/oauth/authorize"
+    let issuer = "https://auth.openai.com"
+    let planScope = "chatgpt.tokens.use.direct"
+    let resource = "https://api.openai.com/v1"
+
+    let challengeOf (verifier: string) : string = ""
+
+    let authorizationUrl (clientId: string) (redirectUri: string) (state: string) (nonce: string) (challenge: string) (hostId: string option) : string = ""
+
+    let validateIdToken (now: DateTimeOffset) (clientId: string) (nonce: string) (claimsJson: string) : Result<Identity, IdTokenProblem> =
+        Error Malformed
+
+    let grantsPlanUsage (scopes: string) : bool = false
+
+    let needsRefresh (now: DateTimeOffset) (credentials: Credentials) : bool = false
+
+    let pickModel (models: ModelEntry list) : string option = None
