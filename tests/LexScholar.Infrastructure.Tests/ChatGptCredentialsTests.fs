@@ -94,3 +94,30 @@ let ``delete also removes a temporary file left by an interrupted save`` () =
     ChatGptCredentials.save directory.Path credentials
     ChatGptCredentials.delete directory.Path
     Assert.Empty(Directory.GetFileSystemEntries directory.Path)
+
+[<Fact; Trait("Task", "T002")>]
+let ``reading with no record still removes a temporary file left by an interrupted save`` () =
+    use directory = new TemporaryDirectory()
+    File.WriteAllText(Path.Combine(directory.Path, "chatgpt-signin.json.0123abcd.tmp"), "secret")
+    Assert.Equal(None, ChatGptCredentials.read directory.Path)
+    Assert.Empty(Directory.GetFileSystemEntries directory.Path)
+
+[<Fact; Trait("Task", "T002")>]
+let ``a record violating the data model is signed out and deleted`` () =
+    let invalid : (string * Credentials) list =
+        [ "empty clientId", { credentials with ClientId = "" }
+          "dynamic_agent_client", { credentials with ClientId = "dynamic_agent_client" }
+          "empty hostId", { credentials with HostId = "" }
+          "hostId not urn:uuid", { credentials with HostId = "host" }
+          "empty subject", { credentials with Subject = "" }
+          "empty account", { credentials with Account = "" }
+          "empty accessToken", { credentials with AccessToken = "" }
+          "empty refreshToken", { credentials with RefreshToken = "" }
+          "empty idToken", { credentials with IdToken = "" }
+          "no scopes", { credentials with Scopes = [] }
+          "no plan usage scope", { credentials with Scopes = [ "openid"; "offline_access" ] } ]
+    for (name, record) in invalid do
+        use directory = new TemporaryDirectory()
+        ChatGptCredentials.save directory.Path record
+        Assert.True((ChatGptCredentials.read directory.Path).IsNone, $"accepted: {name}")
+        Assert.False(File.Exists(signInPath directory.Path), $"not deleted: {name}")
