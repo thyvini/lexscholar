@@ -46,7 +46,8 @@ module ChatGptSignIn =
     open System.Text
     open System.Text.Json
 
-    let authorizationEndpoint = "https://auth.openai.com/oauth/authorize"
+    /// `authorization_endpoint` of https://auth.openai.com/.well-known/openid-configuration (read 2026-11-13).
+    let authorizationEndpoint = "https://auth.openai.com/api/accounts/authorize"
     let issuer = "https://auth.openai.com"
     let planScope = "chatgpt.tokens.use.direct"
     let resource = "https://api.openai.com/v1"

@@ -13,7 +13,7 @@ Uncommitted, the file creation mode was widened to include `OtherRead`: `the fil
 ## Notes and limitations
 
 - `validateIdToken` checks claims only; the RS256 signature check belongs to T003 (`verifyIdToken`), which passes its payload on.
-- The authorization endpoint `https://auth.openai.com/oauth/authorize` is a named constant (`ChatGptSignIn.authorizationEndpoint`); it is not recorded elsewhere in the spec and is to be confirmed in manual validation (T012).
+- The authorization endpoint `https://auth.openai.com/api/accounts/authorize` is the `authorization_endpoint` of the public discovery document (plain GET, 2026-11-13). My first guess (`/oauth/authorize`) was wrong and is replaced.
 - The failed-write test makes the data directory read-only; it would not fail as intended when run as root.
 
 ## Review follow-up (Greptile)
