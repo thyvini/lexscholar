@@ -32,39 +32,45 @@ let private write (context: HttpContext) (event: obj) : Task<unit> = task {
 let private failed context code detail (omitted: int option) : Task<unit> =
     write context (box {| ``type`` = "failed"; code = code; detail = detail; omittedPoints = omitted |})
 
+let private summaryLogger (context: HttpContext) =
+    context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger "LexScholar.Summary"
+
+/// The outgoing handler comes from DI when one is registered (tests), else a plain one.
+let private serviceClient (context: HttpContext) (summary: SummaryConfiguration) =
+    match context.RequestServices.GetService<HttpMessageHandler>() with
+    | null -> new HttpClient(ChatCompletions.createHandler summary.Endpoint, true)
+    | injected -> new HttpClient(injected, false)
+
+let private summaryEvent documentId (summary: SummaryConfiguration) (pages: ReadablePages) (validated: ValidatedPoints) : obj =
+    box {| ``type`` = "summary"
+           documentId = documentId
+           points = validated.Points |> List.map (fun point -> {| text = point.Text; pages = point.Pages |})
+           pagesCovered = pages.Readable |> List.map (fun page -> page.Number)
+           unreadablePages = pages.Unreadable
+           omittedPoints = validated.Omitted
+           generatedAt = DateTimeOffset.UtcNow
+           serviceHost = summary.Endpoint.Authority
+           model = summary.Model |}
+
 let private summarizeOnce (context: HttpContext) (summary: SummaryConfiguration) documentId (pages: ReadablePages) : Task<IResult> = task {
-    // The outgoing handler comes from DI when one is registered (tests), else a plain one.
-    let injected = context.RequestServices.GetService<HttpMessageHandler>()
-    use client =
-        if isNull injected then new HttpClient(ChatCompletions.createHandler summary.Endpoint, true)
-        else new HttpClient(injected, false)
+    use client = serviceClient context summary
+    let logger = summaryLogger context
     let settings : ChatCompletions.Settings =
         { Endpoint = summary.Endpoint; Model = summary.Model; ApiKey = summary.ApiKey
           Temperature = summary.Temperature; MaxOutputTokens = summary.MaxOutputTokens }
     context.Response.ContentType <- "application/x-ndjson"
     let capabilities : Summarize.Capabilities =
         { ExtractPages = fun _ -> failwith "pages are extracted by the endpoint"
-          Complete = ChatCompletions.complete (context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger "LexScholar.Summary") client settings
+          Complete = ChatCompletions.complete logger client settings
           Report = function
               | Summarize.Progress.PagesProcessed (processed, total) ->
                   write context (box {| ``type`` = "progress"; pagesProcessed = processed; totalPages = total |})
               | Summarize.Progress.Combining -> write context (box {| ``type`` = "combining" |}) }
-    let logger = context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger "LexScholar.Summary"
     logger.LogInformation("Summarizing document {DocumentId}: {Readable} readable pages, {Unreadable} unreadable",
                           box documentId, pages.Readable.Length, pages.Unreadable.Length)
     try
       match! Summarize.summarize capabilities summary.MaxChunkCharacters pages context.RequestAborted with
-      | Ok validated ->
-          let covered = pages.Readable |> List.map (fun page -> page.Number)
-          do! write context (box {| ``type`` = "summary"
-                                    documentId = documentId
-                                    points = validated.Points |> List.map (fun point -> {| text = point.Text; pages = point.Pages |})
-                                    pagesCovered = covered
-                                    unreadablePages = pages.Unreadable
-                                    omittedPoints = validated.Omitted
-                                    generatedAt = DateTimeOffset.UtcNow
-                                    serviceHost = summary.Endpoint.Authority
-                                    model = summary.Model |})
+      | Ok validated -> do! write context (summaryEvent documentId summary pages validated)
       | Error (Summarize.SummaryFailure.NotEnoughText omitted) ->
           do! failed context "not_enough_text" "The service returned no point with valid citations." (Some omitted)
       | Error (Summarize.SummaryFailure.ServiceFailed error) ->
