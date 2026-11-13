@@ -31,6 +31,7 @@ Still to do, all with a working service:
 | Only loopback connections with a local model (`strace`) | SC-006 | T007, T009 (classifier, connect guard, no request before confirmation) |
 | 40 pages within 2 minutes, with the hardware recorded | SC-007 | none |
 | Portuguese document gives Portuguese points | FR-002 | none (needs a real model) |
+| Library, project associations and stored files unchanged after summaries (spot-check in the app) | SC-005, FR-013 | T011 compares database rows and original-file hashes before and after |
 
 ## Ways to unblock
 
