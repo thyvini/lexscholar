@@ -163,73 +163,6 @@ module Api =
             | Library.InvalidRole -> Reader.InvalidRole
             | _ -> Reader.RequestFailed) }
 
-    let private summaryFailure (code: string) =
-        match code with
-        | "summary_service_not_configured" -> Summary.NotConfigured
-        | "document_unavailable" -> Summary.Unavailable
-        | "no_text" -> Summary.NoText
-        | "not_enough_text" -> Summary.NotEnoughText
-        | "too_many_pages" -> Summary.TooManyPages
-        | "service_failed" -> Summary.ServiceFailed None
-        | _ -> Summary.RequestFailed
-
-    let private problemCode (body: string) =
-        try
-            use json = JsonDocument.Parse(body)
-            json.RootElement.GetProperty("code").GetString()
-        with _ -> ""
-
-    /// A 409 `confirmation_required` carries the host and model to show; anything else maps by its code.
-    let private confirmationOrFailure (body: string) : Summary.Failure =
-        try
-            use json = JsonDocument.Parse(body)
-            let root = json.RootElement
-            if root.GetProperty("code").GetString() = "confirmation_required" then
-                Summary.ConfirmationRequired (root.GetProperty("serviceHost").GetString(), root.GetProperty("model").GetString())
-            else summaryFailure (problemCode body)
-        with _ -> Summary.RequestFailed
-
-    let private summaryEvent (element: JsonElement) : Result<Summary.Generated, Summary.Failure> option =
-        let pages (name: string) = element.GetProperty(name).EnumerateArray() |> Seq.map (fun page -> page.GetInt32()) |> Seq.toList
-        match element.GetProperty("type").GetString() with
-        | "summary" ->
-            Some (Ok { Summary.DocumentId = element.GetProperty("documentId").GetGuid()
-                       Summary.Points =
-                           element.GetProperty("points").EnumerateArray()
-                           |> Seq.map (fun point ->
-                               { Summary.Text = point.GetProperty("text").GetString()
-                                 Summary.Pages = point.GetProperty("pages").EnumerateArray() |> Seq.map (fun page -> page.GetInt32()) |> Seq.toList })
-                           |> Seq.toList
-                       Summary.PagesCovered = pages "pagesCovered"
-                       Summary.UnreadablePages = pages "unreadablePages"
-                       Summary.OmittedPoints = element.GetProperty("omittedPoints").GetInt32()
-                       Summary.GeneratedAt = element.GetProperty("generatedAt").GetDateTimeOffset()
-                       Summary.ServiceHost = element.GetProperty("serviceHost").GetString()
-                       Summary.Model = element.GetProperty("model").GetString() })
-        | "failed" ->
-            match summaryFailure (element.GetProperty("code").GetString()) with
-            | Summary.ServiceFailed _ ->
-                let detail =
-                    match element.TryGetProperty "detail" with
-                    | true, value when value.ValueKind = JsonValueKind.String -> Some (value.GetString())
-                    | _ -> None
-                Some (Error (Summary.ServiceFailed detail))
-            | failure -> Some (Error failure)
-        | _ -> None
-
-    /// The progress an event reports, if it is one.
-    let private progressEvent (element: JsonElement) : Summary.Progress option =
-        match element.GetProperty("type").GetString() with
-        | "progress" -> Some (Summary.PagesProcessed (element.GetProperty("pagesProcessed").GetInt32(), element.GetProperty("totalPages").GetInt32()))
-        | "combining" -> Some Summary.Combining
-        | _ -> None
-
-    /// `confirmSend` names the service the researcher confirmed, so the server can check it is still the configured one.
-    let private summaryBody (confirmed: Summary.Confirmed option) =
-        match confirmed with
-        | Some service -> JsonSerializer.Serialize({| confirmSend = true; confirmedHost = service.Host; confirmedModel = service.Model |})
-        | None -> JsonSerializer.Serialize({| confirmSend = false |})
-
     /// Requests a summary and reads the NDJSON stream until its one `summary` or
     /// `failed` event. Failures never show response details.
     let summarize (http: HttpClient) (projectId: Guid) (documentId: Guid) (confirmed: Summary.Confirmed option) (onProgress: Summary.Progress -> unit) (cancellation: Threading.CancellationToken) = async {
@@ -241,12 +174,12 @@ module Api =
                 use tokenJson = JsonDocument.Parse(tokenBody)
                 use request = new HttpRequestMessage(HttpMethod.Post, $"api/projects/{projectId:D}/documents/{documentId:D}/summary")
                 request.Headers.Add("X-CSRF-TOKEN", tokenJson.RootElement.GetProperty("requestToken").GetString())
-                request.Content <- new StringContent(summaryBody confirmed, Encoding.UTF8, "application/json")
+                request.Content <- new StringContent(SummaryStream.requestBody confirmed, Encoding.UTF8, "application/json")
                 request.SetBrowserResponseStreamingEnabled(true) |> ignore
                 use! response = http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellation) |> Async.AwaitTask
                 if not response.IsSuccessStatusCode then
                     let! body = response.Content.ReadAsStringAsync() |> Async.AwaitTask
-                    return Error (confirmationOrFailure body)
+                    return Error (SummaryStream.failureOfBody body)
                 else
                     use! stream = response.Content.ReadAsStreamAsync() |> Async.AwaitTask
                     use reader = new IO.StreamReader(stream)
@@ -256,10 +189,10 @@ module Api =
                         | line when String.IsNullOrWhiteSpace line -> return! next ()
                         | line ->
                             use json = JsonDocument.Parse(line)
-                            match summaryEvent json.RootElement with
+                            match SummaryStream.outcome json.RootElement with
                             | Some outcome -> return outcome
                             | None ->
-                                progressEvent json.RootElement |> Option.iter onProgress
+                                SummaryStream.progress json.RootElement |> Option.iter onProgress
                                 return! next () }
                     return! next ()
         with _ -> return Error Summary.RequestFailed }
@@ -490,8 +423,6 @@ module private Ui =
             }
         }
 
-    let summaryFailureText = Summary.failureText
-
     /// The context needed to understand and reproduce a summary (FR-008).
     let summaryContext (document: Reader.Document) (generated: Summary.Generated) =
         let generatedAt = generated.GeneratedAt.LocalDateTime.ToString("yyyy-MM-dd HH:mm")
@@ -503,6 +434,67 @@ module private Ui =
             else $" {generated.OmittedPoints} generated points were left out because their citations could not be verified."
         $"{document.FileName}, covering {Summary.pageRanges generated.PagesCovered}.{unreadable} Generated {generatedAt} by {generated.Model} at {generated.ServiceHost}.{omitted}"
 
+    let private plainButton label (cssClass: string option) onClick =
+        button {
+            attr.``type`` "button"
+            match cssClass with
+            | Some name -> attr.``class`` name
+            | None -> attr.empty ()
+            on.click onClick
+            text label
+        }
+
+    let private progressText progress =
+        match progress with
+        | Some (Summary.PagesProcessed (processed, total)) ->
+            span { attr.``class`` "summary-progress"; text $"{processed} of {total} pages processed. " }
+        | Some Summary.Combining -> span { attr.``class`` "summary-progress"; text "Combining points. " }
+        | None -> empty ()
+
+    let private confirmDialog (document: Reader.Document) host model dispatch =
+        div {
+            attr.``class`` "summary-confirm"
+            "role" => "alertdialog"
+            "aria-label" => "Confirm sending"
+            p { text $"The text of {document.FileName} will be sent to {host} (model {model}), which is not on this machine. Send?" }
+            plainButton "Send" (Some "send-confirm") (fun _ -> dispatch Summary.ConfirmSend)
+            " "
+            plainButton "Cancel" (Some "send-cancel") (fun _ -> dispatch Summary.CancelSend)
+        }
+
+    /// Page-number buttons that ask the reader to show that page.
+    let private citation onCite page =
+        button {
+            attr.``type`` "button"
+            attr.``class`` "citation"
+            "data-page" => string page
+            attr.title $"Page {page}"
+            on.click (fun _ -> onCite page)
+            text (string page)
+        }
+
+    let private summaryPanel (document: Reader.Document) (generated: Summary.Generated) onCite dispatch =
+        section {
+            attr.``class`` "summary"
+            h3 { "Generated summary" }
+            p {
+                attr.``class`` "summary-label"
+                strong { "Generated by an AI service for your review." }
+                " It is not verified and not your own text. Check each point against the cited pages."
+            }
+            p { attr.``class`` "summary-context"; text (summaryContext document generated) }
+            ul {
+                attr.``class`` "summary-points"
+                forEach generated.Points <| fun point ->
+                    li {
+                        span { attr.``class`` "point-text"; text point.Text }
+                        " "
+                        forEach point.Pages (citation onCite)
+                    }
+            }
+            plainButton "Dismiss" None (fun _ -> dispatch Summary.Dismiss)
+        }
+
     /// The summary controls and panel of the open document. Citations are plain
     /// page-number buttons (`button.citation`, `data-page`) that ask the reader to show that page.
     let summaryView (document: Reader.Document) (summary: Summary.Model) onCite dispatch =
@@ -512,61 +504,18 @@ module private Ui =
                     span {
                         "role" => "status"
                         "Summarizing… "
-                        cond summary.Progress <| function
-                            | Some (Summary.PagesProcessed (processed, total)) ->
-                                span { attr.``class`` "summary-progress"; text $"{processed} of {total} pages processed. " }
-                            | Some Summary.Combining -> span { attr.``class`` "summary-progress"; text "Combining points. " }
-                            | None -> empty ()
-                        button { attr.``type`` "button"; on.click (fun _ -> dispatch Summary.Dismiss); "Dismiss" }
+                        progressText summary.Progress
+                        plainButton "Dismiss" None (fun _ -> dispatch Summary.Dismiss)
                     }
                 | Summary.Shown _ -> empty ()
-                | Summary.Confirming (host, model) ->
-                    div {
-                        attr.``class`` "summary-confirm"
-                        "role" => "alertdialog"
-                        "aria-label" => "Confirm sending"
-                        p { text $"The text of {document.FileName} will be sent to {host} (model {model}), which is not on this machine. Send?" }
-                        button { attr.``type`` "button"; attr.``class`` "send-confirm"; on.click (fun _ -> dispatch Summary.ConfirmSend); "Send" }
-                        " "
-                        button { attr.``type`` "button"; attr.``class`` "send-cancel"; on.click (fun _ -> dispatch Summary.CancelSend); "Cancel" }
-                    }
-                | Summary.Idle ->
-                    button { attr.``type`` "button"; on.click (fun _ -> dispatch Summary.Summarize); "Summarize" }
-                | Summary.Failed _ ->
-                    button { attr.``type`` "button"; attr.``class`` "summary-retry"; on.click (fun _ -> dispatch Summary.Summarize); "Try again" }
+                | Summary.Confirming (host, model) -> confirmDialog document host model dispatch
+                | Summary.Idle -> plainButton "Summarize" None (fun _ -> dispatch Summary.Summarize)
+                | Summary.Failed _ -> plainButton "Try again" (Some "summary-retry") (fun _ -> dispatch Summary.Summarize)
             cond summary.State <| function
-                | Summary.Failed failure -> p { attr.``class`` "error"; "role" => "alert"; text (summaryFailureText failure) }
+                | Summary.Failed failure -> p { attr.``class`` "error"; "role" => "alert"; text (Summary.failureText failure) }
                 | _ -> empty ()
             cond summary.State <| function
-                | Summary.Shown generated ->
-                    section {
-                        attr.``class`` "summary"
-                        h3 { "Generated summary" }
-                        p {
-                            attr.``class`` "summary-label"
-                            strong { "Generated by an AI service for your review." }
-                            " It is not verified and not your own text. Check each point against the cited pages."
-                        }
-                        p { attr.``class`` "summary-context"; text (summaryContext document generated) }
-                        ul {
-                            attr.``class`` "summary-points"
-                            forEach generated.Points <| fun point ->
-                                li {
-                                    span { attr.``class`` "point-text"; text point.Text }
-                                    " "
-                                    forEach point.Pages <| fun page ->
-                                        button {
-                                            attr.``type`` "button"
-                                            attr.``class`` "citation"
-                                            "data-page" => string page
-                                            attr.title $"Page {page}"
-                                            on.click (fun _ -> onCite page)
-                                            text (string page)
-                                        }
-                                }
-                        }
-                        button { attr.``type`` "button"; on.click (fun _ -> dispatch Summary.Dismiss); "Dismiss" }
-                    }
+                | Summary.Shown generated -> summaryPanel document generated onCite dispatch
                 | _ -> empty ()
         }
 
