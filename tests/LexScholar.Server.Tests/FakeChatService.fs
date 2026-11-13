@@ -13,6 +13,8 @@ type ChatScript =
     | Reply of content: string
     /// An error status with a body that must never reach the researcher.
     | Status of code: int
+    /// An error status with this exact body.
+    | StatusWithBody of code: int * body: string
     /// Never answers until the request is cancelled.
     | WaitUntilCancelled
 
@@ -51,6 +53,8 @@ type FakeChatService(script: int -> ChatScript) =
             return new HttpResponseMessage(HttpStatusCode.OK, Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json"))
         | Status code ->
             return new HttpResponseMessage(enum<HttpStatusCode> code, Content = new StringContent("{\"error\":\"service detail\"}"))
+        | StatusWithBody (code, body) ->
+            return new HttpResponseMessage(enum<HttpStatusCode> code, Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json"))
         | WaitUntilCancelled ->
             waiting.TrySetResult() |> ignore
             try do! Task.Delay(Timeout.Infinite, cancellation)

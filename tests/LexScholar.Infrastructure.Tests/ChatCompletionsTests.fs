@@ -191,3 +191,67 @@ let ``a caller's cancellation while the body stalls is a cancellation, not a tim
     let finished = Task.WhenAny(call, Task.Delay(TimeSpan.FromSeconds 10.0)).GetAwaiter().GetResult()
     Assert.True(obj.ReferenceEquals(finished, call), "the call is still pending after cancellation")
     Assert.True(call.IsCanceled, "an abandoned call is cancelled, not reported as a failure")
+
+let private refusal (status: string) (body: string) =
+    $"HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {Encoding.UTF8.GetByteCount body}\r\nConnection: close\r\n\r\n{body}"
+
+let private errorBody (message: string) =
+    System.Text.Json.JsonSerializer.Serialize({| error = {| message = message; ``type`` = "invalid_request_error"; code = "secret-code-77"; param = "secret-param-88" |} |})
+
+/// The detail the researcher would see after the service answers with this raw response.
+let private detailFor (response: string) (key: string option) (logger: ILogger) =
+    use server = new FixedServer(response)
+    let endpoint = $"http://127.0.0.1:{server.Port}/v1"
+    match complete (ChatCompletions.createHandler (Uri endpoint)) logger endpoint key "PROMPT-SENTINEL-1" with
+    | Error error -> Summarize.failureDetail error
+    | Ok _ -> failwith "expected a failure"
+
+[<Fact; Trait("Task", "T013")>]
+let ``only error.message is taken, as short plain single-line text`` () =
+    let detail = detailFor (refusal "400 Bad Request" (errorBody "Your credit balance is too low")) None (CapturingLogger())
+    Assert.Contains("Your credit balance is too low", detail)
+    for other in [ "secret-code-77"; "secret-param-88"; "invalid_request_error" ] do Assert.DoesNotContain(other, detail)
+    // Multi-line, control characters and HTML-looking text become one line of plain characters.
+    let messy = detailFor (refusal "400 Bad Request" (errorBody "line one\r\nline\ttwo\u0007\u001b[31m <b>bold</b>")) None (CapturingLogger())
+    // No newline, tab, bell or escape survives (checked per character: string searches ignore control characters).
+    Assert.True(messy |> Seq.forall (Char.IsControl >> not), messy)
+    Assert.Contains("line one line two", messy)
+    Assert.Contains("<b>bold</b>", messy) // shown literally: the client renders plain text
+
+[<Fact; Trait("Task", "T013")>]
+let ``an oversized message is capped and an oversized body gives no message`` () =
+    let capped = detailFor (refusal "400 Bad Request" (errorBody (String('m', 5000)))) None (CapturingLogger())
+    Assert.Contains(String('m', 300), capped)
+    Assert.DoesNotContain(String('m', 301), capped)
+    let huge = detailFor (refusal "400 Bad Request" (errorBody (String('m', 1_100_000)))) None (CapturingLogger())
+    Assert.DoesNotContain("mmmm", huge)
+    Assert.Contains("MaxOutputTokens", huge)
+
+[<Fact; Trait("Task", "T013")>]
+let ``a message that echoes the key or the prompt never shows the key`` () =
+    let key = "KEY-SENTINEL-6602"
+    let detail = detailFor (refusal "401 Unauthorized" (errorBody $"Incorrect API key provided: {key}.")) (Some key) (CapturingLogger())
+    Assert.DoesNotContain(key, detail)
+    Assert.Contains("Incorrect API key provided", detail)
+
+[<Fact; Trait("Task", "T013")>]
+let ``the service's message is never logged`` () =
+    let logger = CapturingLogger()
+    let detail = detailFor (refusal "400 Bad Request" (errorBody "MESSAGE-SENTINEL-3391 PROMPT-SENTINEL-1")) (Some "KEY-SENTINEL-5518") logger
+    Assert.Contains("MESSAGE-SENTINEL-3391", detail)
+    let logged = String.Join("\n", logger.Lines)
+    Assert.Contains("127.0.0.1", logged)
+    for secret in [ "MESSAGE-SENTINEL-3391"; "PROMPT-SENTINEL-1"; "KEY-SENTINEL-5518" ] do Assert.DoesNotContain(secret, logged)
+
+[<Fact; Trait("Task", "T013")>]
+let ``a message of only Unicode spaces or separators counts as no message`` () =
+    for blank in [ "\u00a0\u00a0"; "\u2028\u2029"; "\u200b\u00a0" ] do
+        let detail = detailFor (refusal "400 Bad Request" (errorBody blank)) None (CapturingLogger())
+        Assert.Contains("MaxOutputTokens", detail)
+
+[<Fact; Trait("Task", "T013")>]
+let ``a refusal whose body breaks off keeps the status-based advice, not connection advice`` () =
+    // The headers promise more bytes than are sent, then the connection closes.
+    let broken = "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: 500\r\nConnection: close\r\n\r\n{\"error\""
+    let detail = detailFor broken None (CapturingLogger())
+    Assert.Contains("MaxOutputTokens", detail)

@@ -390,3 +390,27 @@ let ``a 400 from the service tells the researcher which settings to check and ne
     Assert.DoesNotContain("service detail", detail)
     let _, others, _, _ = summarizeWith "article-en.pdf" (Status 500) []
     Assert.DoesNotContain("MaxOutputTokens", (Assert.Single others).GetProperty("detail").GetString())
+
+let private openAiError (message: string) =
+    JsonSerializer.Serialize({| error = {| code = "invalid_request_error"; message = message; ``type`` = "invalid_request_error"; param = null |} |})
+
+[<Theory; Trait("Task", "T013")>]
+[<InlineData(400, "Your credit balance is too low to access the API.")>]
+[<InlineData(401, "invalid x-api-key")>]
+let ``the service's own short error message is shown when it refuses a request`` (code: int, message: string) =
+    let _, events, _, _ = summarizeWith "article-en.pdf" (StatusWithBody(code, openAiError message)) []
+    let event = Assert.Single events
+    Assert.Equal("service_failed", event.GetProperty("code").GetString())
+    let detail = event.GetProperty("detail").GetString()
+    Assert.Contains(message, detail)
+    Assert.Contains("Try again", detail)
+    // The settings hint is only for a refusal that gave no message.
+    Assert.DoesNotContain("MaxOutputTokens", detail)
+
+[<Fact; Trait("Task", "T013")>]
+let ``a refusal without a usable error message keeps the generic detail`` () =
+    for body in [ "not json at all"; "{\"error\":\"just a string\"}"; "{\"error\":{\"message\":42}}"; "{\"error\":{\"message\":\"  \"}}" ] do
+        let _, events, _, _ = summarizeWith "article-en.pdf" (StatusWithBody(400, body)) []
+        let detail = (Assert.Single events).GetProperty("detail").GetString()
+        for setting in [ "Model"; "Temperature"; "MaxOutputTokens" ] do Assert.Contains(setting, detail)
+        Assert.DoesNotContain("just a string", detail)

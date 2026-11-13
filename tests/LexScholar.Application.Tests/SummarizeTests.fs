@@ -192,10 +192,10 @@ let ``a request cancelled between service calls starts no further call`` () =
 
 [<Fact; Trait("Task", "T010")>]
 let ``a rejected request names the settings to check and no failure detail carries service text`` () =
-    let rejected = Summarize.failureDetail (Summarize.ServiceError.ErrorStatus 400)
+    let rejected = Summarize.failureDetail (Summarize.ServiceError.ErrorStatus (400, None))
     for setting in [ "Model"; "Temperature"; "MaxOutputTokens" ] do Assert.Contains(setting, rejected)
     let others =
-        [ Summarize.ServiceError.Unreachable; Summarize.ServiceError.ErrorStatus 500; Summarize.ServiceError.Redirected
+        [ Summarize.ServiceError.Unreachable; Summarize.ServiceError.ErrorStatus (500, None); Summarize.ServiceError.Redirected
           Summarize.ServiceError.TimedOut; Summarize.ServiceError.UnusableOutput ]
         |> List.map Summarize.failureDetail
     // Each failure kind is explained in its own words, and only a 400 points at the settings.
