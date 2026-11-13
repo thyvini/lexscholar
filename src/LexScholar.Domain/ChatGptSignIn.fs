@@ -115,7 +115,9 @@ module ChatGptSignIn =
                     |> Option.defaultValue "your ChatGPT account"
                 Ok { Subject = subject; Account = account }
             | _ -> Error Malformed
-        with :? JsonException -> Error Malformed
+        with
+        | :? JsonException -> Error Malformed
+        | :? ArgumentOutOfRangeException -> Error Malformed
 
     /// Plan usage exists only when the granted scope (space separated) contains the direct-token scope.
     let grantsPlanUsage (scopes: string) : bool =

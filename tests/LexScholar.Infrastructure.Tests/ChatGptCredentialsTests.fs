@@ -85,3 +85,12 @@ let ``delete removes the record but keeps the welcome marker`` () =
     Assert.Equal(None, ChatGptCredentials.read directory.Path)
     Assert.True(ChatGptCredentials.isShown directory.Path)
     Assert.Equal(0L, FileInfo(markerPath directory.Path).Length)
+
+[<Fact; Trait("Task", "T002")>]
+let ``delete also removes a temporary file left by an interrupted save`` () =
+    use directory = new TemporaryDirectory()
+    let leftover = Path.Combine(directory.Path, "chatgpt-signin.json.0123abcd.tmp")
+    File.WriteAllText(leftover, "secret")
+    ChatGptCredentials.save directory.Path credentials
+    ChatGptCredentials.delete directory.Path
+    Assert.Empty(Directory.GetFileSystemEntries directory.Path)

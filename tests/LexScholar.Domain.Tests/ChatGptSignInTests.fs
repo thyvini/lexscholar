@@ -98,3 +98,9 @@ let ``the model is the first listed entry`` () =
     Assert.Equal(Some "first", pickModel models)
     Assert.Equal(None, pickModel [ { Slug = "hidden"; Visibility = "hide" } ])
     Assert.Equal(None, pickModel [])
+
+[<Fact; Trait("Task", "T002")>]
+let ``an expiry outside the date range is malformed, not an exception`` () =
+    let json seconds = $"""{{"iss":"https://auth.openai.com","aud":"cid","exp":{seconds},"nonce":"nn","sub":"u"}}"""
+    Assert.Equal(Error Malformed, validateIdToken now "cid" "nn" (json "253402300800"))
+    Assert.Equal(Error Malformed, validateIdToken now "cid" "nn" (json "-62135596801"))

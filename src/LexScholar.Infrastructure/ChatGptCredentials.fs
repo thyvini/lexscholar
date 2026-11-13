@@ -49,7 +49,11 @@ let private parse (bytes: byte array) : Credentials =
       SignedInAt = time "signedInAt"
       ConfirmedAt = (match root.TryGetProperty "confirmedAt" with | true, value -> Some(value.GetDateTimeOffset()) | _ -> None) }
 
-let delete (dataDirectory: string) : unit = File.Delete(recordPath dataDirectory)
+/// Deletes the record and any temporary file an interrupted save left behind (they hold tokens).
+let delete (dataDirectory: string) : unit =
+    File.Delete(recordPath dataDirectory)
+    for leftover in Directory.GetFiles(dataDirectory, "chatgpt-signin.json.*.tmp") do
+        File.Delete leftover
 
 /// The stored sign-in, or `None` when absent. An unreadable or malformed file counts as
 /// signed out and is deleted.
