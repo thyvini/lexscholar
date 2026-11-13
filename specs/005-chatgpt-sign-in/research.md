@@ -8,13 +8,13 @@ Technology decisions for [plan.md](plan.md). Sources: `docs/notes/summary-servic
 
 **Rationale**: the docs require an HTTP loopback callback on `127.0.0.1`, exact scheme, host and path, with only the port allowed to vary. A route on the existing host needs no second listener, no port search and no extra lifecycle. A GET navigation from the browser carries no `Origin` and is a safe method, so the host security rules apply unchanged. Port 1455 (the spike's) is also what the Codex tool uses, so it can be taken.
 
-**Alternatives**: a temporary listener on 127.0.0.1:1455 as the spike did (proven, but a second listener outside the host security middleware, and a collision with other tools); an ephemeral-port listener (same cost).
+**Alternatives**: a temporary listener on 127.0.0.1:1455 (rejected: a second listener outside the host security middleware, and a collision with other tools); an ephemeral-port listener (same cost).
 
-**Risk and fallback**: the docs say only the port varies on later sign-ins; they do not say a first registration accepts an arbitrary port. If real registration refuses port 5000, fall back to the temporary listener on 127.0.0.1:1455. The first manual check (quickstart, step 1) settles it before slice 4 is built on it.
+**Result (2026-11-13)**: the owner ran the spike on port 5000 with a fresh host id and the host stopped: the first registration and the sign-in were accepted with `http://127.0.0.1:5000/auth/callback` as the redirect address.
 
 ## 2. One sign-in, same tab
 
-**Decision**: the client asks `POST /api/chatgpt/sign-in` for the authorization address and navigates the current tab to it. The callback redirects back to `/`. The client reads the account state when it loads, so there is no polling and no popup.
+**Decision**: the client asks `POST /api/chatgpt/sign-in` for the authorization address and navigates the current tab to it. The callback redirects back to `/index.html?chatgpt=<outcome>`. The client reads the account state when it loads, so there is no polling and no popup.
 
 **Rationale**: a popup can be blocked and needs cross-window messaging; polling needs timers (AGENTS.md: no sleeps). Navigating away is acceptable because nothing is in progress when she signs in (she returns to her project, which the server restores, and reopens the document; this happens once per sign-in, and saving the open document across the navigation is left out as extra scope): summaries are discarded anyway (F003 FR-009), and the active project is restored from the server on load.
 
@@ -98,7 +98,6 @@ Technology decisions for [plan.md](plan.md). Sources: `docs/notes/summary-servic
 
 | Unknown | Where it is settled |
 |---|---|
-| A first registration accepts the host's own port (section 1) | Manual check, quickstart step 1; fallback: listener on 1455 |
 | The ID token's signing algorithm and the email claim | Slice 4 on the real token; sign-in fails closed on anything else |
 | The `revocation_endpoint` URL | Read from the discovery document at sign-out; slice 6 |
 | The exact error bodies for usage limit, disconnect and no plan | Fake service follows the code table; manual validation checks the real ones where reachable. A free-tier account is not available to the owner, so "no plan access" is verified with the fake only |

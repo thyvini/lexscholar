@@ -34,7 +34,7 @@ LexScholar__DataDirectory=/tmp/lexscholar-f005 dotnet run --project src/LexSchol
 
 | # | Do | Expect |
 |---|---|---|
-| 1 | Sign in with ChatGPT in Firefox | Returns signed in with the right account; confirms the callback on the host's own port is accepted (research §1, fallback if not) |
+| 1 | Sign in with ChatGPT in Firefox | Returns signed in with the right account |
 | 2 | Look at the welcome | Shown once; after "Got it", not shown again, also after sign-out and sign-in |
 | 3 | Summarize a short public-domain PDF | Confirmation names the ChatGPT plan; summary with citations; label "Using ChatGPT plan"; context names ChatGPT plan and the model |
 | 4 | Summarize again | No confirmation; same label |
