@@ -1,0 +1,168 @@
+openapi: 3.1.0
+info:
+  title: LexScholar F005 Sign in with ChatGPT API
+  version: 1.0.0
+  description: >-
+    Adds sign-in endpoints and changes the F003 summary endpoint
+    (specs/003-document-summary/contracts/summary-api.yaml). Same host security as F001:
+    loopback only, Host/Origin checks, antiforgery token (X-CSRF-TOKEN) on every unsafe
+    request. Credentials never appear in any request or response of this API. Problems use
+    the F001 Problem shape (title, status, code). Decisions: research.md.
+servers:
+  - url: http://127.0.0.1:{port}
+    variables:
+      port:
+        default: "5000"
+paths:
+  /api/summary/destinations:
+    get:
+      summary: Where a summary can go right now
+      responses:
+        "200":
+          description: The destinations available to the researcher.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [chatgpt, welcomePending]
+                properties:
+                  chatgpt:
+                    type: object
+                    required: [signedIn]
+                    properties:
+                      signedIn: { type: boolean }
+                      account: { type: string, description: "Display name of the signed-in account. Present only when signedIn." }
+                      confirmed: { type: boolean, description: "She has confirmed sending text to her plan in this sign-in. Present only when signedIn." }
+                  configured:
+                    type: [object, "null"]
+                    description: The service from the settings file (F003), null when none is configured.
+                    properties:
+                      serviceHost: { type: string }
+                      model: { type: string }
+                      local: { type: boolean }
+                  welcomePending:
+                    type: boolean
+                    description: Signed in and the one-time welcome has not been dismissed yet.
+  /api/chatgpt/sign-in:
+    post:
+      summary: Start a sign-in
+      description: >-
+        Replaces any pending attempt and returns the address at which she signs in with
+        ChatGPT in her browser. The client navigates its tab to it. Nothing is stored yet.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [authorizationUrl]
+                properties:
+                  authorizationUrl: { type: string, format: uri }
+        "409":
+          description: "`already_signed_in`: sign out first."
+          content: { application/problem+json: { schema: { $ref: "#/components/schemas/Problem" } } }
+  /auth/callback:
+    get:
+      summary: Where the browser returns after signing in (not called by the client's code)
+      description: >-
+        Safe GET navigation from ChatGPT's sign-in. Checks the pending attempt, finishes the
+        sign-in and always answers `302` to `/?chatgpt=<outcome>`. The query of this request
+        (code, state) is never logged. Outcomes: `signed_in`, `cancelled` (she declined, or
+        no attempt was pending), `no_plan_access` (the account's plan cannot be used; nothing
+        is stored), `failed` (anything else; nothing is stored).
+      parameters:
+        - { name: code, in: query, schema: { type: string } }
+        - { name: state, in: query, schema: { type: string } }
+        - { name: error, in: query, schema: { type: string } }
+      responses:
+        "302":
+          description: Redirect to `/?chatgpt=signed_in|cancelled|no_plan_access|failed`.
+  /api/chatgpt/sign-out:
+    post:
+      summary: Sign out
+      description: >-
+        Stops any running ChatGPT summary, asks OpenAI to revoke the sign-in (best effort),
+        and deletes everything stored for it. Idempotent.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [revoked]
+                properties:
+                  revoked:
+                    type: boolean
+                    description: OpenAI confirmed the revocation. When false the client says she can also disconnect LexScholar in her ChatGPT settings.
+  /api/chatgpt/welcome/dismiss:
+    post:
+      summary: The one-time welcome was dismissed
+      responses:
+        "204": { description: Recorded; the welcome is not offered again. }
+  /api/projects/{projectId}/documents/{documentId}/summary:
+    post:
+      summary: Summarize a document (changes to F003)
+      description: >-
+        The F003 checks and order apply, with the destination resolved first. Request body
+        additions: `destination`. For `chatgpt`: signed in required, then F003's local checks,
+        then the confirmation (first summary of this sign-in only), then the model is chosen
+        and the summary runs as in F003. The `summary` event names `serviceHost: "ChatGPT plan"`.
+        Sign-out or an ended sign-in during the run ends it with a `failed` event.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirmSend]
+              properties:
+                destination:
+                  type: string
+                  enum: [chatgpt, configured]
+                  description: May be omitted only when exactly one destination is available.
+                confirmSend: { type: boolean }
+                confirmedHost: { type: string, description: "`configured` only, as in F003." }
+                confirmedModel: { type: string, description: "`configured` only, as in F003." }
+      responses:
+        "200":
+          description: >-
+            NDJSON events as in F003. `failed` gains the codes `usage_limit_reached`,
+            `signed_out` and `no_plan_access` (detail is LexScholar's own wording; `Manage usage`
+            is the client's action for `usage_limit_reached`). `no_plan_access` also deletes the
+            stored sign-in: she is signed out afterwards.
+        "400":
+          description: "`destination_required`: two destinations are available and none was named. Nothing was sent."
+          content: { application/problem+json: { schema: { $ref: "#/components/schemas/Problem" } } }
+        "409":
+          description: >-
+            `confirmation_required` as in F003 for `configured`. For `chatgpt` it carries
+            `destination: chatgpt` and the `account`; confirm with `confirmSend: true`.
+          content: { application/problem+json: { schema: { $ref: "#/components/schemas/ConfirmationProblem" } } }
+        "503":
+          description: >-
+            As in F003, plus `chatgpt_signed_out` (`destination: chatgpt` while not signed in;
+            she is offered sign-in). `summary_service_not_configured` now means neither a
+            settings-file service nor a ChatGPT sign-in exists: the client offers sign-in first
+            and shows the settings-file explanation as secondary text.
+          content: { application/problem+json: { schema: { $ref: "#/components/schemas/Problem" } } }
+components:
+  schemas:
+    Problem:
+      type: object
+      required: [title, status, code]
+      properties:
+        title: { type: string }
+        detail: { type: string }
+        status: { type: integer }
+        code:
+          type: string
+          enum: [not_found, document_not_found, document_unavailable, summary_service_not_configured, too_many_pages, no_text, not_enough_text, confirmation_required, destination_required, already_signed_in, chatgpt_signed_out]
+    ConfirmationProblem:
+      allOf:
+        - $ref: "#/components/schemas/Problem"
+        - type: object
+          properties:
+            destination: { type: string, enum: [chatgpt, configured] }
+            account: { type: string, description: "`chatgpt` only." }
+            serviceHost: { type: string, description: "`configured` only." }
+            model: { type: string, description: "`configured` only." }
