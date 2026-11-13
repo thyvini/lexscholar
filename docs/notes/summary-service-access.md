@@ -24,7 +24,7 @@ Possible narrowing the owner mentioned: sign-in with the OpenAI or Claude accoun
 
 Known:
 
-- Today the app needs a service URL, a model name and (for cloud services) an API key, all set in a file. That is too complex for the intended user.
+- Today the app needs manual configuration of a service URL, a model name and (for cloud services) an API key. The URL and model can go in `appsettings.json` or in environment variables; the key is meant to be set only through the environment variable `LexScholar__Summary__ApiKey`. That is too complex for the intended user.
 - Anything other than a service on this machine sends document text off the machine. Constitution principle II applies: explicit, informed opt-in with a clear explanation of what leaves the machine. F003 already asks before every summary for a service elsewhere, and the confirmation is bound to the host and model shown.
 
 **Not verified** (do not treat as fact; research before building):
