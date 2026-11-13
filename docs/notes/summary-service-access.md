@@ -1,6 +1,6 @@
 # Notes: how the summary feature reaches a language model
 
-**Status: researched, not decided, nothing built.** Recorded on 2026-11-13 so the thread is not lost; research added the same day (see "Research" below). These are notes, not a spec: nothing here is a requirement, and no feature has been started. The owner wants to think and decide later.
+**Status: research and spike done; the spike passed; not decided, nothing built.** Recorded on 2026-11-13 so the thread is not lost; research and a spike added the same day (see "Research" and "Spike result" below).
 
 ## What triggered this
 
@@ -74,9 +74,25 @@ Sources are listed at the end. Primary documentation was read where it could be 
 - Document text still leaves her machine. F003's per-summary confirmation (FR-014) still applies.
 - A settings screen (F004) is the natural place for the sign-in button and for API keys for other providers.
 
+### Spike result (2026-11-13)
+
+A throwaway Python script (standard library only, not committed) ran the documented flow on the owner's machine with a ChatGPT Plus or Pro account. Every step passed:
+
+| Step | Result |
+|---|---|
+| Registration with `dynamic_agent_client`, loopback `127.0.0.1:1455` | OK: an issued client id (`oaiapp_…`), no approval or partner key needed |
+| Token exchange | OK: `expires_in` 3600, refresh token present |
+| ID token | OK: issuer `https://auth.openai.com`, audience is the issued client id, nonce matches (signature not verified in the spike) |
+| Plan-usage scope | OK: `chatgpt.tokens.use.direct` granted, with `resource.invoke`, `offline_access`, `openid`, `profile`, `email` |
+| Model list (`GET /v1/models`) | OK: 8 listed: `gpt-6.1-sol`, `gpt-6-astra`, `gpt-6.1-terra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` |
+| One request (`POST /v1/responses`, `store: false`, `stream: true`, `gpt-6.1-sol`) | OK: 3.7 s, 105 input and 32 output tokens; an accurate one-sentence summary of a public-domain paragraph, citing `[Page 1]` as asked |
+| Token refresh (standard `refresh_token` grant at the token endpoint; not documented on the pages read) | OK: HTTP 200, the refresh token rotates |
+
+What this settles: an app like LexScholar can self-serve plan usage, and the flow, model list, streaming request and refresh work as described. Still open before building: OpenAI's terms and data handling for plan usage; how the weekly per-app cap and Plus's five-hour limit hold up for a 100-page document (roughly 100k input tokens across chunks); and the exact refresh request, which should be confirmed in OpenAI's documentation.
+
 ### Proposed next steps (not decided)
 
-1. A short spike: register and sign in through the loopback flow with her account, list the models, send one small request, and read OpenAI's terms and data handling for plan usage. Record the result here.
+1. ~~A short spike~~: done, passed (see "Spike result"). Still to do: read OpenAI's terms and data handling for plan usage.
 2. If it works: a new feature, F005 "Sign in with ChatGPT" (sign-in and sign-out, token storage, a Responses API client, model listing, usage-limit messages), with its own spec, plan and tasks, within the size budget.
 3. F004 as planned, with the settings screen as the home for sign-in and API keys.
 
@@ -89,7 +105,7 @@ Sources are listed at the end. Primary documentation was read where it could be 
 
 ## Next step
 
-The owner decides whether to run the spike (Research, step 1). Until then nothing is built.
+The spike passed. The owner decides whether to start F005 "Sign in with ChatGPT" (specify, plan, tasks), after reading OpenAI's terms and data handling for plan usage. Until then nothing is built.
 
 ## Sources
 
