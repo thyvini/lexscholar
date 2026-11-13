@@ -116,7 +116,7 @@ let errorMessage (apiKey: string option) (bytes: byte array) : string option =
                 match apiKey with
                 | Some key when key <> "" -> message.GetString().Replace(key, "[key]")
                 | _ -> message.GetString()
-            let line = String(raw.ToCharArray() |> Array.map (fun c -> if Char.IsControl c then ' ' else c))
+            let line = String(raw.ToCharArray() |> Array.map (fun c -> if Char.IsControl c || Char.IsWhiteSpace c || Char.GetUnicodeCategory c = Globalization.UnicodeCategory.Format then ' ' else c))
             let collapsed = String.Join(" ", line.Split(' ', StringSplitOptions.RemoveEmptyEntries))
             let capped = if collapsed.Length > maximumMessageCharacters then collapsed.Substring(0, maximumMessageCharacters) else collapsed
             if capped = "" then None else Some capped
@@ -141,7 +141,12 @@ let private send (client: HttpClient) (settings: Settings) (messages: Summarize.
             use! stream = response.Content.ReadAsStreamAsync(bodyLimit.Token)
             if not response.IsSuccessStatusCode then
                 // A refusal's body is read under the same cap; one that cannot be read gives no message.
-                let! refusal = readLimited stream bodyLimit.Token
+                let! refusal =
+                    task {
+                        try return! readLimited stream bodyLimit.Token
+                        with
+                        | :? OperationCanceledException when cancellation.IsCancellationRequested -> return raise (OperationCanceledException(cancellation))
+                        | :? OperationCanceledException | :? IOException | :? HttpRequestException -> return None }
                 return Error (Summarize.ServiceError.ErrorStatus (status, refusal |> Option.bind (errorMessage settings.ApiKey)))
             else
                 match! readLimited stream bodyLimit.Token with

@@ -242,3 +242,16 @@ let ``the service's message is never logged`` () =
     let logged = String.Join("\n", logger.Lines)
     Assert.Contains("127.0.0.1", logged)
     for secret in [ "MESSAGE-SENTINEL-3391"; "PROMPT-SENTINEL-1"; "KEY-SENTINEL-5518" ] do Assert.DoesNotContain(secret, logged)
+
+[<Fact; Trait("Task", "T013")>]
+let ``a message of only Unicode spaces or separators counts as no message`` () =
+    for blank in [ "\u00a0\u00a0"; "\u2028\u2029"; "\u200b\u00a0" ] do
+        let detail = detailFor (refusal "400 Bad Request" (errorBody blank)) None (CapturingLogger())
+        Assert.Contains("MaxOutputTokens", detail)
+
+[<Fact; Trait("Task", "T013")>]
+let ``a refusal whose body breaks off keeps the status-based advice, not connection advice`` () =
+    // The headers promise more bytes than are sent, then the connection closes.
+    let broken = "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: 500\r\nConnection: close\r\n\r\n{\"error\""
+    let detail = detailFor broken None (CapturingLogger())
+    Assert.Contains("MaxOutputTokens", detail)

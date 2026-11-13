@@ -16,3 +16,7 @@ Risk: untrusted service text reaches the researcher; GPT review expected.
 ## Limitations
 - A string search in xunit ignores control characters under ICU, so the control-character check is per character.
 - Full-suite CI run: see the PR.
+
+## Greptile (2 x P2), both must fix, done
+- A refusal body that breaks off or stalls became Unreachable/TimedOut (connection advice): now `ErrorStatus (status, None)`; the caller's cancellation still propagates. Test: broken body keeps the settings hint (failed before the fix).
+- Blank message of non-breaking spaces or Unicode separators survived as a message: whitespace and format characters now count as spaces. Test added (failed before the fix). `scripts/check.sh T013 T010 T003` -> 85 total, 0 failed.
