@@ -78,19 +78,19 @@ let update (message: Message) (model: Model) : Model * Effect option =
     // Leaving a running request aborts it (FR-009); other states have nothing in flight.
     let abandon model =
         reset model, (match model.State with Generating request -> Some (Cancel request) | _ -> None)
+    // Every request takes a fresh number.
+    let start project document confirmed =
+        let request = model.Request + 1
+        { model with State = Generating request; Progress = None; Request = request }, Some (Send (request, project, document, confirmed))
     match message with
     | Summarize ->
         match model.Project, model.Document, model.State with
-        | Some project, Some document, (Idle | Shown _ | Failed _) ->
-            let request = model.Request + 1
-            { model with State = Generating request; Progress = None; Request = request }, Some (Send (request, project, document, None))
+        | Some project, Some document, (Idle | Shown _ | Failed _) -> start project document None
         | _ -> model, None
     | Dismiss -> abandon model
     | ConfirmSend ->
         match model.Project, model.Document, model.State with
-        | Some project, Some document, Confirming (host, name) ->
-            let request = model.Request + 1
-            { model with State = Generating request; Progress = None; Request = request }, Some (Send (request, project, document, Some { Host = host; Model = name }))
+        | Some project, Some document, Confirming (host, name) -> start project document (Some { Host = host; Model = name })
         | _ -> model, None
     // Cancelling sends nothing: no effect. A late answer is dropped because only `Generating` accepts one.
     | CancelSend ->
