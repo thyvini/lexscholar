@@ -116,12 +116,37 @@ let private confirmedService (context: HttpContext) : Task<(string * string) opt
             return if root.ValueKind = JsonValueKind.Object then confirmationOf root else None
         with :? JsonException -> return None }
 
+let private extractionProblem : Summarize.ExtractionError -> IResult = function
+    | Summarize.ExtractionError.DocumentNotFound -> problem 404 "document_not_found" "Document not found" null
+    | Summarize.ExtractionError.DocumentUnavailable ->
+        problem 503 "document_unavailable" "The document's stored file is missing, unreadable or not the recorded size."
+            "Its library record and associations are unchanged."
+    | Summarize.ExtractionError.TooManyPages ->
+        problem 422 "too_many_pages" "The document has too many pages"
+            $"Only documents of up to {PdfText.maximumPages} pages can be summarized."
+
+let private readabilityProblem : NoTextReason -> IResult = function
+    | NoReadableText ->
+        problem 422 "no_text" "The document has no readable text"
+            "No page has a text layer, so there is nothing to summarize. Nothing was sent."
+    | NotEnoughText ->
+        problem 422 "not_enough_text" "The document has too little text"
+            "The readable text is too short to summarize. Nothing was sent."
+
+let private confirmationRequired (summary: SummaryConfiguration) : IResult =
+    Results.Problem(
+        statusCode = Nullable 409,
+        title = "Confirmation needed",
+        detail = "The text of this document will leave this machine. Nothing was sent.",
+        extensions = dict [ "code", box "confirmation_required"
+                            "serviceHost", box summary.Endpoint.Authority
+                            "model", box summary.Model ])
+
 let map (app: WebApplication) (configuration: WorkspaceConfiguration) =
-    let summary = configuration.Summary
     let directory = configuration.DataDirectory
     app.MapPost("/api/projects/{projectId:guid}/documents/{documentId:guid}/summary",
                 Func<Guid, Guid, HttpContext, Task<IResult>>(fun projectId documentId context -> task {
-        match summary with
+        match configuration.Summary with
         | None ->
             return problem 503 "summary_service_not_configured" "No summary service is configured"
                        "Set LexScholar:Summary:Endpoint and LexScholar:Summary:Model (see the quickstart) and restart LexScholar."
@@ -132,21 +157,10 @@ let map (app: WebApplication) (configuration: WorkspaceConfiguration) =
                 return problem 404 "document_not_found" "Document not found" null
         | Some configured ->
             match! PdfText.extractPages directory documentId context.RequestAborted with
-            | Error Summarize.ExtractionError.DocumentNotFound -> return problem 404 "document_not_found" "Document not found" null
-            | Error Summarize.ExtractionError.DocumentUnavailable ->
-                return problem 503 "document_unavailable" "The document's stored file is missing, unreadable or not the recorded size."
-                           "Its library record and associations are unchanged."
-            | Error Summarize.ExtractionError.TooManyPages ->
-                return problem 422 "too_many_pages" "The document has too many pages"
-                           $"Only documents of up to {PdfText.maximumPages} pages can be summarized."
+            | Error error -> return extractionProblem error
             | Ok pages ->
                 match Summaries.readability pages with
-                | Error NoReadableText ->
-                    return problem 422 "no_text" "The document has no readable text"
-                               "No page has a text layer, so there is nothing to summarize. Nothing was sent."
-                | Error NotEnoughText ->
-                    return problem 422 "not_enough_text" "The document has too little text"
-                               "The readable text is too short to summarize. Nothing was sent."
+                | Error failure -> return readabilityProblem failure
                 | Ok readable ->
                     // FR-014: for a service elsewhere nothing is sent without this request's confirmation
                     // of the host and model currently configured. This is the only path to
@@ -154,13 +168,6 @@ let map (app: WebApplication) (configuration: WorkspaceConfiguration) =
                     let! confirmation = confirmedService context
                     let current = configured.Endpoint.Authority, configured.Model
                     if ServiceLocation.classify configured.Endpoint.Host = Elsewhere && confirmation <> Some current then
-                        context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("LexScholar.Summary")
-                            .LogInformation("Summary needs confirmation for {Host}, model {Model}", configured.Endpoint.Authority, configured.Model)
-                        return Results.Problem(
-                            statusCode = Nullable 409,
-                            title = "Confirmation needed",
-                            detail = "The text of this document will leave this machine. Nothing was sent.",
-                            extensions = dict [ "code", box "confirmation_required"
-                                                "serviceHost", box configured.Endpoint.Authority
-                                                "model", box configured.Model ])
+                        (summaryLogger context).LogInformation("Summary needs confirmation for {Host}, model {Model}", configured.Endpoint.Authority, configured.Model)
+                        return confirmationRequired configured
                     else return! summarizeOnce context configured documentId readable })) |> ignore
