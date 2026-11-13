@@ -35,19 +35,28 @@ let private serialize (credentials: Credentials) : byte array =
 let private parse (bytes: byte array) : Credentials =
     use document = JsonDocument.Parse bytes
     let root = document.RootElement
-    let text (name: string) = root.GetProperty(name).GetString() |> Option.ofObj |> Option.get
+    let text (name: string) =
+        match root.GetProperty(name).GetString() with
+        | null | "" -> failwith $"empty {name}"
+        | value -> value
     let time (name: string) = root.GetProperty(name).GetDateTimeOffset()
-    { ClientId = text "clientId"
-      HostId = text "hostId"
-      Subject = text "subject"
-      Account = text "account"
-      AccessToken = text "accessToken"
-      RefreshToken = text "refreshToken"
-      IdToken = text "idToken"
-      ExpiresAt = time "expiresAt"
-      Scopes = [ for scope in root.GetProperty("scopes").EnumerateArray() -> scope.GetString() |> Option.ofObj |> Option.get ]
-      SignedInAt = time "signedInAt"
-      ConfirmedAt = (match root.TryGetProperty "confirmedAt" with | true, value -> Some(value.GetDateTimeOffset()) | _ -> None) }
+    let credentials =
+        { ClientId = text "clientId"
+          HostId = text "hostId"
+          Subject = text "subject"
+          Account = text "account"
+          AccessToken = text "accessToken"
+          RefreshToken = text "refreshToken"
+          IdToken = text "idToken"
+          ExpiresAt = time "expiresAt"
+          Scopes = [ for scope in root.GetProperty("scopes").EnumerateArray() -> scope.GetString() |> Option.ofObj |> Option.get ]
+          SignedInAt = time "signedInAt"
+          ConfirmedAt = (match root.TryGetProperty "confirmedAt" with | true, value -> Some(value.GetDateTimeOffset()) | _ -> None) }
+    // data-model.md: a record that breaks these rules never came from a valid sign-in.
+    if credentials.ClientId = "dynamic_agent_client" then failwith "unregistered client id"
+    if not (credentials.HostId.StartsWith("urn:uuid:", StringComparison.Ordinal)) then failwith "host id is not a urn:uuid"
+    if not (ChatGptSignIn.grantsPlanUsage (String.Join(' ', credentials.Scopes))) then failwith "no plan usage scope"
+    credentials
 
 /// Deletes the record and any temporary file an interrupted save left behind (they hold tokens).
 let delete (dataDirectory: string) : unit =
@@ -59,11 +68,12 @@ let delete (dataDirectory: string) : unit =
 /// signed out and is deleted.
 let read (dataDirectory: string) : Credentials option =
     let path = recordPath dataDirectory
-    if not (File.Exists path) then None else
-    try Some(parse (File.ReadAllBytes path))
-    with _ ->
+    let signedOut () =
         try delete dataDirectory with _ -> ()
         None
+    if not (File.Exists path) then signedOut () else
+    try Some(parse (File.ReadAllBytes path))
+    with _ -> signedOut ()
 
 /// Writes to a temporary file created with mode 0600 (never readable by others, not even
 /// briefly), flushes it, then renames it over the record. A failure leaves the previous
