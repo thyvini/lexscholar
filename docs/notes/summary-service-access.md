@@ -1,6 +1,6 @@
 # Notes: how the summary feature reaches a language model
 
-**Status: research and spike done; the spike passed; not decided, nothing built.** Recorded on 2026-11-13 so the thread is not lost; research and a spike added the same day (see "Research" and "Spike result" below).
+**Status: research and spike done (the spike passed); F005 "Sign in with ChatGPT" chosen, on `release/0.2.0`; nothing built yet.** Recorded on 2026-11-13 so the thread is not lost; research, the spike, the terms reading and the release decision were added the same day.
 
 ## What triggered this
 
@@ -90,10 +90,25 @@ A throwaway Python script (standard library only, not committed) ran the documen
 
 What this settles: an app like LexScholar can self-serve plan usage, and the flow, model list, streaming request and refresh work as described. Still open before building: OpenAI's terms and data handling for plan usage; how the weekly per-app cap and Plus's five-hour limit hold up for a 100-page document (roughly 100k input tokens across chunks); and the exact refresh request, which should be confirmed in OpenAI's documentation.
 
-### Proposed next steps (not decided)
+### Terms, data handling and app requirements (2026-11-13)
 
-1. ~~A short spike~~: done, passed (see "Spike result"). Still to do: read OpenAI's terms and data handling for plan usage.
-2. If it works: a new feature, F005 "Sign in with ChatGPT" (sign-in and sign-out, token storage, a Responses API client, model listing, usage-limit messages), with its own spec, plan and tasks, within the size budget.
+From OpenAI's Sign in with ChatGPT documentation. There is no separate terms document for plan usage in those docs.
+
+- **Data handling:** requests use `store: false`, and plan usage gives the app no access to the user's conversations, other account context or API key. **Training and retention for plan-usage requests are not stated** in the developer docs. OpenAI's help article on using a ChatGPT plan in other apps could not be fetched from here; the owner reads it, and her ChatGPT data controls, before the spec settles what FR-014's confirmation says about where the text goes and how it is used.
+- **Her controls:** she reviews usage and sets a weekly cap per app in ChatGPT's usage settings, and disconnects the app under Login connections. Using credits beyond the plan is off by default; if automatic purchases are on, continued use can be charged (*third-party*). OpenAI does not notify the app when she disconnects it, so the app must handle a refused token as "signed out".
+- **Requirements on the app** (UI/UX guidelines): approved OpenAI branding and comparable prominence for the sign-in button; **Using ChatGPT plan** shown near where the request is made whenever the plan is used; **Manage usage** as the primary action when a usage limit is reached; a one-time welcome confirmation after the first sign-in with plan usage. (The rule to show which of the app's paid plans include plan usage doesn't apply: LexScholar has none.)
+- **Credentials:** keep tokens out of browser storage, source control, logs and support transcripts.
+- **Refresh, now documented:** form-encoded POST to `https://auth.openai.com/api/accounts/oauth/token` with `grant_type=refresh_token`, the issued `client_id`, the refresh token and `resource=https://api.openai.com/v1`, omitting `scope`; replace the access token, expiry, scopes and rotating refresh token together. This is what the spike did.
+
+### Release decision (2026-11-13)
+
+- F005 "Sign in with ChatGPT" is built on `release/0.2.0`, so v0.2.0 ships F003 and F005 together. This is an exception to "one feature per minor version": v0.2.0 cannot ship usefully without a working service for the researcher.
+- T012 (F003's manual validation) completes after F005, with her ChatGPT plan; v0.2.0 is released only after that.
+
+### Proposed next steps
+
+1. ~~A short spike~~: done, passed (see "Spike result"). Terms and app requirements: read (see above); training and retention: the owner reads OpenAI's help article.
+2. Chosen: a new feature, F005 "Sign in with ChatGPT" (sign-in and sign-out, token storage, a Responses API client, model listing, usage-limit messages), with its own spec, plan and tasks, within the size budget.
 3. F004 as planned, with the settings screen as the home for sign-in and API keys.
 
 ## Open items from F003 that this does not replace
@@ -105,14 +120,15 @@ What this settles: an app like LexScholar can self-serve plan usage, and the flo
 
 ## Next step
 
-The spike passed. The owner decides whether to start F005 "Sign in with ChatGPT" (specify, plan, tasks), after reading OpenAI's terms and data handling for plan usage. Until then nothing is built.
+F005 "Sign in with ChatGPT" on `release/0.2.0`: the owner reads OpenAI's help article on plan usage in other apps (training and retention), then specify, clarify, plan and tasks as for F003.
 
 ## Sources
 
 - [Sign in with ChatGPT: open-source and locally hosted apps](https://developers.openai.com/siwc/token-sharing-open-source) (OpenAI)
 - [Sign in with ChatGPT: full documentation](https://developers.openai.com/siwc/llms-full.txt) (OpenAI)
 - [Registration and sign-in](https://developers.openai.com/siwc/token-sharing-open-source/sign-in) (OpenAI)
-- [Using your ChatGPT plan in other apps and sites](https://help.openai.com/en/articles/20001542-using-your-chatgpt-plan-in-other-apps-and-sites) (OpenAI Help)
+- [Using your ChatGPT plan in other apps and sites](https://help.openai.com/en/articles/20001542-using-your-chatgpt-plan-in-other-apps-and-sites) (OpenAI Help; could not be fetched from the agent's environment)
+- [Sign in with ChatGPT: the scope that spends your users' plan](https://workos.com/blog/sign-in-with-chatgpt-plan-usage-scope) (WorkOS, third-party)
 - [Sign in with ChatGPT for developers](https://dev.to/hassann/sign-in-with-chatgpt-for-developers-the-oauth-flow-plan-usage-and-what-it-means-for-your-api-bill-48f7) (DEV Community, third-party)
 - [OpenAI makes "Sign in with ChatGPT" a way to use your subscription](https://thenewstack.io/sign-in-with-chatgpt/) (The New Stack, third-party)
 - [Anthropic officially bans using subscription authentication for third-party Claude use](https://alternativeto.net/news/2026/2/anthropic-officially-bans-using-subscription-authentication-for-third-party-claude-use) (AlternativeTo, third-party)
