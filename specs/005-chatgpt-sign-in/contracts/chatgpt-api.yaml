@@ -66,7 +66,7 @@ paths:
       summary: Where the browser returns after signing in (not called by the client's code)
       description: >-
         Safe GET navigation from ChatGPT's sign-in. Checks the pending attempt, finishes the
-        sign-in and always answers `302` to `/?chatgpt=<outcome>`. The query of this request
+        sign-in and always answers `302` to `/index.html?chatgpt=<outcome>`. The query of this request
         (code, state) is never logged. Outcomes: `signed_in`, `cancelled` (she declined, or
         no attempt was pending), `no_plan_access` (the account's plan cannot be used; nothing
         is stored), `failed` (anything else; nothing is stored).
@@ -76,7 +76,7 @@ paths:
         - { name: error, in: query, schema: { type: string } }
       responses:
         "302":
-          description: Redirect to `/?chatgpt=signed_in|cancelled|no_plan_access|failed`.
+          description: Redirect to `/index.html?chatgpt=signed_in|cancelled|no_plan_access|failed`.
   /api/chatgpt/sign-out:
     post:
       summary: Sign out

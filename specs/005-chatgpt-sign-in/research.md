@@ -4,7 +4,7 @@ Technology decisions for [plan.md](plan.md). Sources: `docs/notes/summary-servic
 
 ## 1. Where the browser returns: the host's own address
 
-**Decision**: the authorization request's redirect address is `http://127.0.0.1:<port>/auth/callback`, a route of LexScholar's own host, with the port taken from the request that started the sign-in (the host is loopback-only, so this is always a loopback port). One attempt is pending at a time, held in memory (state, nonce, code verifier, redirect address, expiry 10 minutes). The callback checks the state, finishes the sign-in and redirects the browser to `/?chatgpt=<outcome>`. Nothing is saved until the token exchange and the ID-token checks succeed, so a host stopped in the middle of a sign-in leaves her signed out.
+**Decision**: the authorization request's redirect address is `http://127.0.0.1:<port>/auth/callback`, a route of LexScholar's own host, with the port taken from the request that started the sign-in (the host is loopback-only, so this is always a loopback port). One attempt is pending at a time, held in memory (state, nonce, code verifier, redirect address, expiry 10 minutes). The callback checks the state, finishes the sign-in and redirects the browser to `/index.html?chatgpt=<outcome>` (not `/`: the host's root route redirects to `/index.html` and would drop the query). Nothing is saved until the token exchange and the ID-token checks succeed, so a host stopped in the middle of a sign-in leaves her signed out.
 
 **Rationale**: the docs require an HTTP loopback callback on `127.0.0.1`, exact scheme, host and path, with only the port allowed to vary. A route on the existing host needs no second listener, no port search and no extra lifecycle. A GET navigation from the browser carries no `Origin` and is a safe method, so the host security rules apply unchanged. Port 1455 (the spike's) is also what the Codex tool uses, so it can be taken.
 
@@ -16,7 +16,7 @@ Technology decisions for [plan.md](plan.md). Sources: `docs/notes/summary-servic
 
 **Decision**: the client asks `POST /api/chatgpt/sign-in` for the authorization address and navigates the current tab to it. The callback redirects back to `/`. The client reads the account state when it loads, so there is no polling and no popup.
 
-**Rationale**: a popup can be blocked and needs cross-window messaging; polling needs timers (AGENTS.md: no sleeps). Navigating away is acceptable because nothing is in progress when she signs in: summaries are discarded anyway (F003 FR-009), and the project and document selection are restored from the server on load.
+**Rationale**: a popup can be blocked and needs cross-window messaging; polling needs timers (AGENTS.md: no sleeps). Navigating away is acceptable because nothing is in progress when she signs in (she returns to her project, which the server restores, and reopens the document; this happens once per sign-in, and saving the open document across the navigation is left out as extra scope): summaries are discarded anyway (F003 FR-009), and the project and document selection are restored from the server on load.
 
 **Alternatives**: popup window with polling; new tab with a status poll.
 
