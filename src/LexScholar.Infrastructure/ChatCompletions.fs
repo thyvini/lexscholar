@@ -113,8 +113,12 @@ let private send (client: HttpClient) (settings: Settings) (messages: Summarize.
         if status >= 300 && status < 400 then return Error Summarize.ServiceError.Redirected
         elif not response.IsSuccessStatusCode then return Error (Summarize.ServiceError.ErrorStatus status)
         else
-            use! stream = response.Content.ReadAsStreamAsync(cancellation)
-            match! readLimited stream cancellation with
+            // The client's timeout stops at the headers; the body gets the same allowance, so a
+            // service that stalls mid-response ends as a timeout instead of a pending request.
+            use bodyLimit = CancellationTokenSource.CreateLinkedTokenSource(cancellation)
+            bodyLimit.CancelAfter client.Timeout
+            use! stream = response.Content.ReadAsStreamAsync(bodyLimit.Token)
+            match! readLimited stream bodyLimit.Token with
             | None -> return Error Summarize.ServiceError.UnusableOutput
             | Some bytes ->
                 match content bytes with

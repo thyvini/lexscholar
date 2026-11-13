@@ -50,6 +50,8 @@ let private summarizeOnce (context: HttpContext) (summary: SummaryConfiguration)
                   write context (box {| ``type`` = "progress"; pagesProcessed = processed; totalPages = total |})
               | Summarize.Progress.Combining -> write context (box {| ``type`` = "combining" |}) }
     let logger = context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger "LexScholar.Summary"
+    logger.LogInformation("Summarizing document {DocumentId}: {Readable} readable pages, {Unreadable} unreadable",
+                          box documentId, pages.Readable.Length, pages.Unreadable.Length)
     try
       match! Summarize.summarize capabilities summary.MaxChunkCharacters pages context.RequestAborted with
       | Ok validated ->
@@ -65,8 +67,8 @@ let private summarizeOnce (context: HttpContext) (summary: SummaryConfiguration)
                                     model = summary.Model |})
       | Error (Summarize.SummaryFailure.NotEnoughText omitted) ->
           do! failed context "not_enough_text" "The service returned no point with valid citations." (Some omitted)
-      | Error (Summarize.SummaryFailure.ServiceFailed _) ->
-          do! failed context "service_failed" "The summary service did not give a usable answer. Try again." None
+      | Error (Summarize.SummaryFailure.ServiceFailed error) ->
+          do! failed context "service_failed" (Summarize.failureDetail error) None
     with :? OperationCanceledException when context.RequestAborted.IsCancellationRequested ->
         // The researcher abandoned the request: the service call was cancelled and nothing more is sent.
         // Only the document id is logged, never its text or the service's answer (FR-009, FR-014).

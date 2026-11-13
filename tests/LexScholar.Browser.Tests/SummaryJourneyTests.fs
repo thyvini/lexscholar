@@ -140,3 +140,18 @@ let ``a service elsewhere is asked about first: Cancel sends nothing, Send sends
         do! click (button dialog "Send")
         do! Assertions.Expect(panel page).ToContainTextAsync("Generated summary")
         Assert.Single(fake.Requests) |> ignore })
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T010"); Trait("Category", "Browser")>]
+let ``a rejected request shows its explanation and Try again asks the service again`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use fake = new FakeChatService(fun call -> if call = 1 then Status 400 else Reply answer)
+        use harness = TestHarness.Start(serveClient = true, settings = settings, summaryHandler = fake)
+        let! page = openApp browser harness
+        do! arrange page
+        do! click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = "Summarize", Exact = true)))
+        let alert = page.GetByRole(AriaRole.Alert).Filter(LocatorFilterOptions(HasText = "MaxOutputTokens"))
+        do! Assertions.Expect(alert).ToContainTextAsync("Model")
+        do! Assertions.Expect(alert).Not.ToContainTextAsync("service detail")
+        do! click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = "Try again", Exact = true)))
+        do! Assertions.Expect(panel page).ToContainTextAsync("Generated summary")
+        Assert.Equal(2, fake.Requests.Length) })

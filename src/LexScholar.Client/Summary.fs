@@ -28,7 +28,8 @@ type Failure =
     | NoText
     | NotEnoughText
     | TooManyPages
-    | ServiceFailed
+    /// The server's own explanation, when it gave one.
+    | ServiceFailed of detail: string option
     | RequestFailed
     /// The service is elsewhere and the researcher has not confirmed: its host and the model.
     | ConfirmationRequired of host: string * model: string
@@ -127,3 +128,17 @@ let pageRanges (pages: int list) : string =
     match pages |> List.distinct |> List.length with
     | 1 -> $"page {ranges.Head}"
     | _ -> "pages " + String.Join(", ", ranges)
+
+/// What the researcher reads for a failure.
+let failureText (failure: Failure) : string =
+    match failure with
+    | NotConfigured ->
+        "Summaries need a summarization service. Set LexScholar:Summary:Endpoint and LexScholar:Summary:Model in the app's settings file, then restart LexScholar."
+    | Unavailable ->
+        "This document's stored file is missing, unreadable or not the recorded size. Its library record and project associations are unchanged."
+    | NoText -> "This document has no readable text to summarize (for example, a scanned PDF without a text layer). Nothing was sent."
+    | NotEnoughText -> "This document doesn't contain enough readable text for a summary."
+    | TooManyPages -> "Documents of more than 100 pages aren't supported yet. Nothing was sent."
+    | ServiceFailed (Some detail) -> detail
+    | ServiceFailed None -> "The summary could not be produced. Please try again."
+    | RequestFailed | ConfirmationRequired _ -> "The request failed. Please try again."

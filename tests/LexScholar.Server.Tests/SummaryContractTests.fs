@@ -355,3 +355,38 @@ let ``an aborted request cancels the service call and sends no further request``
         fake.Cancelled.WaitAsync(TimeSpan.FromSeconds 30.).GetAwaiter().GetResult()
     run () // disposing the host waits for the request to end
     Assert.Equal(2, fake.Requests.Length)
+
+type private FailingHandler(failure: exn) =
+    inherit HttpMessageHandler()
+    override _.SendAsync(_, _) = Threading.Tasks.Task.FromException<HttpResponseMessage>(failure)
+
+let private failedEventFor (handler: HttpMessageHandler) =
+    use harness = TestHarness.Start(settings = settings, summaryHandler = handler)
+    let project = seedProject harness.Root
+    let document = import harness.Client "article-en.pdf"
+    associate harness.Client project document
+    let status, text = summarize harness.Client project document
+    Assert.Equal(HttpStatusCode.OK, status)
+    use json = JsonDocument.Parse(text.Trim())
+    Assert.Equal("failed", json.RootElement.GetProperty("type").GetString())
+    Assert.Equal("service_failed", json.RootElement.GetProperty("code").GetString())
+    json.RootElement.GetProperty("detail").GetString()
+
+[<Fact; Trait("Task", "T010")>]
+let ``an unreachable service and a timeout are service_failed events in their own words`` () =
+    let unreachable = failedEventFor (new FailingHandler(HttpRequestException("connection refused")))
+    let timedOut = failedEventFor (new FailingHandler(Threading.Tasks.TaskCanceledException("timed out")))
+    Assert.NotEqual<string>(unreachable, timedOut)
+    for detail in [ unreachable; timedOut ] do
+        Assert.Contains("Try again", detail)
+        Assert.DoesNotContain("connection refused", detail)
+        Assert.DoesNotContain("timed out", detail)
+
+[<Fact; Trait("Task", "T010")>]
+let ``a 400 from the service tells the researcher which settings to check and never shows its body`` () =
+    let _, events, _, _ = summarizeWith "article-en.pdf" (Status 400) []
+    let detail = (Assert.Single events).GetProperty("detail").GetString()
+    for setting in [ "Model"; "Temperature"; "MaxOutputTokens" ] do Assert.Contains(setting, detail)
+    Assert.DoesNotContain("service detail", detail)
+    let _, others, _, _ = summarizeWith "article-en.pdf" (Status 500) []
+    Assert.DoesNotContain("MaxOutputTokens", (Assert.Single others).GetProperty("detail").GetString())

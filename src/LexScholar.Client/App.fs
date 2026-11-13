@@ -170,7 +170,7 @@ module Api =
         | "no_text" -> Summary.NoText
         | "not_enough_text" -> Summary.NotEnoughText
         | "too_many_pages" -> Summary.TooManyPages
-        | "service_failed" -> Summary.ServiceFailed
+        | "service_failed" -> Summary.ServiceFailed None
         | _ -> Summary.RequestFailed
 
     let private problemCode (body: string) =
@@ -206,7 +206,15 @@ module Api =
                        Summary.GeneratedAt = element.GetProperty("generatedAt").GetDateTimeOffset()
                        Summary.ServiceHost = element.GetProperty("serviceHost").GetString()
                        Summary.Model = element.GetProperty("model").GetString() })
-        | "failed" -> Some (Error (summaryFailure (element.GetProperty("code").GetString())))
+        | "failed" ->
+            match summaryFailure (element.GetProperty("code").GetString()) with
+            | Summary.ServiceFailed _ ->
+                let detail =
+                    match element.TryGetProperty "detail" with
+                    | true, value when value.ValueKind = JsonValueKind.String -> Some (value.GetString())
+                    | _ -> None
+                Some (Error (Summary.ServiceFailed detail))
+            | failure -> Some (Error failure)
         | _ -> None
 
     /// The progress an event reports, if it is one.
@@ -482,16 +490,7 @@ module private Ui =
             }
         }
 
-    let summaryFailureText = function
-        | Summary.NotConfigured ->
-            "Summaries need a summarization service. Set LexScholar:Summary:Endpoint and LexScholar:Summary:Model in the app's settings file, then restart LexScholar."
-        | Summary.Unavailable ->
-            "This document's stored file is missing, unreadable or not the recorded size. Its library record and project associations are unchanged."
-        | Summary.NoText -> "This document has no readable text to summarize (for example, a scanned PDF without a text layer). Nothing was sent."
-        | Summary.NotEnoughText -> "This document doesn't contain enough readable text for a summary."
-        | Summary.TooManyPages -> "Documents of more than 100 pages aren't supported yet. Nothing was sent."
-        | Summary.ServiceFailed -> "The summary could not be produced. Please try again."
-        | Summary.RequestFailed | Summary.ConfirmationRequired _ -> "The request failed. Please try again."
+    let summaryFailureText = Summary.failureText
 
     /// The context needed to understand and reproduce a summary (FR-008).
     let summaryContext (document: Reader.Document) (generated: Summary.Generated) =
@@ -531,8 +530,10 @@ module private Ui =
                         " "
                         button { attr.``type`` "button"; attr.``class`` "send-cancel"; on.click (fun _ -> dispatch Summary.CancelSend); "Cancel" }
                     }
-                | Summary.Idle | Summary.Failed _ ->
+                | Summary.Idle ->
                     button { attr.``type`` "button"; on.click (fun _ -> dispatch Summary.Summarize); "Summarize" }
+                | Summary.Failed _ ->
+                    button { attr.``type`` "button"; attr.``class`` "summary-retry"; on.click (fun _ -> dispatch Summary.Summarize); "Try again" }
             cond summary.State <| function
                 | Summary.Failed failure -> p { attr.``class`` "error"; "role" => "alert"; text (summaryFailureText failure) }
                 | _ -> empty ()

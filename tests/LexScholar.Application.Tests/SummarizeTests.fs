@@ -157,3 +157,17 @@ let ``a request cancelled between service calls starts no further call`` () =
     let run () = (Summarize.summarize capabilities 250 longPages source.Token).GetAwaiter().GetResult()
     Assert.ThrowsAny<OperationCanceledException>(fun () -> run () |> ignore) |> ignore
     Assert.Equal(1, sent.Count)
+
+[<Fact; Trait("Task", "T010")>]
+let ``a rejected request names the settings to check and no failure detail carries service text`` () =
+    let rejected = Summarize.failureDetail (Summarize.ServiceError.ErrorStatus 400)
+    for setting in [ "Model"; "Temperature"; "MaxOutputTokens" ] do Assert.Contains(setting, rejected)
+    let others =
+        [ Summarize.ServiceError.Unreachable; Summarize.ServiceError.ErrorStatus 500; Summarize.ServiceError.Redirected
+          Summarize.ServiceError.TimedOut; Summarize.ServiceError.UnusableOutput ]
+        |> List.map Summarize.failureDetail
+    // Each failure kind is explained in its own words, and only a 400 points at the settings.
+    Assert.Equal(others.Length, (others |> List.distinct |> List.length))
+    for detail in others do
+        Assert.DoesNotContain("MaxOutputTokens", detail)
+        Assert.Contains("Try again", detail)
