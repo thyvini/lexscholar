@@ -145,6 +145,38 @@ let ``a combined point citing a page outside its group is omitted`` () =
         Assert.True(result.Omitted >= 1)
     | Error failure -> failwith $"expected Ok, got {failure}"
 
+[<Fact; Trait("Task", "T006")>]
+let ``points keep their order and omitted counts add up across several replies and combine rounds`` () =
+    let sent, reports = List(), List()
+    let padding = text 80
+    let bad = "bad|", [ 99 ] // cites a page that was never sent, so it is omitted every time
+    let idsOf (messages: Summarize.ChatMessage list) =
+        messages.[1].Content.Split('\n')
+        |> Array.map (fun line -> Text.RegularExpressions.Regex.Match(line, @"^- \(pages [\d, ]+\) ([^|]*)\|").Groups.[1].Value)
+        |> Array.toList
+    // Map: two distinct points per chunk (1a, 1b, 2a, ...) and one invalid one. Combine: one point
+    // whose text lists the ids it was given in order, so any reordering shows in the result.
+    let reply messages =
+        if isCombine messages then
+            pointsJson [ String.Join("+", idsOf messages) + "|" + padding, citedIn messages; bad ]
+        else
+            let n = (citedIn messages).Head
+            pointsJson [ $"{n}a|{padding}", [ n ]; $"{n}b|{padding}", [ n ]; bad ]
+    match runLong reply sent reports with
+    | Ok result ->
+        let ids = [ for n in 1..6 do yield $"{n}a"; yield $"{n}b" ] |> String.concat "+"
+        Assert.Equal<SummaryPoint list>([ { Text = $"{ids}|{padding}"; Pages = [ 1; 2; 3; 4; 5; 6 ] } ], result.Points)
+        Assert.Equal(6 + 6 + 3 + 2 + 1, result.Omitted) // six maps, then four combine rounds of 6, 3, 2 and 1 calls
+    | Error failure -> failwith $"expected Ok, got {failure}"
+    // 12 map points in groups of two, then 6 combined points in groups of two, then 3 as [2; 1], then the last two.
+    let combines = sent |> Seq.filter isCombine |> Seq.map idsOf |> Seq.toList
+    Assert.Equal<string list list>(
+        [ [ "1a"; "1b" ]; [ "2a"; "2b" ]; [ "3a"; "3b" ]; [ "4a"; "4b" ]; [ "5a"; "5b" ]; [ "6a"; "6b" ]
+          [ "1a+1b"; "2a+2b" ]; [ "3a+3b"; "4a+4b" ]; [ "5a+5b"; "6a+6b" ]
+          [ "1a+1b+2a+2b"; "3a+3b+4a+4b" ]; [ "5a+5b+6a+6b" ]
+          [ "1a+1b+2a+2b+3a+3b+4a+4b"; "5a+5b+6a+6b" ] ],
+        combines)
+
 [<Fact; Trait("Task", "T008")>]
 let ``a request cancelled between service calls starts no further call`` () =
     let sent = List()
