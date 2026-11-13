@@ -83,7 +83,7 @@ let private readLimited (stream: Stream) (cancellation: CancellationToken) : Tas
     let mutable over = false
     let mutable finished = false
     while not over && not finished do
-        let! read = stream.ReadAsync(chunk, 0, chunk.Length, cancellation)
+        let! read = stream.ReadAsync(chunk.AsMemory(), cancellation)
         if read = 0 then finished <- true
         else
             buffer.Write(chunk, 0, read)

@@ -52,23 +52,25 @@ let failureDetail (error: ServiceError) : string =
     | ServiceError.Redirected -> "The summary service redirected the request, which LexScholar does not follow. Check the Endpoint setting. Try again."
     | ServiceError.UnusableOutput -> "The summary service did not give a usable answer. Try again."
 
+let private jsonForm = "{\"points\": [{\"text\": \"...\", \"pages\": [3, 4]}]}"
+
 let private systemPrompt =
     "You summarize a document for a researcher. The text is split by page markers such as [Page 7]. "
     + "Write 5 to 10 main points, in the language of most of the text. Each point cites the page markers it comes from. "
-    + "Answer only with JSON of this form and nothing else: {\"points\": [{\"text\": \"...\", \"pages\": [3, 4]}]}. "
+    + $"Answer only with JSON of this form and nothing else: {jsonForm}. "
     + "Use {\"points\": []} when the text has no main points. Cite only pages that appear as markers."
 
 let private mapPrompt =
     "You summarize part of a document for a researcher. The text is split by page markers such as [Page 7]. "
     + "Write at most 5 main points of this part, in the language of most of the text. Each point cites the page markers it comes from. "
-    + "Answer only with JSON of this form and nothing else: {\"points\": [{\"text\": \"...\", \"pages\": [3, 4]}]}. "
+    + $"Answer only with JSON of this form and nothing else: {jsonForm}. "
     + "Use {\"points\": []} when the text has no main points. Cite only pages that appear as markers."
 
 let private combinePrompt (final: bool) =
     let count = if final then "5 to 10 main points" else "at most 5 main points"
     "You merge points from a document into a shorter list for a researcher. Each line is a point, with the pages it cites in parentheses. "
     + $"Write {count} that cover them, in the language of the points. Each point cites pages taken only from the lines it merges. "
-    + "Answer only with JSON of this form and nothing else: {\"points\": [{\"text\": \"...\", \"pages\": [3, 4]}]}."
+    + $"Answer only with JSON of this form and nothing else: {jsonForm}."
 
 /// Combining stops after this many rounds (research §4).
 let maximumRounds = 5
@@ -89,11 +91,12 @@ let private finished (validated: ValidatedPoints) =
     if List.isEmpty validated.Points then Error (SummaryFailure.NotEnoughText validated.Omitted) else Ok validated
 
 /// Map: each chunk in order gives at most 5 points of its own pages; progress counts a page
-/// once its last part is done. Returns all points and the omitted count.
+/// once its last part is done. Returns all points and the omitted count. `points` is
+/// accumulated newest first and reversed once at the end.
 let rec private mapChunks capabilities (total: int) (unreadable: int) (remaining: Chunk list) (done': Set<int>) points omitted cancellation
     : Task<Result<SummaryPoint list * int, SummaryFailure>> = task {
     match remaining with
-    | [] -> return Ok (points, omitted)
+    | [] -> return Ok (List.rev points, omitted)
     | chunk :: rest ->
         match! ask capabilities mapPrompt chunk.Content (Set.ofList chunk.PageNumbers) cancellation with
         | Error failure -> return Error failure
@@ -101,7 +104,7 @@ let rec private mapChunks capabilities (total: int) (unreadable: int) (remaining
             let later = rest |> List.collect (fun c -> c.PageNumbers) |> Set.ofList
             let finishedPages = Set.union done' (Set.ofList chunk.PageNumbers) |> fun seen -> Set.difference seen later
             do! capabilities.Report (Progress.PagesProcessed (unreadable + finishedPages.Count, total))
-            return! mapChunks capabilities total unreadable rest finishedPages (points @ validated.Points) (omitted + validated.Omitted) cancellation }
+            return! mapChunks capabilities total unreadable rest finishedPages (List.rev validated.Points @ points) (omitted + validated.Omitted) cancellation }
 
 let private combineGroup capabilities final (group: SummaryPoint list) cancellation =
     let allowed = group |> List.collect (fun point -> point.Pages) |> Set.ofList
@@ -117,7 +120,7 @@ let rec private combineRounds capabilities (maxChunkCharacters: int) round (poin
         let groups = Summaries.groupPoints maxChunkCharacters points
         let final = groups.Length = 1
         do! capabilities.Report Progress.Combining
-        let mutable merged = []
+        let mutable merged = [] // newest first, reversed once below
         let mutable omittedNow = omitted
         let mutable failure = None
         for group in groups do
@@ -125,13 +128,13 @@ let rec private combineRounds capabilities (maxChunkCharacters: int) round (poin
                 match! combineGroup capabilities final group cancellation with
                 | Error error -> failure <- Some error
                 | Ok validated ->
-                    merged <- merged @ validated.Points
+                    merged <- List.rev validated.Points @ merged
                     omittedNow <- omittedNow + validated.Omitted
         match failure with
         | Some error -> return Error error
-        | None when final -> return finished { Points = merged; Omitted = omittedNow }
+        | None when final -> return finished { Points = List.rev merged; Omitted = omittedNow }
         | None when merged.Length >= points.Length -> return Error (SummaryFailure.ServiceFailed ServiceError.UnusableOutput)
-        | None -> return! combineRounds capabilities maxChunkCharacters (round + 1) merged omittedNow cancellation }
+        | None -> return! combineRounds capabilities maxChunkCharacters (round + 1) (List.rev merged) omittedNow cancellation }
 
 /// Summary points for the readable pages of a document. A document that fits one chunk is one
 /// call; longer ones are mapped chunk by chunk and combined in bounded rounds. Every point

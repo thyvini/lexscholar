@@ -170,7 +170,7 @@ module Summaries =
         if first < 0 || last <= first then Error Unparseable
         else
             try
-                use document = System.Text.Json.JsonDocument.Parse(cleaned.AsMemory(first, last - first + 1))
+                use document = System.Text.Json.JsonDocument.Parse(System.MemoryExtensions.AsMemory(cleaned, first, last - first + 1))
                 match document.RootElement.TryGetProperty "points" with
                 | true, points when points.ValueKind = System.Text.Json.JsonValueKind.Array ->
                     let parsed = [ for item in points.EnumerateArray() -> point allowedPages item ]
