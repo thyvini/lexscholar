@@ -16,7 +16,7 @@ Technology decisions for [plan.md](plan.md). Sources: `docs/notes/summary-servic
 
 **Decision**: the client asks `POST /api/chatgpt/sign-in` for the authorization address and navigates the current tab to it. The callback redirects back to `/`. The client reads the account state when it loads, so there is no polling and no popup.
 
-**Rationale**: a popup can be blocked and needs cross-window messaging; polling needs timers (AGENTS.md: no sleeps). Navigating away is acceptable because nothing is in progress when she signs in (she returns to her project, which the server restores, and reopens the document; this happens once per sign-in, and saving the open document across the navigation is left out as extra scope): summaries are discarded anyway (F003 FR-009), and the project and document selection are restored from the server on load.
+**Rationale**: a popup can be blocked and needs cross-window messaging; polling needs timers (AGENTS.md: no sleeps). Navigating away is acceptable because nothing is in progress when she signs in (she returns to her project, which the server restores, and reopens the document; this happens once per sign-in, and saving the open document across the navigation is left out as extra scope): summaries are discarded anyway (F003 FR-009), and the active project is restored from the server on load.
 
 **Alternatives**: popup window with polling; new tab with a status poll.
 
