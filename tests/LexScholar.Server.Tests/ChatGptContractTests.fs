@@ -13,7 +13,7 @@ open LexScholar.Server
 open Xunit
 
 /// Collects every formatted log line.
-type private CapturingProvider() =
+type CapturingProvider() =
     let lines = System.Collections.Concurrent.ConcurrentQueue<string>()
     member _.Lines = lines |> Seq.toList
     interface ILoggerProvider with
@@ -24,13 +24,13 @@ type private CapturingProvider() =
                 member _.Log(_level, _eventId, state, error, formatter) = lines.Enqueue(formatter.Invoke(state, error)) }
         member _.Dispose() = ()
 
-let private token (client: HttpClient) =
+let token (client: HttpClient) =
     use response = client.GetAsync("/api/antiforgery").GetAwaiter().GetResult()
     use json = JsonDocument.Parse(response.Content.ReadAsStringAsync().GetAwaiter().GetResult())
     json.RootElement.GetProperty("requestToken").GetString()
 
 /// POST with the Origin header and, when `csrf` is given, the antiforgery token.
-let private post (client: HttpClient) (path: string) (csrf: string option) =
+let post (client: HttpClient) (path: string) (csrf: string option) =
     use message = new HttpRequestMessage(HttpMethod.Post, path)
     message.Headers.TryAddWithoutValidation("Origin", client.BaseAddress.GetLeftPart(UriPartial.Authority)) |> ignore
     csrf |> Option.iter (fun value -> message.Headers.TryAddWithoutValidation("X-CSRF-TOKEN", value) |> ignore)
@@ -38,7 +38,7 @@ let private post (client: HttpClient) (path: string) (csrf: string option) =
     use response = client.Send(message)
     response.StatusCode
 
-let private destinations (client: HttpClient) =
+let destinations (client: HttpClient) =
     use response = client.GetAsync("/api/summary/destinations").GetAwaiter().GetResult()
     Assert.Equal(HttpStatusCode.OK, response.StatusCode)
     JsonDocument.Parse(response.Content.ReadAsStringAsync().GetAwaiter().GetResult())
@@ -95,12 +95,12 @@ let ``the fake OpenAI service answers token, discovery, keys, models and a Respo
 
 // ---- T004: sign in ----
 
-let private workspaceRoot (harness: TestHarness) = harness.Root
+let workspaceRoot (harness: TestHarness) = harness.Root
 
 /// A client that does not follow redirects, for the callback.
-let private plainClient (harness: TestHarness) = new HttpClient(new HttpClientHandler(AllowAutoRedirect = false), true, BaseAddress = harness.Client.BaseAddress)
+let plainClient (harness: TestHarness) = new HttpClient(new HttpClientHandler(AllowAutoRedirect = false), true, BaseAddress = harness.Client.BaseAddress)
 
-let private startSignIn (harness: TestHarness) =
+let startSignIn (harness: TestHarness) =
     use message = new HttpRequestMessage(HttpMethod.Post, "/api/chatgpt/sign-in")
     message.Headers.TryAddWithoutValidation("Origin", harness.Client.BaseAddress.GetLeftPart(UriPartial.Authority)) |> ignore
     message.Headers.TryAddWithoutValidation("X-CSRF-TOKEN", token harness.Client) |> ignore
@@ -109,30 +109,30 @@ let private startSignIn (harness: TestHarness) =
     let body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
     response.StatusCode, body
 
-let private urlOf (body: string) =
+let urlOf (body: string) =
     use json = JsonDocument.Parse body
     Uri(json.RootElement.GetProperty("authorizationUrl").GetString())
 
-let private query (url: Uri) =
+let query (url: Uri) =
     url.Query.TrimStart('?').Split('&') |> Array.map (fun p -> let parts = p.Split('=', 2) in parts[0], Uri.UnescapeDataString parts[1]) |> dict
 
-let private callbackAt (harness: TestHarness) (path: string) =
+let callbackAt (harness: TestHarness) (path: string) =
     use client = plainClient harness
     use response = client.GetAsync(path).GetAwaiter().GetResult()
     response.StatusCode, (if isNull response.Headers.Location then "" else response.Headers.Location.ToString())
 
 /// Starts a sign-in and returns the callback path the browser would reach with these extras.
-let private callbackPath (url: Uri) (extra: string) =
+let callbackPath (url: Uri) (extra: string) =
     let state = Uri.EscapeDataString((query url).["state"])
     $"/auth/callback?state={state}&code=code-1{extra}"
 
-let private signedIn (harness: TestHarness) =
+let signedIn (harness: TestHarness) =
     use json = destinations harness.Client
     json.RootElement.GetProperty("chatgpt").GetProperty("signedIn").GetBoolean()
 
-let private recordPath (harness: TestHarness) = IO.Path.Combine(workspaceRoot harness, "chatgpt-signin.json")
+let recordPath (harness: TestHarness) = IO.Path.Combine(workspaceRoot harness, "chatgpt-signin.json")
 
-let private signInThrough (harness: TestHarness) (fake: FakeOpenAi) (extra: string) =
+let signInThrough (harness: TestHarness) (fake: FakeOpenAi) (extra: string) =
     let status, body = startSignIn harness
     Assert.Equal(HttpStatusCode.OK, status)
     let url = urlOf body
@@ -264,7 +264,7 @@ let ``the callback query string is never logged`` () =
 
 // ---- T005: sign out, the welcome ----
 
-let private postBody (harness: TestHarness) (path: string) =
+let postBody (harness: TestHarness) (path: string) =
     use message = new HttpRequestMessage(HttpMethod.Post, path)
     message.Headers.TryAddWithoutValidation("Origin", harness.Client.BaseAddress.GetLeftPart(UriPartial.Authority)) |> ignore
     message.Headers.TryAddWithoutValidation("X-CSRF-TOKEN", token harness.Client) |> ignore
@@ -272,20 +272,20 @@ let private postBody (harness: TestHarness) (path: string) =
     use response = harness.Client.Send message
     response.StatusCode, response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
 
-let private signOut (harness: TestHarness) =
+let signOut (harness: TestHarness) =
     let status, body = postBody harness "/api/chatgpt/sign-out"
     Assert.Equal(HttpStatusCode.OK, status)
     use json = JsonDocument.Parse body
     json.RootElement.GetProperty("revoked").GetBoolean()
 
-let private dismissWelcome (harness: TestHarness) =
+let dismissWelcome (harness: TestHarness) =
     Assert.Equal(HttpStatusCode.NoContent, fst (postBody harness "/api/chatgpt/welcome/dismiss"))
 
-let private welcomePending (harness: TestHarness) =
+let welcomePending (harness: TestHarness) =
     use json = destinations harness.Client
     json.RootElement.GetProperty("welcomePending").GetBoolean()
 
-let private marker (harness: TestHarness) = IO.Path.Combine(workspaceRoot harness, "chatgpt-welcome-shown")
+let marker (harness: TestHarness) = IO.Path.Combine(workspaceRoot harness, "chatgpt-welcome-shown")
 
 [<Fact; Trait("Task", "T005")>]
 let ``sign-out revokes, deletes the record and keeps the welcome marker`` () =
@@ -379,21 +379,21 @@ let ``a callback mid-exchange when she signs out is never saved`` () =
 
 // ---- T007: summary through her plan ----
 
-let private answer = """{"points":[{"text":"Main idea","pages":[1,2]}]}"""
-let private sumSettings = [ "LexScholar:Summary:Endpoint", "http://127.0.0.1:9/v1"; "LexScholar:Summary:Model", "m" ]
+let answer = """{"points":[{"text":"Main idea","pages":[1,2]}]}"""
+let sumSettings = [ "LexScholar:Summary:Endpoint", "http://127.0.0.1:9/v1"; "LexScholar:Summary:Model", "m" ]
 
 /// Sends api.openai.com and auth.openai.com requests to the OpenAI fake and everything else to the chat fake.
 /// `onRequest` sees each request first (a handshake seam for tests).
-type private Router(openai: HttpMessageHandler, chat: HttpMessageHandler, onRequest: HttpRequestMessage -> unit) =
+type Router(openai: HttpMessageHandler, chat: HttpMessageHandler, onRequest: HttpRequestMessage -> unit) =
     inherit HttpMessageHandler()
     override _.SendAsync(request, cancellation) =
         onRequest request
         let target = if request.RequestUri.Host.EndsWith "openai.com" then openai else chat
         (new HttpMessageInvoker(target, false)).SendAsync(request, cancellation)
 
-let private tokenPath = "/api/accounts/oauth/token"
+let tokenPath = "/api/accounts/oauth/token"
 
-let private seedProject directory =
+let seedProject directory =
     use db = LexScholar.Infrastructure.WorkspaceDb.create directory
     let time = DateTimeOffset(2026, 5, 17, 12, 0, 0, TimeSpan.Zero)
     let workspace = Guid.NewGuid()
@@ -404,7 +404,7 @@ let private seedProject directory =
     db.SaveChanges() |> ignore
     project
 
-let private sendJson (harness: TestHarness) (path: string) (body: string) =
+let sendJson (harness: TestHarness) (path: string) (body: string) =
     use message = new HttpRequestMessage(HttpMethod.Post, path)
     message.Headers.TryAddWithoutValidation("Origin", harness.Client.BaseAddress.GetLeftPart(UriPartial.Authority)) |> ignore
     message.Headers.TryAddWithoutValidation("X-CSRF-TOKEN", token harness.Client) |> ignore
@@ -412,13 +412,13 @@ let private sendJson (harness: TestHarness) (path: string) (body: string) =
     use response = harness.Client.Send message
     response.StatusCode, response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
 
-/// Imports and associates article-en.pdf; returns the summary path.
-let private documentPath (harness: TestHarness) =
+/// Imports and associates a summary fixture; returns the summary path.
+let documentPathFor (harness: TestHarness) (fixture: string) =
     let project = seedProject harness.Root
     use form = new MultipartFormDataContent()
-    let part = new ByteArrayContent(IO.File.ReadAllBytes(IO.Path.Combine(AppContext.BaseDirectory, "Fixtures", "summary", "article-en.pdf")))
+    let part = new ByteArrayContent(IO.File.ReadAllBytes(IO.Path.Combine(AppContext.BaseDirectory, "Fixtures", "summary", fixture)))
     part.Headers.ContentType <- Headers.MediaTypeHeaderValue("application/pdf")
-    form.Add(part, "file", "article-en.pdf")
+    form.Add(part, "file", fixture)
     use message = new HttpRequestMessage(HttpMethod.Post, "/api/documents")
     message.Headers.TryAddWithoutValidation("Origin", harness.Client.BaseAddress.GetLeftPart(UriPartial.Authority)) |> ignore
     message.Headers.TryAddWithoutValidation("X-CSRF-TOKEN", token harness.Client) |> ignore
@@ -431,26 +431,29 @@ let private documentPath (harness: TestHarness) =
     Assert.Equal(HttpStatusCode.Created, status)
     $"/api/projects/{project}/documents/{document}/summary"
 
-let private events (text: string) =
+/// Imports and associates article-en.pdf; returns the summary path.
+let documentPath (harness: TestHarness) = documentPathFor harness "article-en.pdf"
+
+let events (text: string) =
     text.Split('\n', StringSplitOptions.RemoveEmptyEntries) |> Array.map (fun line -> JsonDocument.Parse(line).RootElement.Clone())
 
-let private problemCode (text: string) =
+let problemCode (text: string) =
     use json = JsonDocument.Parse text
     json.RootElement.GetProperty("code").GetString()
 
-let private openAiRequests (fake: FakeOpenAi) = fake.Requests |> List.filter (fun r -> r.Host = "api.openai.com")
+let openAiRequests (fake: FakeOpenAi) = fake.Requests |> List.filter (fun r -> r.Host = "api.openai.com")
 
-let private storedRecord (harness: TestHarness) =
+let storedRecord (harness: TestHarness) =
     use json = JsonDocument.Parse(IO.File.ReadAllText(recordPath harness))
     json.RootElement.Clone()
 
-let private expectSummary (status: HttpStatusCode, text: string) =
+let expectSummary (status: HttpStatusCode, text: string) =
     Assert.Equal(HttpStatusCode.OK, status)
     let event = Assert.Single(events text)
     Assert.Equal("summary", event.GetProperty("type").GetString())
     event
 
-let private confirmed = """{"confirmSend":true}"""
+let confirmed = """{"confirmSend":true}"""
 
 [<Fact; Trait("Task", "T007")>]
 let ``signed in without confirmation is 409 and nothing at all reaches the OpenAI API`` () =
@@ -577,7 +580,7 @@ let ``the destinations configured block is unchanged while signed in`` () =
     Assert.True(configured.GetProperty("local").GetBoolean())
 
 /// Signs in with an access token that expires within ten minutes, then readies the fake's refresh answer.
-let private signInExpiring (harness: TestHarness) (fake: FakeOpenAi) =
+let signInExpiring (harness: TestHarness) (fake: FakeOpenAi) =
     fake.ExpiresIn <- 300
     signInThrough harness fake "" |> ignore
     fake.ExpiresIn <- 3600
@@ -645,8 +648,9 @@ let ``a terminal refresh error deletes the record and signs her out`` () =
     signInExpiring harness fake
     fake.TokenFailure <- Some(400, """{"error":"invalid_grant"}""")
     let status, text = sendJson harness path confirmed
-    Assert.Equal(HttpStatusCode.ServiceUnavailable, status)
-    Assert.Equal("chatgpt_signed_out", problemCode text)
+    // T008: the run ends with a `failed` event (T010's client treats it like the `chatgpt_signed_out` problem).
+    Assert.Equal(HttpStatusCode.OK, status)
+    Assert.Equal("signed_out", (Assert.Single(events text)).GetProperty("code").GetString())
     Assert.False(IO.File.Exists(recordPath harness))
     Assert.False(signedIn harness)
     Assert.Empty(openAiRequests fake)
@@ -717,3 +721,156 @@ let ``a summary naming the configured service does not wait for a refresh in fli
     expectSummary (local.WaitAsync(TimeSpan.FromSeconds 10.).GetAwaiter().GetResult()) |> ignore
     release ()
     expectSummary (viaPlan.GetAwaiter().GetResult()) |> ignore
+
+
+// ---- T008: failure states ----
+
+let failedCode (text: string) =
+    let all = events text
+    // Progress may come first; a failed run never carries a summary and ends with its `failed` event.
+    Assert.DoesNotContain(all, fun e -> e.GetProperty("type").GetString() = "summary")
+    let event = Array.last all
+    Assert.Equal("failed", event.GetProperty("type").GetString())
+    event.GetProperty("code").GetString()
+
+let expectSignedOutEverywhere (harness: TestHarness) =
+    Assert.False(IO.File.Exists(recordPath harness))
+    Assert.False(signedIn harness)
+
+[<Fact; Trait("Task", "T008")>]
+let ``a usage limit before the stream is usage_limit_reached and keeps the sign-in`` () =
+    let fake = new FakeOpenAi(ResponsesScript.Status(429, "subscription_sharing_usage_limit_exceeded"))
+    use harness = TestHarness.Start(summaryHandler = fake)
+    let path = documentPath harness
+    signInThrough harness fake "" |> ignore
+    let status, text = sendJson harness path confirmed
+    Assert.Equal(HttpStatusCode.OK, status)
+    Assert.Equal("usage_limit_reached", failedCode text)
+    Assert.True(signedIn harness)
+
+[<Fact; Trait("Task", "T008")>]
+let ``a usage limit as response.failed mid-document gives no partial summary`` () =
+    let script n =
+        if n = 1 then ResponsesScript.Completed """{"points":[{"text":"Main idea","pages":[1]}]}"""
+        else ResponsesScript.Failed "subscription_sharing_usage_limit_exceeded"
+    let fake = new FakeOpenAi(script)
+    use harness = TestHarness.Start(summaryHandler = fake)
+    let path = documentPathFor harness "long-40.pdf"
+    signInThrough harness fake "" |> ignore
+    let status, text = sendJson harness path confirmed
+    Assert.Equal(HttpStatusCode.OK, status)
+    let all = events text
+    Assert.DoesNotContain(all, fun e -> e.GetProperty("type").GetString() = "summary")
+    let last = Array.last all
+    Assert.Equal("failed", last.GetProperty("type").GetString())
+    Assert.Equal("usage_limit_reached", last.GetProperty("code").GetString())
+    Assert.Equal(2, fake.RequestsTo("api.openai.com", "/v1/responses").Length)
+    Assert.True(signedIn harness)
+
+[<Theory; Trait("Task", "T008")>]
+[<InlineData(401, "subscription_sharing_invalid_user", "signed_out")>]
+[<InlineData(403, "subscription_sharing_user_not_eligible", "no_plan_access")>]
+let ``a refused plan deletes the record, ends the run and signs her out`` (status: int, code: string, expected: string) =
+    let fake = new FakeOpenAi(ResponsesScript.Status(status, code))
+    use harness = TestHarness.Start(summaryHandler = fake)
+    let path = documentPath harness
+    signInThrough harness fake "" |> ignore
+    let _, text = sendJson harness path confirmed
+    Assert.Equal(expected, failedCode text)
+    expectSignedOutEverywhere harness
+
+[<Fact; Trait("Task", "T008")>]
+let ``a refusal as response.failed mid-stream also signs her out`` () =
+    let fake = new FakeOpenAi(ResponsesScript.Failed "subscription_sharing_invalid_user")
+    use harness = TestHarness.Start(summaryHandler = fake)
+    let path = documentPath harness
+    signInThrough harness fake "" |> ignore
+    let _, text = sendJson harness path confirmed
+    Assert.Equal("signed_out", failedCode text)
+    expectSignedOutEverywhere harness
+
+[<Fact; Trait("Task", "T008")>]
+let ``signing out while the fake waits ends the request with signed_out and sends nothing more`` () =
+    let fake = new FakeOpenAi(ResponsesScript.WaitUntilCancelled)
+    use harness = TestHarness.Start(summaryHandler = fake)
+    let path = documentPathFor harness "long-40.pdf"
+    signInThrough harness fake "" |> ignore
+    let summary = Threading.Tasks.Task.Run(fun () -> sendJson harness path confirmed)
+    fake.Waiting.WaitAsync(TimeSpan.FromSeconds 10.).GetAwaiter().GetResult()
+    signOut harness |> ignore
+    let status, text = summary.WaitAsync(TimeSpan.FromSeconds 10.).GetAwaiter().GetResult()
+    fake.Cancelled.WaitAsync(TimeSpan.FromSeconds 10.).GetAwaiter().GetResult()
+    Assert.Equal(HttpStatusCode.OK, status)
+    Assert.Equal("signed_out", failedCode text)
+    Assert.Equal(1, fake.RequestsTo("api.openai.com", "/v1/responses").Length)
+    expectSignedOutEverywhere harness
+
+[<Fact; Trait("Task", "T008")>]
+let ``ending a sign-in never deletes a newer sign-in and cancels no run of it`` () =
+    let credentials host : LexScholar.Domain.Credentials =
+        { ClientId = "c"; HostId = host; Subject = "s"; Account = "a"; AccessToken = "t"; RefreshToken = "r"; IdToken = "i"
+          ExpiresAt = DateTimeOffset.UtcNow.AddHours 1.; Scopes = []; SignedInAt = DateTimeOffset.UtcNow; ConfirmedAt = None }
+    let record = ref (Some(credentials "new"))
+    let store : LexScholar.Application.ChatGptAccess.CredentialStore =
+        { Read = (fun () -> record.Value)
+          Save = (fun c -> record.Value <- Some c)
+          Delete = (fun () -> record.Value <- None) }
+    let vault = LexScholar.Application.ChatGptAccess.Vault store
+    use run = vault.BeginRun Threading.CancellationToken.None
+    LexScholar.Application.ChatGptAccess.endSignIn vault (credentials "old") |> fun t -> t.GetAwaiter().GetResult()
+    Assert.True(record.Value.IsSome)
+    Assert.False(run.Token.IsCancellationRequested)
+    LexScholar.Application.ChatGptAccess.endSignIn vault (credentials "new") |> fun t -> t.GetAwaiter().GetResult()
+    Assert.True(record.Value.IsNone)
+    Assert.True(run.Token.IsCancellationRequested)
+
+/// A stream that runs `atEnd` once, when the reader reaches the end: the answer was read completely, nothing else happened yet.
+type private EndHookStream(bytes: byte[], atEnd: unit -> unit) =
+    inherit IO.Stream()
+    let inner = new IO.MemoryStream(bytes)
+    let mutable fired = false
+    let fire () = if not fired then (fired <- true; atEnd ())
+    override _.CanRead = true
+    override _.CanSeek = false
+    override _.CanWrite = false
+    override _.Length = raise (NotSupportedException())
+    override _.Position with get () = raise (NotSupportedException()) and set _ = raise (NotSupportedException())
+    override _.Flush() = ()
+    override _.Seek(_, _) = raise (NotSupportedException())
+    override _.SetLength _ = raise (NotSupportedException())
+    override _.Write(_, _, _) = raise (NotSupportedException())
+    override _.Read(buffer: byte[], offset: int, count: int) =
+        let read = inner.Read(buffer, offset, count)
+        if read = 0 then fire ()
+        read
+    override _.ReadAsync(buffer: Memory<byte>, _cancellation: Threading.CancellationToken) =
+        let read = inner.Read(buffer.Span)
+        if read = 0 then fire ()
+        Threading.Tasks.ValueTask<int>(read)
+
+/// Runs `afterResponse` when the host has read a Responses answer to its end, before it maps and reports that answer.
+type AfterResponses(inner: HttpMessageHandler, afterResponse: unit -> unit) =
+    inherit HttpMessageHandler()
+    override _.SendAsync(request, cancellation) = task {
+        let! response = (new HttpMessageInvoker(inner, false)).SendAsync(request, cancellation)
+        if request.RequestUri.AbsolutePath = "/v1/responses" then
+            let! bytes = response.Content.ReadAsByteArrayAsync cancellation
+            let content = new StreamContent(new EndHookStream(bytes, afterResponse))
+            for header in response.Content.Headers do content.Headers.TryAddWithoutValidation(header.Key, header.Value) |> ignore
+            response.Content <- content
+        return response }
+
+[<Theory; Trait("Task", "T008")>]
+[<InlineData(429, "subscription_sharing_usage_limit_exceeded")>]
+[<InlineData(500, "server_error")>]
+let ``signing out after the service answered with an error but before it is reported ends the run with signed_out`` (status: int, code: string) =
+    let fake = new FakeOpenAi(ResponsesScript.Status(status, code))
+    let harnessRef = ref None
+    let signOutNow () = harnessRef.Value |> Option.iter (fun h -> signOut h |> ignore)
+    use harness = TestHarness.Start(summaryHandler = new AfterResponses(fake, signOutNow))
+    harnessRef.Value <- Some harness
+    let path = documentPath harness
+    signInThrough harness fake "" |> ignore
+    let _, text = sendJson harness path confirmed
+    Assert.Equal("signed_out", failedCode text)
+    expectSignedOutEverywhere harness

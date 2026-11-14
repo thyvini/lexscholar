@@ -39,11 +39,31 @@ type AuthClient =
       Revoke: Credentials -> CancellationToken -> Task<bool> }
 
 
+/// One running summary through her plan. Its token is cancelled when she signs out or the sign-in
+/// ends (research section 11); disposing it unregisters the run.
+type SendRun(source: CancellationTokenSource, release: unit -> unit) =
+    member _.Token = source.Token
+    interface IDisposable with
+        member _.Dispose() = release ()
+
 /// The one lock around the stored credentials. Every read, save and delete of the record goes
 /// through `Locked`, so a read never deletes the temporary file of a save in progress and later
-/// slices (sign-out, refresh) serialize with sign-in the same way.
+/// slices (sign-out, refresh) serialize with sign-in the same way. It also knows the summaries
+/// running on the current sign-in, so ending the sign-in can cancel them.
 type Vault(store: CredentialStore) =
     let gate = new SemaphoreSlim(1, 1)
+    let runSync = obj ()
+    let runs = System.Collections.Generic.List<CancellationTokenSource>()
+    /// Registers a run that also ends with `outer`. Call it inside `Locked`, so an end of the sign-in cannot slip in before.
+    member _.BeginRun(outer: CancellationToken) : SendRun =
+        let source = CancellationTokenSource.CreateLinkedTokenSource outer
+        lock runSync (fun () -> runs.Add source)
+        new SendRun(source, fun () -> lock runSync (fun () -> runs.Remove source |> ignore; source.Dispose()))
+    /// Cancels every registered run. Call it inside `Locked`, together with the deletion of the record.
+    member _.EndRuns() =
+        lock runSync (fun () ->
+            for source in runs do source.Cancel()
+            runs.Clear())
     member _.Locked(work: CredentialStore -> Task<'a>) : Task<'a> = task {
         do! gate.WaitAsync()
         try return! work store
@@ -224,6 +244,7 @@ let completeSignIn (vault: Vault) (session: SignInSession) (auth: AuthClient) (c
 let signOut (vault: Vault) (session: SignInSession) (auth: AuthClient) (cancellation: CancellationToken) : Task<bool> =
     vault.Locked(fun store -> task {
         session.Clear()
+        vault.EndRuns()
         // The local removal is the guarantee: delete first, then revoke from memory, best effort.
         let credentials = store.Read()
         store.Delete()
@@ -240,12 +261,14 @@ let signOut (vault: Vault) (session: SignInSession) (auth: AuthClient) (cancella
 
 /// What `prepareSend` found for a summary through her plan.
 type SendPreparation =
-    /// Confirmed, and the access token is good for the run.
-    | Prepared of Credentials
+    /// Confirmed, and the access token is good for the run; the run is registered and ends with a sign-out.
+    | Prepared of Credentials * SendRun
     /// Not confirmed in this sign-in and the request did not confirm: nothing was refreshed or sent.
     | AwaitingConfirmation of account: string
-    /// No sign-in (never, signed out, or the refresh ended it).
+    /// No sign-in (never, or signed out).
     | NoSignIn
+    /// The refresh ended the sign-in (terminal error): the record was deleted and running summaries cancelled.
+    | SignInEnded
     /// The refresh failed on the network or with a non-terminal answer; the record is kept.
     | RefreshUnreachable
 
@@ -267,7 +290,7 @@ let prepareSend (vault: Vault) (auth: AuthClient) (clock: unit -> DateTimeOffset
                 if not (ChatGptSignIn.needsRefresh (clock ()) record) then
                     let ready = stamp record
                     if confirming then store.Save ready
-                    return Prepared ready
+                    return Prepared(ready, vault.BeginRun cancellation)
                 else
                     let! refreshed =
                         task {
@@ -277,12 +300,25 @@ let prepareSend (vault: Vault) (auth: AuthClient) (clock: unit -> DateTimeOffset
                     match refreshed with
                     | Error RefreshFailure.Ended ->
                         store.Delete()
-                        return NoSignIn
+                        vault.EndRuns()
+                        return SignInEnded
                     | Error RefreshFailure.Unreachable -> return RefreshUnreachable
                     | Ok renewed ->
                         match store.Read() with
                         | Some current when current.RefreshToken = record.RefreshToken ->
                             let ready = stamp renewed
                             store.Save ready
-                            return Prepared ready
+                            return Prepared(ready, vault.BeginRun cancellation)
                         | _ -> return NoSignIn })
+
+
+/// Ends the sign-in a run used after the service refused it (signed out, no plan access): deletes the
+/// record and cancels the running summaries, but only if the record is still that sign-in, so a
+/// newer sign-in is never deleted.
+let endSignIn (vault: Vault) (ended: Credentials) : Task<unit> =
+    vault.Locked(fun store -> task {
+        match store.Read() with
+        | Some current when current.HostId = ended.HostId ->
+            store.Delete()
+            vault.EndRuns()
+        | _ -> () })
