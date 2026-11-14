@@ -200,7 +200,7 @@ let failureText (failure: Failure) : string =
 /// Whether a failure means the ChatGPT sign-in is gone, so the destinations must be loaded again.
 let reloadsDestinations (failure: Failure) : bool =
     match failure with
-    | SignedOut | NoPlanAccess -> true
+    | NotConfigured | SignedOut | NoPlanAccess -> true
     | _ -> false
 
 /// Whether the failure is answered by offering the ChatGPT sign-in.
