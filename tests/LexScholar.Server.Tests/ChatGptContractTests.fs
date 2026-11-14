@@ -65,10 +65,9 @@ let ``destinations reports the configured service from the settings`` () =
 [<Theory; Trait("Task", "T001")>]
 [<InlineData("/api/chatgpt/sign-out")>]
 [<InlineData("/api/chatgpt/welcome/dismiss")>]
-let ``unsafe chatgpt routes need the antiforgery token and are not implemented yet`` (path: string) =
+let ``unsafe chatgpt routes need the antiforgery token`` (path: string) =
     use harness = TestHarness.Start()
     Assert.Equal(HttpStatusCode.Forbidden, post harness.Client path None)
-    Assert.Equal(HttpStatusCode.NotImplemented, post harness.Client path (Some (token harness.Client)))
 
 [<Fact; Trait("Task", "T001")>]
 let ``a client sending Host 127.0.0.1 with the port is accepted`` () =
@@ -261,3 +260,118 @@ let ``the callback query string is never logged`` () =
         for line in provider.Lines do
             Assert.DoesNotContain("SECRETSTATE", line)
             Assert.DoesNotContain("SECRETCODE", line)
+
+
+// ---- T005: sign out, the welcome ----
+
+let private postBody (harness: TestHarness) (path: string) =
+    use message = new HttpRequestMessage(HttpMethod.Post, path)
+    message.Headers.TryAddWithoutValidation("Origin", harness.Client.BaseAddress.GetLeftPart(UriPartial.Authority)) |> ignore
+    message.Headers.TryAddWithoutValidation("X-CSRF-TOKEN", token harness.Client) |> ignore
+    message.Content <- new StringContent("{}", Text.Encoding.UTF8, "application/json")
+    use response = harness.Client.Send message
+    response.StatusCode, response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+
+let private signOut (harness: TestHarness) =
+    let status, body = postBody harness "/api/chatgpt/sign-out"
+    Assert.Equal(HttpStatusCode.OK, status)
+    use json = JsonDocument.Parse body
+    json.RootElement.GetProperty("revoked").GetBoolean()
+
+let private dismissWelcome (harness: TestHarness) =
+    Assert.Equal(HttpStatusCode.NoContent, fst (postBody harness "/api/chatgpt/welcome/dismiss"))
+
+let private welcomePending (harness: TestHarness) =
+    use json = destinations harness.Client
+    json.RootElement.GetProperty("welcomePending").GetBoolean()
+
+let private marker (harness: TestHarness) = IO.Path.Combine(workspaceRoot harness, "chatgpt-welcome-shown")
+
+[<Fact; Trait("Task", "T005")>]
+let ``sign-out revokes, deletes the record and keeps the welcome marker`` () =
+    let fake = new FakeOpenAi()
+    use harness = TestHarness.Start(summaryHandler = fake)
+    signInThrough harness fake "" |> ignore
+    dismissWelcome harness
+    Assert.True(signOut harness)
+    Assert.Single(fake.RequestsTo("auth.openai.com", "/api/accounts/oauth/revoke")) |> ignore
+    Assert.False(IO.File.Exists(recordPath harness))
+    Assert.False(signedIn harness)
+    Assert.True(IO.File.Exists(marker harness))
+
+[<Fact; Trait("Task", "T005")>]
+let ``sign-out still deletes the record when revocation fails`` () =
+    let fake = new FakeOpenAi()
+    use harness = TestHarness.Start(summaryHandler = fake)
+    signInThrough harness fake "" |> ignore
+    fake.RevocationStatus <- 500
+    Assert.False(signOut harness)
+    Assert.False(IO.File.Exists(recordPath harness))
+    Assert.False(signedIn harness)
+
+[<Fact; Trait("Task", "T005")>]
+let ``sign-out still deletes the record when the service is down`` () =
+    let handler = { new HttpMessageHandler() with member _.SendAsync(_, _) = raise (HttpRequestException "down") }
+    use workspace = TemporaryWorkspace.Create()
+    let fake = new FakeOpenAi()
+    do
+        use harness = TestHarness.Start(summaryHandler = fake, workspace = workspace)
+        signInThrough harness fake "" |> ignore
+    use harness = TestHarness.Start(summaryHandler = handler, workspace = workspace)
+    Assert.True(IO.File.Exists(recordPath harness))
+    Assert.False(signOut harness)
+    Assert.False(IO.File.Exists(recordPath harness))
+    Assert.False(signedIn harness)
+
+[<Fact; Trait("Task", "T005")>]
+let ``sign-out when signed out answers 200 and is repeatable`` () =
+    let fake = new FakeOpenAi()
+    use harness = TestHarness.Start(summaryHandler = fake)
+    Assert.False(signOut harness)
+    Assert.False(signOut harness)
+    Assert.Empty(fake.RequestsTo("auth.openai.com", "/api/accounts/oauth/revoke"))
+
+[<Fact; Trait("Task", "T005")>]
+let ``the welcome is pending after the first sign-in only`` () =
+    let fake = new FakeOpenAi()
+    use harness = TestHarness.Start(summaryHandler = fake)
+    Assert.False(welcomePending harness)
+    signInThrough harness fake "" |> ignore
+    Assert.True(welcomePending harness)
+    dismissWelcome harness
+    Assert.False(welcomePending harness)
+    signOut harness |> ignore
+    signInThrough harness fake "" |> ignore
+    Assert.True(signedIn harness)
+    Assert.False(welcomePending harness)
+
+[<Fact; Trait("Task", "T005")>]
+let ``a sign-in pending at sign-out cannot finish afterwards`` () =
+    let fake = new FakeOpenAi()
+    use harness = TestHarness.Start(summaryHandler = fake)
+    let _, body = startSignIn harness
+    let url = urlOf body
+    fake.Nonce <- (query url)["nonce"]
+    signOut harness |> ignore
+    let _, location = callbackAt harness (callbackPath url $"&client_id={fake.ClientId}")
+    Assert.Equal("/index.html?chatgpt=cancelled", location)
+    Assert.Empty(fake.RequestsTo("auth.openai.com", "/api/accounts/oauth/token"))
+    Assert.False(IO.File.Exists(recordPath harness))
+    Assert.False(signedIn harness)
+
+[<Fact; Trait("Task", "T005")>]
+let ``a callback mid-exchange when she signs out is never saved`` () =
+    let fake = new FakeOpenAi()
+    use harness = TestHarness.Start(summaryHandler = fake)
+    let release = fake.HoldTokens()
+    let _, body = startSignIn harness
+    let url = urlOf body
+    fake.Nonce <- (query url)["nonce"]
+    let callback = Threading.Tasks.Task.Run(fun () -> callbackAt harness (callbackPath url $"&client_id={fake.ClientId}"))
+    fake.TokenArrived.GetAwaiter().GetResult()
+    signOut harness |> ignore
+    release ()
+    let _, location = callback.GetAwaiter().GetResult()
+    Assert.Equal("/index.html?chatgpt=cancelled", location)
+    Assert.False(IO.File.Exists(recordPath harness))
+    Assert.False(signedIn harness)
