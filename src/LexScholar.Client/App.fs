@@ -589,6 +589,13 @@ module private Ui =
     let chatGptAccount (model: ChatGpt.Model) dispatch =
         cond model.Status <| function
             | ChatGpt.Unknown -> empty ()
+            | ChatGpt.Unavailable ->
+                p {
+                    attr.``class`` "chatgpt-account error"
+                    "role" => "alert"
+                    "ChatGPT sign-in status could not be loaded. "
+                    plainButton "Try again" (Some "chatgpt-retry") (fun _ -> dispatch ChatGpt.Load)
+                }
             | ChatGpt.SignedOut -> p { attr.``class`` "chatgpt-account"; "ChatGPT: signed out. "; signInButton false dispatch }
             | ChatGpt.Starting -> p { attr.``class`` "chatgpt-account"; "role" => "status"; "Opening ChatGPT… "; signInButton true dispatch }
             | ChatGpt.SignedIn account ->

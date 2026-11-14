@@ -5,6 +5,8 @@ type Account = { Name: string; Confirmed: bool }
 
 type Status =
     | Unknown
+    /// The destinations could not be loaded; she can retry.
+    | Unavailable
     | SignedOut
     /// The authorization address was requested; the tab navigates to it next.
     | Starting
@@ -69,7 +71,7 @@ let update (message: Message) (model: Model) : Model * Effect option =
             match destinations.Account with
             | Some account -> { model with Status = SignedIn account; WelcomePending = destinations.WelcomePending }, None
             | None -> { model with Status = SignedOut; WelcomePending = false }, None
-        | Error () -> model, None
+        | Error () -> { model with Status = Unavailable }, None
     | Loaded _ -> model, None
     | Returned value ->
         let notice =

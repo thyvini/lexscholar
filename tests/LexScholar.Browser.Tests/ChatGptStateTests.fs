@@ -36,10 +36,14 @@ let ``loading without a sign-in shows signed out`` () =
     assertState false signedOut.WelcomePending
 
 [<Fact; Trait("Task", "T009")>]
-let ``a failed load leaves the state unknown`` () =
+let ``a failed load is unavailable and can be retried`` () =
     let model, effect = update Load initial
     let model, _ = update (Loaded (request effect, Error ())) model
-    assertState Unknown model.Status
+    assertState Unavailable model.Status
+    let retry, effect = update Load model
+    Assert.True((request effect > 0))
+    let loaded, _ = update (Loaded (request effect, Ok { Account = None; WelcomePending = false })) retry
+    assertState SignedOut loaded.Status
 
 [<Fact; Trait("Task", "T009")>]
 let ``a stale destinations response is dropped`` () =
