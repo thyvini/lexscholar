@@ -95,36 +95,72 @@ type private Event =
     | Malformed
     | Other
 
-/// One `data:` line of the event stream. A line that is not JSON, or a text event without a text `delta`,
-/// is `Malformed`: success is never returned from partial text.
-let private parseEvent (token: string) (data: string) : Event =
+let private textDelta = "response.output_text.delta"
+
+/// Kinds that carry no answer text and may be skipped: lifecycle and structure events, pings, and
+/// deltas of other content (reasoning, tool arguments).
+let private harmless (kind: string) =
+    kind = "ping"
+    || [ ".added"; ".done"; ".created"; ".in_progress"; ".queued" ] |> List.exists kind.EndsWith
+    || (kind.StartsWith "response.reasoning" || kind.StartsWith "response.function_call_arguments") && kind.EndsWith ".delta"
+
+/// One server-sent event: its `event:` name and its `data:` payload, either of which may be missing.
+/// The kind is the JSON `type`, and the name must agree with it when both are present. A text delta
+/// needs both to be exactly the text-delta kind plus a string `delta`; an event whose kind cannot be
+/// determined, that is unknown, or whose two names disagree is `Malformed`, so success is never
+/// returned from partial text. Only the known harmless kinds are skipped.
+let private parseEvent (token: string) (name: string option) (data: string option) : Event =
     try
-        use document = JsonDocument.Parse data
-        let root = document.RootElement
-        match root.TryGetProperty "type" with
-        | true, kind when kind.ValueKind = JsonValueKind.String ->
-            match kind.GetString() with
-            | "response.output_text.delta" ->
-                match root.TryGetProperty "delta" with
-                | true, delta when delta.ValueKind = JsonValueKind.String -> Delta(delta.GetString())
+        let document = data |> Option.map (fun payload -> JsonDocument.Parse payload)
+        use _ = { new IDisposable with member _.Dispose() = document |> Option.iter (fun d -> d.Dispose()) }
+        let root = document |> Option.map (fun d -> d.RootElement)
+        let objectRoot = root |> Option.forall (fun element -> element.ValueKind = JsonValueKind.Object)
+        let jsonType =
+            match root with
+            | Some element when element.ValueKind = JsonValueKind.Object ->
+                match element.TryGetProperty "type" with
+                | true, kind when kind.ValueKind = JsonValueKind.String -> Some(kind.GetString())
+                | true, _ -> None
+                | _ -> None
+            | _ -> None
+        let hasTypeField =
+            match root with
+            | Some element when element.ValueKind = JsonValueKind.Object -> fst (element.TryGetProperty "type")
+            | _ -> false
+        if not objectRoot || (hasTypeField && jsonType.IsNone) then Malformed
+        else
+            match name, jsonType with
+            | Some declared, Some kind when declared <> kind -> Malformed
+            | _, Some kind ->
+                match kind with
+                | k when k = textDelta ->
+                    match root |> Option.bind (fun element -> match element.TryGetProperty "delta" with | true, d when d.ValueKind = JsonValueKind.String -> Some(d.GetString()) | _ -> None) with
+                    | Some delta -> Delta delta
+                    | None -> Malformed
+                | "response.completed" -> Completed
+                | "response.incomplete" -> Incomplete
+                | "response.failed" ->
+                    let error =
+                        match root with
+                        | Some element ->
+                            match element.TryGetProperty "response" with
+                            | true, response when response.ValueKind = JsonValueKind.Object ->
+                                match response.TryGetProperty "error" with
+                                | true, value -> Some value
+                                | _ -> None
+                            | _ -> None
+                        | None -> None
+                    // The stream itself answered 200; the failure carries no HTTP status of its own.
+                    Failed(failure token 200 error)
+                | other when harmless other -> Other
                 | _ -> Malformed
-            | "response.completed" -> Completed
-            | "response.incomplete" -> Incomplete
-            | "response.failed" ->
-                let error =
-                    match root.TryGetProperty "response" with
-                    | true, response when response.ValueKind = JsonValueKind.Object ->
-                        match response.TryGetProperty "error" with
-                        | true, value -> Some value
-                        | _ -> None
-                    | _ -> None
-                // The stream itself answered 200; the failure carries no HTTP status of its own.
-                Failed(failure token 200 error)
-            | _ -> Other
-        | _ -> Other
+            // No JSON type: only a harmless name can be trusted; a text delta named without its type is not.
+            | Some declared, None when harmless declared -> Other
+            | _ -> Malformed
     with _ -> Malformed
 
-/// Reads the event stream line by line under the size cap until a terminal event.
+/// Reads the event stream under the size cap until a terminal event. An event is complete at its blank line,
+/// or at the end of the stream.
 let private readStream (token: string) (stream: Stream) (cancellation: CancellationToken) : Task<Result<string, Summarize.ServiceError>> = task {
     let text = StringBuilder()
     let pending = StringBuilder()
@@ -133,10 +169,12 @@ let private readStream (token: string) (stream: Stream) (cancellation: Cancellat
     let chars = Array.zeroCreate<char> (Encoding.UTF8.GetMaxCharCount chunk.Length)
     let mutable total = 0
     let mutable outcome : Result<string, Summarize.ServiceError> option = None
-    let handleLine (line: string) =
-        let line = line.TrimEnd '\r'
-        if line.StartsWith "data:" then
-            match parseEvent token (line.Substring(5).Trim()) with
+    let mutable eventName : string option = None
+    let dataLines = Collections.Generic.List<string>()
+    let dispatch () =
+        if eventName.IsSome || dataLines.Count > 0 then
+            let data = if dataLines.Count = 0 then None else Some(String.Join("\n", dataLines))
+            match parseEvent token eventName data with
             | Delta delta -> text.Append delta |> ignore
             | Completed ->
                 outcome <- Some(if text.Length = 0 then Error Summarize.ServiceError.UnusableOutput else Ok(text.ToString()))
@@ -144,9 +182,19 @@ let private readStream (token: string) (stream: Stream) (cancellation: Cancellat
             | Failed error -> outcome <- Some(Error error)
             | Malformed -> outcome <- Some(Error Summarize.ServiceError.UnusableOutput)
             | Other -> ()
+        eventName <- None
+        dataLines.Clear()
+    let handleLine (line: string) =
+        let line = line.TrimEnd '\r'
+        if line = "" then dispatch ()
+        elif line.StartsWith "event:" then eventName <- Some(line.Substring(6).Trim())
+        elif line.StartsWith "data:" then dataLines.Add(line.Substring(5).TrimStart ' ')
     while outcome.IsNone do
         let! read = stream.ReadAsync(chunk.AsMemory(), cancellation)
-        if read = 0 then outcome <- Some(Error Summarize.ServiceError.UnusableOutput)
+        if read = 0 then
+            if pending.Length > 0 then handleLine (pending.ToString())
+            if outcome.IsNone then dispatch ()
+            if outcome.IsNone then outcome <- Some(Error Summarize.ServiceError.UnusableOutput)
         else
             total <- total + read
             if total > ChatCompletions.maximumResponseBytes then outcome <- Some(Error Summarize.ServiceError.UnusableOutput)
@@ -184,8 +232,9 @@ let private call
                     task {
                         try return! readLimited stream deadline.Token
                         with
-                        | :? OperationCanceledException when cancellation.IsCancellationRequested -> return raise (OperationCanceledException(cancellation))
-                        | :? OperationCanceledException | :? IOException | :? HttpRequestException -> return None }
+                        // A cancellation (the caller's, or the deadline) is not swallowed: the outer handler
+                        // rethrows the caller's and reports the deadline as a timeout.
+                        | :? IOException | :? HttpRequestException -> return None }
                 return Error(failureOfBody token status refusal)
             else
                 return! onSuccess stream deadline.Token
