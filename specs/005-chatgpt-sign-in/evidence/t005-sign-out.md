@@ -17,3 +17,7 @@ Commenting out `session.Clear()` in `signOut` (uncommitted) made `a sign-in pend
 ## Limitation
 
 The ChatGPT summary run's own cancellation on sign-out (research section 11) arrives with T008.
+
+## Review follow-up (Greptile P1: cleanup revocation used the cancelled token)
+
+Valid: after a rejected save the callback revoked with the session-linked token, which sign-out had cancelled. Cleanup revocations in `completeSignIn` now use `CancellationToken.None` (`OpenAiAuth.revoke` has its own 5-second limit). The window (exchange and ID-token check finished, vault lock not yet taken) cannot be held open from the contract tests, because every call before it honors the cancellation; a test needs the Application test harness (`ChatGptAccessTests.fs`), outside this slice's files. Tracked as a follow-up. `scripts/check.sh T005 T004`: 81 tests, 0 failed.

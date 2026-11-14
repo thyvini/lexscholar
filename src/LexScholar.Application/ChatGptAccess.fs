@@ -148,6 +148,9 @@ let completeSignIn (vault: Vault) (session: SignInSession) (auth: AuthClient) (c
         | Some(attempt, superseded) ->
             use linked = CancellationTokenSource.CreateLinkedTokenSource(cancellation, superseded)
             let cancellation = linked.Token
+            // Cleanup revocations must not inherit a cancellation caused by sign-out or a newer
+            // start; `Revoke` has its own short time limit.
+            let cleanup = CancellationToken.None
             // A sign-out or a newer start cancelled the calls: that is not a failure.
             let failedUnlessSuperseded attempt = if session.Superseded attempt then Cancelled else Failed
             match query.Code, query.ClientId with
@@ -172,7 +175,7 @@ let completeSignIn (vault: Vault) (session: SignInSession) (auth: AuthClient) (c
                                   SignedInAt = clock ()
                                   ConfirmedAt = None }
                             if not (ChatGptSignIn.grantsPlanUsage (String.Join(' ', grant.Scopes))) then
-                                let! _ = auth.Revoke credentials cancellation
+                                let! _ = auth.Revoke credentials cleanup
                                 return NoPlanAccess
                             else
                                 // A sign-in that finished first wins, and one replaced by a newer start is never saved.
@@ -184,7 +187,7 @@ let completeSignIn (vault: Vault) (session: SignInSession) (auth: AuthClient) (c
                                             return true })
                                 if saved then return SignedIn
                                 else
-                                    let! _ = auth.Revoke credentials cancellation
+                                    let! _ = auth.Revoke credentials cleanup
                                     return Cancelled
                 with _ ->
                     return failedUnlessSuperseded attempt
