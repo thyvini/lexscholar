@@ -270,7 +270,7 @@ let private unusableEvents =
       "no name and no type", "data: {\"delta\":\"x\"}\n\n"
       "type is not a string", "data: {\"type\":5,\"delta\":\"x\"}\n\n"
       "JSON type missing for a text delta, no name", "data: {\"delta\":\"x\",\"type\":null}\n\n"
-      "unknown kind", "event: response.mystery\ndata: {\"type\":\"response.mystery\"}\n\n"
+      "unknown delta kind", "event: response.mystery.delta\ndata: {\"type\":\"response.mystery.delta\",\"delta\":\"x\"}\n\n"
       "text delta name without any data", "event: response.output_text.delta\n\n"
       "data is not an object", "data: [1]\n\n"
       "data is not JSON", "event: response.output_text.delta\ndata: {not json\n\n"
@@ -281,6 +281,32 @@ let ``an event that is, may be or cannot be told apart from a text delta is unus
     for name, event in unusableEvents do
         let! result = complete (rawStream (goodDelta + event + goodDelta + completedEvent)) (CapturingLogger())
         Assert.True((result = Error Summarize.ServiceError.UnusableOutput), $"{name}: got {result}") }
+
+/// ChatGPT's real stream (captured in T012), event kinds in order; `response.metadata` is not in OpenAI's docs.
+let private eventOf (kind: string) (extra: string) = $"event: {kind}\ndata: {{\"type\":\"{kind}\"{extra}}}\n\n"
+
+[<Fact; Trait("Task", "T013")>]
+let ``the real stream with response.metadata after the text returns the text`` () = task {
+    let stream =
+        [ eventOf "response.created" ""
+          eventOf "response.in_progress" ""
+          eventOf "response.output_item.added" ""
+          eventOf "response.content_part.added" ""
+          eventOf "response.output_text.delta" ",\"delta\":\"hel\""
+          eventOf "response.output_text.delta" ",\"delta\":\"lo\""
+          eventOf "response.metadata" ",\"metadata\":{}"
+          eventOf "response.output_text.done" ",\"text\":\"hello\""
+          eventOf "response.content_part.done" ""
+          eventOf "response.output_item.done" ""
+          eventOf "response.completed" "" ]
+        |> String.concat ""
+    let! result = complete (rawStream stream) (CapturingLogger())
+    Assert.Equal(Ok "hello", result) }
+
+[<Fact; Trait("Task", "T013")>]
+let ``an unknown delta kind is still unusable output`` () = task {
+    let! result = complete (rawStream (goodDelta + eventOf "response.output_audio.delta" ",\"delta\":\"x\"" + goodDelta + completedEvent)) (CapturingLogger())
+    Assert.Equal(Error Summarize.ServiceError.UnusableOutput, result) }
 
 [<Fact; Trait("Task", "T006")>]
 let ``known harmless events are skipped`` () = task {

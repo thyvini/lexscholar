@@ -97,8 +97,8 @@ type private Event =
 
 let private textDelta = "response.output_text.delta"
 
-/// Kinds that carry no answer text and may be skipped: lifecycle and structure events, pings, and
-/// deltas of other content (reasoning, tool arguments).
+/// Kinds known to carry no answer text: lifecycle and structure events, pings, and deltas of other
+/// content (reasoning, tool arguments). These are also the only kinds trusted by name alone, without a JSON type.
 let private harmless (kind: string) =
     kind = "ping"
     || [ ".added"; ".done"; ".created"; ".in_progress"; ".queued" ] |> List.exists kind.EndsWith
@@ -107,8 +107,10 @@ let private harmless (kind: string) =
 /// One server-sent event: its `event:` name and its `data:` payload, either of which may be missing.
 /// The kind is the JSON `type`, and the name must agree with it when both are present. A text delta
 /// needs both to be exactly the text-delta kind plus a string `delta`; an event whose kind cannot be
-/// determined, that is unknown, or whose two names disagree is `Malformed`, so success is never
-/// returned from partial text. Only the known harmless kinds are skipped.
+/// determined or whose two names disagree is `Malformed`, so success is never returned from partial
+/// text. An unknown kind with a JSON type is skipped unless it ends in ".delta": status events such as
+/// ChatGPT's undocumented `response.metadata` carry no answer text, but an unknown delta might, so it
+/// is `Malformed`.
 let private parseEvent (token: string) (name: string option) (data: string option) : Event =
     try
         let document = data |> Option.map (fun payload -> JsonDocument.Parse payload)
@@ -152,7 +154,7 @@ let private parseEvent (token: string) (name: string option) (data: string optio
                         | None -> None
                     // The stream itself answered 200; the failure carries no HTTP status of its own.
                     Failed(failure token 200 error)
-                | other when harmless other -> Other
+                | other when harmless other || not (other.EndsWith ".delta") -> Other
                 | _ -> Malformed
             // No JSON type: only a harmless name can be trusted; a text delta named without its type is not.
             | Some declared, None when harmless declared -> Other

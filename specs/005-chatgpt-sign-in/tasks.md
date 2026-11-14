@@ -25,11 +25,12 @@ Each task is one vertical slice and one PR: tests first (meaningful RED, then GR
 
 ## Phase 3: Release gate
 
+- [x] T013 Accept ChatGPT's undocumented `response.metadata` stream event (research §12): an unknown event kind that does not end in ".delta" is skipped; an unknown ".delta" kind, a name/type mismatch and a missing or non-string type stay unusable output, and success still needs `response.completed` with non-empty text. `FakeOpenAi`'s completed stream sends `response.metadata` like the real service. **Files**: `src/LexScholar.Infrastructure/ResponsesApi.fs`, `tests/LexScholar.Infrastructure.Tests/ResponsesApiTests.fs`, `tests/LexScholar.Server.Tests/FakeOpenAi.fs`. Found in T012; Codecks $13z. Evidence: [`evidence/t013-stream-metadata.md`](evidence/t013-stream-metadata.md).
 - [ ] T012 Manual validation on the researcher's real ChatGPT account (quickstart steps 1–10); also completes F003's T012, and v0.2.0 is released only after both. **Files**: `specs/005-chatgpt-sign-in/evidence/t012-manual-validation.md`.
 
 ## Dependencies
 
-T001 → {T002, T003, T006} (parallel: different new files) ; T002 + T003 → T004 → T005 ; T005 + T006 → T007 → T008 → T010 → T011 ; T005 → T009 → T010 ; all → T012.
+T001 → {T002, T003, T006} (parallel: different new files) ; T002 + T003 → T004 → T005 ; T005 + T006 → T007 → T008 → T010 → T011 ; T005 → T009 → T010 ; T013 → T012 ; all → T012.
 Parallel: T006 may also run while T004–T005 do (it touches `ResponsesApi.fs` and `Summarize.fs` only); T009 may run beside T007–T008 (client files only). T004–T005 share `ChatGptAccess.fs` and `ChatGptEndpoints.fs`; T007–T008 share `SummaryEndpoints.fs`; T009–T010 share `App.fs`; each group runs in order.
 
 **MVP**: T001–T010 (sign in and summarize on her plan); T011–T012 are the proof.

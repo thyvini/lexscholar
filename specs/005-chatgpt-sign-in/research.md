@@ -103,6 +103,7 @@ Technology decisions for [plan.md](plan.md). Sources: `docs/notes/summary-servic
 | The exact error bodies for usage limit, disconnect and no plan | Fake service follows the code table; manual validation checks the real ones where reachable. A free-tier account is not available to the owner, so "no plan access" is verified with the fake only |
 | Approved sign-in button assets and formats (`/siwc/website` was not read) | Slice 10 reads them and adds the approved logo; the button label is "Continue with ChatGPT" |
 | The unsupported Responses fields list | Only the fields in section 8 are sent |
+| Event kinds in the Responses stream | The real stream also sends `response.metadata` after the answer text (not in OpenAI's docs; found in T012 on 2026-11-14, fixed in T013). An unknown kind that does not end in ".delta" is skipped, since status events carry no answer text; an unknown ".delta" kind stays unusable output, because it could be answer text we would silently drop |
 
 ## 13. Wording from OpenAI's guidelines (used verbatim)
 
