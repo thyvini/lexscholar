@@ -21,7 +21,7 @@ The first run found a defect: every summary through the plan failed with "did no
 
 F003's acceptance scenarios through the plan (SC-007) are recorded in F003's [T012 evidence](../../003-document-summary/evidence/t012-manual-validation.md).
 
-SC-001 (first opening to first summary in under 5 minutes) was not timed separately; the flow needed no file, address, model or key.
+SC-001 (first opening to first summary in under 5 minutes): pass. It was the first thing tested, from a clean data directory: about 2 to 3 minutes from opening the app to the first summary (not counting the T013 failure), with no file, address, model or key involved.
 
 "No plan access" (free tier) is covered by the fake service only, as planned.
 
