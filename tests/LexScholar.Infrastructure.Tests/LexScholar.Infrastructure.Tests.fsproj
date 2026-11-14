@@ -20,6 +20,8 @@
     <Compile Include="PdfTextTests.fs" />
     <Compile Include="ChatCompletionsTests.fs" />
     <Compile Include="ChatGptCredentialsTests.fs" />
+    <Compile Include="../LexScholar.Server.Tests/FakeOpenAi.fs" Link="FakeOpenAi.fs" />
+    <Compile Include="OpenAiAuthTests.fs" />
     <ProjectReference Include="../../src/LexScholar.Infrastructure/LexScholar.Infrastructure.fsproj" />
     <PackageReference Include="xunit.v3" />
     <None Include="../Fixtures/*" LinkBase="Fixtures" CopyToOutputDirectory="PreserveNewest" />

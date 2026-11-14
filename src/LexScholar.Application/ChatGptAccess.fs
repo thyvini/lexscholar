@@ -20,9 +20,17 @@ type RefreshFailure =
     /// Network error or 5xx: the record is kept.
     | Unreachable
 
+/// What the token endpoint issued for an authorization code.
+type TokenGrant =
+    { AccessToken: string
+      RefreshToken: string
+      IdToken: string
+      ExpiresAt: System.DateTimeOffset
+      Scopes: string list }
+
 /// Calls to the sign-in service (auth.openai.com). Errors never carry response bodies.
 type AuthClient =
-    { /// code, code verifier, redirect address -> access token, refresh token, ID token
-      Exchange: string -> string -> string -> CancellationToken -> Task<Result<string * string * string, unit>>
+    { /// code, code verifier, redirect address -> the issued tokens, expiry and granted scopes
+      Exchange: string -> string -> string -> CancellationToken -> Task<Result<TokenGrant, unit>>
       Refresh: Credentials -> CancellationToken -> Task<Result<Credentials, RefreshFailure>>
       Revoke: Credentials -> CancellationToken -> Task<bool> }
