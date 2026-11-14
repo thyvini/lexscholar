@@ -190,8 +190,8 @@ let private findKey (jwks: string) (kid: string) : RSAParameters option =
     |> Option.bind (fun document ->
         use document = document
         let root = document.RootElement
-        match root.ValueKind, root.TryGetProperty "keys" with
-        | JsonValueKind.Object, (true, keys) when keys.ValueKind = JsonValueKind.Array ->
+        match (if root.ValueKind = JsonValueKind.Object then root.TryGetProperty "keys" else (false, root)) with
+        | true, keys when keys.ValueKind = JsonValueKind.Array ->
             [ for item in keys.EnumerateArray() do
                 if item.ValueKind = JsonValueKind.Object && text item "kid" = Some kid && text item "kty" = Some "RSA" then
                     match text item "n" |> Option.bind base64UrlDecode, text item "e" |> Option.bind base64UrlDecode with

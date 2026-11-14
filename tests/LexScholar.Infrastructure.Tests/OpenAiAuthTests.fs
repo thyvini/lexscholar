@@ -205,3 +205,33 @@ let ``a malformed token is rejected`` () = task {
     for token in [ ""; "abc"; "a.b"; "a.b.c"; "!!.!!.!!" ] do
         let! result = verify token
         Assert.Equal(Error OpenAiAuth.BadSignature, result) }
+
+type private Scripted(answer: Uri -> string) =
+    inherit HttpMessageHandler()
+    member val Posted : Uri list = [] with get, set
+    override this.SendAsync(request, _) =
+        if request.Method = HttpMethod.Post then this.Posted <- request.RequestUri :: this.Posted
+        let body = answer request.RequestUri
+        Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK, Content = new StringContent(body)))
+
+[<Theory; Trait("Task", "T003")>]
+[<InlineData("http://auth.openai.com/revoke")>]
+[<InlineData("https://evil.example/revoke")>]
+[<InlineData("/revoke")>]
+let ``a discovered revocation address off auth.openai.com over https is never used`` (address: string) = task {
+    let handler = new Scripted(fun _ -> $$"""{"revocation_endpoint":"{{address}}"}""")
+    use http = new HttpClient(handler)
+    let! confirmed = OpenAiAuth.revoke http credentials none
+    Assert.False confirmed
+    Assert.Empty handler.Posted }
+
+[<Theory; Trait("Task", "T003")>]
+[<InlineData("null")>]
+[<InlineData("[]")>]
+[<InlineData("\"keys\"")>]
+[<InlineData("{\"keys\":3}")>]
+let ``a key set that is not a key list rejects the token without throwing`` (jwks: string) = task {
+    let handler = new Scripted(fun _ -> jwks)
+    use http = new HttpClient(handler)
+    let! result = OpenAiAuth.verifyIdToken http clock "client-test" "nonce-1" (TestIdToken.build "RS256" TestIdToken.keyId (claims "nonce-1")) none
+    Assert.Equal(Error OpenAiAuth.BadSignature, result) }
