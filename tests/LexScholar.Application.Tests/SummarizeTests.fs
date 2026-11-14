@@ -203,3 +203,14 @@ let ``a rejected request names the settings to check and no failure detail carri
     for detail in others do
         Assert.DoesNotContain("MaxOutputTokens", detail)
         Assert.Contains("Try again", detail)
+
+[<Fact; Trait("Task", "T006")>]
+let ``the plan failures are explained in LexScholar's words`` () =
+    let usage = Summarize.failureDetail Summarize.ServiceError.UsageLimitReached
+    let signedOut = Summarize.failureDetail Summarize.ServiceError.SignedOut
+    let noAccess = Summarize.failureDetail Summarize.ServiceError.NoPlanAccess
+    Assert.Contains("usage limit", usage)
+    Assert.Contains("ChatGPT settings", usage)
+    Assert.Contains("Sign in", signedOut)
+    Assert.Contains("plan", noAccess)
+    Assert.Equal(3, ([ usage; signedOut; noAccess ] |> List.distinct |> List.length))

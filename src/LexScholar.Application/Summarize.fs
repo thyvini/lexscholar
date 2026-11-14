@@ -23,6 +23,9 @@ type ServiceError =
     | Redirected
     | TimedOut
     | UnusableOutput
+    | UsageLimitReached
+    | SignedOut
+    | NoPlanAccess
 
 /// Messages are (role, content) pairs for one chat completion.
 type ChatMessage = { Role: string; Content: string }
@@ -55,6 +58,9 @@ let failureDetail (error: ServiceError) : string =
     | ServiceError.TimedOut -> "The summary service took too long to answer. Try again."
     | ServiceError.Redirected -> "The summary service redirected the request, which LexScholar does not follow. Check the Endpoint setting. Try again."
     | ServiceError.UnusableOutput -> "The summary service did not give a usable answer. Try again."
+    | ServiceError.UsageLimitReached -> "The summary service answered with an error. Try again."
+    | ServiceError.SignedOut -> "The summary service answered with an error. Try again."
+    | ServiceError.NoPlanAccess -> "The summary service answered with an error. Try again."
 
 let private jsonForm = "{\"points\": [{\"text\": \"...\", \"pages\": [3, 4]}]}"
 
