@@ -149,6 +149,7 @@ type FakeOpenAi(responses: int -> ResponsesScript) =
                 return this.Sse
                     [ "response.output_text.delta", box {| ``type`` = "response.output_text.delta"; delta = text.Substring(0, half) |}
                       "response.output_text.delta", box {| ``type`` = "response.output_text.delta"; delta = text.Substring half |}
+                      "response.metadata", box {| ``type`` = "response.metadata"; metadata = {| model = "gpt" |} |}
                       "response.completed", box {| ``type`` = "response.completed" |} ]
             | ResponsesScript.Failed code ->
                 return this.Sse
