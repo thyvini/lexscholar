@@ -16,4 +16,10 @@ The decoder's character buffer was as large as the byte buffer, so a multi-byte 
 
 ## GPT review P2 (fixed): one deadline
 
-The body read got a fresh timeout after the headers, so a call could take nearly twice the limit (F003's `ChatCompletions` has the same pattern; not changed here, outside this slice). RED: `the time limit is one deadline for the headers and the stream together` failed with `the call took 1500 ms` (headers after 500 ms, 1 s limit, stalled stream). GREEN: one linked deadline created before the send covers headers and stream; `scripts/check.sh T006` gave `Tests: 42 total, 0 failed, 0 skipped.` The test's header delay is a fake handler delay with a 350 ms margin, not a readiness wait.
+The body read got a fresh timeout after the headers, so a call could take nearly twice the limit (F003's `ChatCompletions` has the same pattern; not changed here, outside this slice). RED: `the time limit is one deadline for the headers and the stream together` failed with `the call took 1500 ms` (headers after 500 ms, 1 s limit, stalled stream). GREEN: one linked deadline created before the send covers headers and stream; `scripts/check.sh T006` gave `Tests: 42 total, 0 failed, 0 skipped.` (That wall-clock test was replaced, see the next section.)
+
+## GPT review round 2 (fixed)
+
+- P1, malformed text events: a data line that is not JSON, or a `response.output_text.delta` without a string `delta`, was ignored, so a later `response.completed` could return partial text. Now it is `UnusableOutput`. RED: `a malformed text event is unusable output and never a partial summary` failed (partial text returned as success).
+- P2, deterministic deadline: `completeWithDeadline` takes the deadline token (`complete` supplies one from `client.Timeout`; the same deadline covers headers and stream). The two tests fire the deadline at a handshake (stream stalled after the first event; request waiting for headers) and assert `TimedOut`, with no wall-clock margin; a 10 s guard only stops a hang. RED: both failed on the guard (the stub ignored the deadline).
+- GREEN: `scripts/check.sh T006` gave `Tests: 44 total, 0 failed, 0 skipped.`

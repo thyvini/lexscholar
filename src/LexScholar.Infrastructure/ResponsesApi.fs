@@ -92,9 +92,11 @@ type private Event =
     | Completed
     | Failed of Summarize.ServiceError
     | Incomplete
+    | Malformed
     | Other
 
-/// One `data:` line of the event stream; anything unreadable is ignored.
+/// One `data:` line of the event stream. A line that is not JSON, or a text event without a text `delta`,
+/// is `Malformed`: success is never returned from partial text.
 let private parseEvent (token: string) (data: string) : Event =
     try
         use document = JsonDocument.Parse data
@@ -105,7 +107,7 @@ let private parseEvent (token: string) (data: string) : Event =
             | "response.output_text.delta" ->
                 match root.TryGetProperty "delta" with
                 | true, delta when delta.ValueKind = JsonValueKind.String -> Delta(delta.GetString())
-                | _ -> Other
+                | _ -> Malformed
             | "response.completed" -> Completed
             | "response.incomplete" -> Incomplete
             | "response.failed" ->
@@ -120,7 +122,7 @@ let private parseEvent (token: string) (data: string) : Event =
                 Failed(failure token 200 error)
             | _ -> Other
         | _ -> Other
-    with _ -> Other
+    with _ -> Malformed
 
 /// Reads the event stream line by line under the size cap until a terminal event.
 let private readStream (token: string) (stream: Stream) (cancellation: CancellationToken) : Task<Result<string, Summarize.ServiceError>> = task {
@@ -140,6 +142,7 @@ let private readStream (token: string) (stream: Stream) (cancellation: Cancellat
                 outcome <- Some(if text.Length = 0 then Error Summarize.ServiceError.UnusableOutput else Ok(text.ToString()))
             | Incomplete -> outcome <- Some(Error Summarize.ServiceError.UnusableOutput)
             | Failed error -> outcome <- Some(Error error)
+            | Malformed -> outcome <- Some(Error Summarize.ServiceError.UnusableOutput)
             | Other -> ()
     while outcome.IsNone do
         let! read = stream.ReadAsync(chunk.AsMemory(), cancellation)
@@ -164,12 +167,12 @@ let private call
     (client: HttpClient)
     (token: string)
     (request: HttpRequestMessage)
+    (deadlineToken: CancellationToken)
     (cancellation: CancellationToken)
     (onSuccess: Stream -> CancellationToken -> Task<Result<'a, Summarize.ServiceError>>)
     : Task<Result<'a, Summarize.ServiceError>> = task {
     // One deadline (the client's timeout) covers the headers and the whole body.
-    use deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellation)
-    deadline.CancelAfter client.Timeout
+    use deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellation, deadlineToken)
     try
         use! response = client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token)
         let status = int response.StatusCode
@@ -196,28 +199,31 @@ let private authorized (method': HttpMethod) (uri: Uri) (token: string) =
     request.Headers.Authorization <- AuthenticationHeaderValue("Bearer", token)
     request
 
-let private send (client: HttpClient) (settings: Settings) (messages: Summarize.ChatMessage list) (cancellation: CancellationToken)
+let private send (client: HttpClient) (settings: Settings) (messages: Summarize.ChatMessage list) (deadline: CancellationToken) (cancellation: CancellationToken)
     : Task<Result<string, Summarize.ServiceError>> = task {
     use request = authorized HttpMethod.Post responsesUri settings.AccessToken
     request.Content <- new StringContent(body settings messages, Encoding.UTF8, "application/json")
-    return! call client settings.AccessToken request cancellation (readStream settings.AccessToken) }
+    return! call client settings.AccessToken request deadline cancellation (readStream settings.AccessToken) }
 
 /// One streamed completion; the joined text of `response.output_text.delta` events once
-/// `response.completed` arrives, or why it failed. Logs only model, message count, outcome and duration.
-let complete (logger: ILogger) (client: HttpClient) (settings: Settings) (messages: Summarize.ChatMessage list) (cancellation: CancellationToken)
+/// `response.completed` arrives, or why it failed. `deadline` is the single limit for the whole call
+/// (headers and stream); `complete` supplies the client's timeout, tests fire their own at a handshake.
+/// Logs only model, message count, outcome and duration.
+let completeWithDeadline (logger: ILogger) (client: HttpClient) (settings: Settings) (messages: Summarize.ChatMessage list) (deadline: CancellationToken) (cancellation: CancellationToken)
     : Task<Result<string, Summarize.ServiceError>> = task {
     let clock = Stopwatch.StartNew()
-    let! result = send client settings messages cancellation
+    let! result = send client settings messages deadline cancellation
     let outcome = match result with Ok _ -> "ok" | Error error -> $"{error}".Split(' ').[0]
     logger.LogInformation(
         "Summary request to ChatGPT plan, model {Model}: {Messages} messages, {Outcome}, {Milliseconds} ms",
         settings.Model, List.length messages, outcome, clock.ElapsedMilliseconds)
     return result }
 
-/// `complete` with the deadline supplied by the caller (tests fire it at a handshake point instead of waiting).
-let completeWithDeadline (logger: ILogger) (client: HttpClient) (settings: Settings) (messages: Summarize.ChatMessage list) (_deadline: CancellationToken) (cancellation: CancellationToken)
-    : Task<Result<string, Summarize.ServiceError>> =
-    complete logger client settings messages cancellation
+/// `completeWithDeadline` with the client's timeout as the deadline.
+let complete (logger: ILogger) (client: HttpClient) (settings: Settings) (messages: Summarize.ChatMessage list) (cancellation: CancellationToken)
+    : Task<Result<string, Summarize.ServiceError>> = task {
+    use limit = new CancellationTokenSource(client.Timeout)
+    return! completeWithDeadline logger client settings messages limit.Token cancellation }
 
 let private parseModels (stream: Stream) (cancellation: CancellationToken) : Task<Result<ModelEntry list, Summarize.ServiceError>> = task {
     match! readLimited stream cancellation with
@@ -239,4 +245,5 @@ let private parseModels (stream: Stream) (cancellation: CancellationToken) : Tas
 let listModels (client: HttpClient) (accessToken: string) (cancellation: CancellationToken)
     : Task<Result<ModelEntry list, Summarize.ServiceError>> = task {
     use request = authorized HttpMethod.Get modelsUri accessToken
-    return! call client accessToken request cancellation parseModels }
+    use limit = new CancellationTokenSource(client.Timeout)
+    return! call client accessToken request limit.Token cancellation parseModels }
