@@ -15,7 +15,17 @@ let private failureOfCode (code: string) : Summary.Failure =
     | "not_enough_text" -> Summary.NotEnoughText
     | "too_many_pages" -> Summary.TooManyPages
     | "service_failed" -> Summary.ServiceFailed None
+    | "usage_limit_reached" -> Summary.UsageLimitReached
+    // The problem and the event mean the same: the sign-in is gone.
+    | "signed_out" | "chatgpt_signed_out" -> Summary.SignedOut
+    | "no_plan_access" -> Summary.NoPlanAccess
+    | "destination_required" -> Summary.DestinationRequired
     | _ -> Summary.RequestFailed
+
+let private isPlan (root: JsonElement) =
+    match root.TryGetProperty "destination" with
+    | true, value -> value.ValueKind = JsonValueKind.String && value.GetString() = "chatgpt"
+    | _ -> false
 
 /// An error response's failure. A 409 `confirmation_required` carries the host and
 /// model to show; anything else maps by its `code`. An unreadable body is a plain failure.
@@ -24,6 +34,8 @@ let failureOfBody (body: string) : Summary.Failure =
         use json = JsonDocument.Parse(body)
         let root = json.RootElement
         match root.GetProperty("code").GetString() with
+        | "confirmation_required" when isPlan root ->
+            Summary.ConfirmationRequired (Summary.Plan (root.GetProperty("account").GetString()))
         | "confirmation_required" ->
             Summary.ConfirmationRequired (Summary.Service (root.GetProperty("serviceHost").GetString(), root.GetProperty("model").GetString()))
         | code -> failureOfCode code
@@ -66,7 +78,18 @@ let progress (element: JsonElement) : Summary.Progress option =
 
 /// `confirmSend` names the service the researcher confirmed, so the server can check it is still the configured one.
 let requestBody (destination: Summary.Destination option) (confirmed: Summary.Confirmed option) : string =
-    match confirmed with
-    | Some (Summary.ConfirmedService (host, model)) -> JsonSerializer.Serialize({| confirmSend = true; confirmedHost = host; confirmedModel = model |})
-    | Some Summary.ConfirmedPlan -> JsonSerializer.Serialize({| confirmSend = true |})
-    | None -> JsonSerializer.Serialize({| confirmSend = false |})
+    let destinationName =
+        match destination with
+        | Some Summary.UsePlan -> Some "chatgpt"
+        | Some Summary.UseConfigured -> Some "configured"
+        | None -> None
+    let fields =
+        [ yield! destinationName |> Option.map (fun name -> "destination", box name) |> Option.toList
+          match confirmed with
+          | Some (Summary.ConfirmedService (host, model)) ->
+              yield "confirmSend", box true
+              yield "confirmedHost", box host
+              yield "confirmedModel", box model
+          | Some Summary.ConfirmedPlan -> yield "confirmSend", box true
+          | None -> yield "confirmSend", box false ]
+    JsonSerializer.Serialize(dict fields)

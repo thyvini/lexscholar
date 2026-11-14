@@ -216,7 +216,14 @@ module ChatGptApi =
                         Some { ChatGpt.Name = (if chatgpt.TryGetProperty("account", &name) then name.GetString() else "your ChatGPT account")
                                ChatGpt.Confirmed = chatgpt.TryGetProperty("confirmed", &confirmed) && confirmed.GetBoolean() }
                     else None
-                return Ok { ChatGpt.Account = account; ChatGpt.Configured = None; ChatGpt.WelcomePending = root.GetProperty("welcomePending").GetBoolean() }
+                let configured =
+                    match root.TryGetProperty "configured" with
+                    | true, value when value.ValueKind = JsonValueKind.Object ->
+                        Some { ChatGpt.Host = value.GetProperty("serviceHost").GetString()
+                               ChatGpt.Model = value.GetProperty("model").GetString()
+                               ChatGpt.Local = value.GetProperty("local").GetBoolean() }
+                    | _ -> None
+                return Ok { ChatGpt.Account = account; ChatGpt.Configured = configured; ChatGpt.WelcomePending = root.GetProperty("welcomePending").GetBoolean() }
         with _ -> return Error () }
 
     /// Unsafe request with a fresh antiforgery token; the status and body, or None when it could not be sent.
@@ -350,9 +357,14 @@ module private Ui =
             { state with ChatGpt = chatGpt }, chatGptCommand http navigation effect
         | SummaryMsg message ->
             let summary, effect = Summary.update message state.Summary
-            { state with Summary = summary },
-            match effect with
-            | effect -> summaryCommand http effect
+            // A failure that ended the sign-in (stream event or problem alike) reloads the destinations.
+            let reload =
+                match message with
+                | Summary.Responded (request, Error failure) when state.Summary.State = Summary.Generating request && Summary.reloadsDestinations failure -> true
+                | _ -> false
+            let chatGpt, chatGptEffect = if reload then ChatGpt.update ChatGpt.Load state.ChatGpt else state.ChatGpt, None
+            { state with Summary = summary; ChatGpt = chatGpt },
+            Cmd.batch [ summaryCommand http effect; chatGptCommand http navigation chatGptEffect ]
         | ProjectsMsg message ->
             let projects, effect = Projects.update message state.Projects
             let state = { state with Projects = projects }
@@ -376,6 +388,12 @@ module private Ui =
     /// The summary follows the reader's project and open document after every message.
     let update http navigation msg state =
         let state, command = updateCore http navigation msg state
+        // The summary knows which destinations exist from the sign-in state and the configured service.
+        let available =
+            { Summary.Plan = (match state.ChatGpt.Status with ChatGpt.SignedIn _ -> true | _ -> false)
+              Summary.Configured = state.ChatGpt.Configured.IsSome }
+        let summary, _ = Summary.update (Summary.DestinationsChanged available) state.Summary
+        let state = { state with Summary = summary }
         let summary, effect = Summary.followReader state.Reader state.Summary
         { state with Summary = summary }, Cmd.batch [ command; summaryCommand http effect ]
 
@@ -508,7 +526,8 @@ module private Ui =
         let omitted =
             if generated.OmittedPoints = 0 then ""
             else $" {generated.OmittedPoints} generated points were left out because their citations could not be verified."
-        $"{document.FileName}, covering {Summary.pageRanges generated.PagesCovered}.{unreadable} Generated {generatedAt} by {generated.Model} at {generated.ServiceHost}.{omitted}"
+        let preposition = if generated.ServiceHost = "ChatGPT plan" then "using" else "at"
+        $"{document.FileName}, covering {Summary.pageRanges generated.PagesCovered}.{unreadable} Generated {generatedAt} by {generated.Model} {preposition} {generated.ServiceHost}.{omitted}"
 
     let private plainButton label (cssClass: string option) onClick =
         button {
@@ -527,12 +546,16 @@ module private Ui =
         | Some Summary.Combining -> span { attr.``class`` "summary-progress"; text "Combining points. " }
         | None -> empty ()
 
-    let private confirmDialog (document: Reader.Document) host model dispatch =
+    let private confirmDialog (document: Reader.Document) (target: Summary.ConfirmTarget) dispatch =
         div {
             attr.``class`` "summary-confirm"
             "role" => "alertdialog"
             "aria-label" => "Confirm sending"
-            p { text $"The text of {document.FileName} will be sent to {host} (model {model}), which is not on this machine. Send?" }
+            match target with
+            | Summary.Service (host, model) ->
+                p { text $"The text of {document.FileName} will be sent to {host} (model {model}), which is not on this machine. Send?" }
+            | Summary.Plan account ->
+                p { text $"The text of {document.FileName} will be sent to your ChatGPT plan (account {account}), which is not on this machine. Send?" }
             plainButton "Send" (Some "send-confirm") (fun _ -> dispatch Summary.ConfirmSend)
             " "
             plainButton "Cancel" (Some "send-cancel") (fun _ -> dispatch Summary.CancelSend)
@@ -646,8 +669,43 @@ module private Ui =
                 | None -> empty ()
         }
 
-    let summaryView (document: Reader.Document) (summary: Summary.Model) onCite dispatch =
+    let private usageLink (caption: string) =
+        a { attr.href "https://chatgpt.com/settings/usage"; "target" => "_blank"; "rel" => "noopener noreferrer"; attr.``class`` "manage-usage"; text caption }
+
+    /// Her plan is the destination of the next request.
+    let private usingPlan (summary: Summary.Model) =
+        summary.Available.Plan && (not summary.Available.Configured || summary.Choice = Some Summary.UsePlan)
+
+    let private destinationChoice (chatGpt: ChatGpt.Model) (summary: Summary.Model) dispatch =
+        let radio (value: Summary.Destination) id (caption: string) =
+            span {
+                input {
+                    attr.``type`` "radio"
+                    attr.name "summary-destination"
+                    attr.id id
+                    attr.``checked`` (summary.Choice = Some value)
+                    on.change (fun _ -> dispatch (Summary.Choose value))
+                }
+                label { attr.``for`` id; text caption }
+                " "
+            }
+        let configured =
+            match chatGpt.Configured with
+            | Some service -> $"{service.Host} (model {service.Model})"
+            | None -> "the configured service"
+        fieldset {
+            attr.``class`` "summary-destination"
+            legend { "Summarize with" }
+            radio Summary.UsePlan "summary-destination-plan" "Your ChatGPT plan"
+            radio Summary.UseConfigured "summary-destination-configured" configured
+        }
+
+    let summaryView (document: Reader.Document) (summary: Summary.Model) (chatGpt: ChatGpt.Model) onCite dispatch dispatchChatGpt =
+        let needsChoice = summary.Available.Plan && summary.Available.Configured
         concat {
+            cond (needsChoice && (match summary.State with Summary.Generating _ | Summary.Confirming _ -> false | _ -> true)) <| function
+                | true -> destinationChoice chatGpt summary dispatch
+                | false -> empty ()
             cond summary.State <| function
                 | Summary.Generating _ ->
                     span {
@@ -657,11 +715,24 @@ module private Ui =
                         plainButton "Dismiss" None (fun _ -> dispatch Summary.Dismiss)
                     }
                 | Summary.Shown _ -> empty ()
-                | Summary.Confirming (Summary.Service (host, model)) -> confirmDialog document host model dispatch
-                | Summary.Confirming (Summary.Plan _) -> empty ()
-                | Summary.Idle -> plainButton "Summarize" None (fun _ -> dispatch Summary.Summarize)
+                | Summary.Confirming target -> confirmDialog document target dispatch
+                | Summary.Idle ->
+                    button {
+                        attr.``type`` "button"
+                        attr.disabled (needsChoice && summary.Choice.IsNone)
+                        on.click (fun _ -> dispatch Summary.Summarize)
+                        text "Summarize"
+                    }
+                | Summary.Failed failure when Summary.offersSignIn failure -> signInButton false dispatchChatGpt
+                | Summary.Failed Summary.UsageLimitReached -> usageLink "Manage usage"
                 | Summary.Failed _ -> plainButton "Try again" (Some "summary-retry") (fun _ -> dispatch Summary.Summarize)
+            cond (usingPlan summary && (match summary.State with Summary.Confirming _ | Summary.Failed Summary.UsageLimitReached -> false | _ -> true)) <| function
+                | true -> span { attr.``class`` "summary-using-plan"; text " Using ChatGPT plan. "; usageLink "Manage usage" }
+                | false -> empty ()
             cond summary.State <| function
+                | Summary.Failed Summary.NotConfigured ->
+                    p { attr.``class`` "error"; "role" => "alert"; text "Summaries need a ChatGPT sign-in or a summarization service. "
+                        span { attr.``class`` "secondary"; text (Summary.failureText Summary.NotConfigured) } }
                 | Summary.Failed failure -> p { attr.``class`` "error"; "role" => "alert"; text (Summary.failureText failure) }
                 | _ -> empty ()
             cond summary.State <| function
@@ -747,7 +818,7 @@ module private Ui =
                         a { attr.href document.ContentUrl; "target" => "_blank"; "rel" => "noopener"; "Open in new tab" }
                         button { attr.``type`` "button"; on.click (fun _ -> dispatch' (ReaderMsg Reader.Close)); "Close" }
                         chatGptAccount state.ChatGpt (ChatGptMsg >> dispatch')
-                        summaryView document state.Summary (ReaderMsg << Reader.ShowPage >> dispatch') (SummaryMsg >> dispatch')
+                        summaryView document state.Summary state.ChatGpt (ReaderMsg << Reader.ShowPage >> dispatch') (SummaryMsg >> dispatch') (ChatGptMsg >> dispatch')
                         iframe {
                             // Keyed by the navigation counter: every citation click re-creates the frame.
                             attr.key state.Reader.Navigation

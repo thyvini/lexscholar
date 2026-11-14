@@ -106,26 +106,44 @@ let update (message: Message) (model: Model) : Model * Effect option =
     let abandon model =
         reset model, (match model.State with Generating request -> Some (Cancel request) | _ -> None)
     // Every request takes a fresh number.
-    let start project document confirmed =
+    let start project document destination confirmed =
         let request = model.Request + 1
-        { model with State = Generating request; Progress = None; Request = request }, Some (Send (request, project, document, None, confirmed))
+        { model with State = Generating request; Progress = None; Request = request }, Some (Send (request, project, document, destination, confirmed))
+    // One available destination is used; with two, only her choice (none: nothing can be sent yet).
+    let destination =
+        match model.Available with
+        | { Plan = true; Configured = false } -> Some (Some UsePlan)
+        | { Plan = false; Configured = true } -> Some (Some UseConfigured)
+        | { Plan = true; Configured = true } -> model.Choice |> Option.map Some
+        | _ -> Some None
     match message with
     | Summarize ->
         match model.Project, model.Document, model.State with
-        | Some project, Some document, (Idle | Shown _ | Failed _) -> start project document None
+        | Some project, Some document, (Idle | Shown _ | Failed _) ->
+            match destination with
+            | Some destination -> start project document destination None
+            | None -> model, None
         | _ -> model, None
     | Dismiss -> abandon model
     | ConfirmSend ->
         match model.Project, model.Document, model.State with
-        | Some project, Some document, Confirming (Service (host, name)) -> start project document (Some (ConfirmedService (host, name)))
-        | Some project, Some document, Confirming (Plan _) -> start project document (Some ConfirmedPlan)
+        | Some project, Some document, Confirming (Service (host, name)) -> start project document (destination |> Option.flatten) (Some (ConfirmedService (host, name)))
+        | Some project, Some document, Confirming (Plan _) -> start project document (destination |> Option.flatten) (Some ConfirmedPlan)
         | _ -> model, None
     // Cancelling sends nothing: no effect. A late answer is dropped because only `Generating` accepts one.
     | CancelSend ->
         match model.State with
         | Confirming _ -> reset model, None
         | _ -> model, None
-    | DestinationsChanged _ | Choose _ -> model, None
+    | DestinationsChanged available ->
+        // A destination that is no longer offered cannot stay chosen.
+        let choice =
+            match model.Choice with
+            | Some UsePlan when not available.Plan -> None
+            | Some UseConfigured when not available.Configured -> None
+            | choice -> choice
+        { model with Available = available; Choice = choice }, None
+    | Choose choice -> { model with Choice = Some choice }, None
     | Progressed (request, progress) when model.State = Generating request -> { model with Progress = Some progress }, None
     | Progressed _ -> model, None
     | Responded (request, result) when model.State = Generating request ->
@@ -162,7 +180,7 @@ let pageRanges (pages: int list) : string =
 let failureText (failure: Failure) : string =
     match failure with
     | NotConfigured ->
-        "Summaries need a summarization service. Set LexScholar:Summary:Endpoint and LexScholar:Summary:Model in the app's settings file, then restart LexScholar."
+        "Alternatively, set LexScholar:Summary:Endpoint and LexScholar:Summary:Model in the app's settings file, then restart LexScholar, to use your own summarization service."
     | Unavailable ->
         "This document's stored file is missing, unreadable or not the recorded size. Its library record and project associations are unchanged."
     | NoText -> "This document has no readable text to summarize (for example, a scanned PDF without a text layer). Nothing was sent."
@@ -170,11 +188,20 @@ let failureText (failure: Failure) : string =
     | TooManyPages -> "Documents of more than 100 pages aren't supported yet. Nothing was sent."
     | ServiceFailed (Some detail) -> detail
     | ServiceFailed None -> "The summary could not be produced. Please try again."
-    | UsageLimitReached | SignedOut | NoPlanAccess | DestinationRequired -> "The request failed. Please try again."
+    | UsageLimitReached -> "Usage limit reached. Review your plan or this app's limit in ChatGPT settings."
+    | SignedOut -> "You are signed out of ChatGPT. Sign in again to summarize with your plan."
+    | NoPlanAccess -> "This ChatGPT account's plan can't be used by apps, so you are signed out."
+    | DestinationRequired -> "Choose where to send the text, then try again."
     | RequestFailed | ConfirmationRequired _ -> "The request failed. Please try again."
 
 /// Whether a failure means the ChatGPT sign-in is gone, so the destinations must be loaded again.
-let reloadsDestinations (failure: Failure) : bool = false
+let reloadsDestinations (failure: Failure) : bool =
+    match failure with
+    | SignedOut | NoPlanAccess -> true
+    | _ -> false
 
 /// Whether the failure is answered by offering the ChatGPT sign-in.
-let offersSignIn (failure: Failure) : bool = false
+let offersSignIn (failure: Failure) : bool =
+    match failure with
+    | NotConfigured | SignedOut | NoPlanAccess -> true
+    | _ -> false

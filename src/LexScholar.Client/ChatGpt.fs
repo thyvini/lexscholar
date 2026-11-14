@@ -73,8 +73,8 @@ let update (message: Message) (model: Model) : Model * Effect option =
         match result with
         | Ok destinations ->
             match destinations.Account with
-            | Some account -> { model with Status = SignedIn account; WelcomePending = destinations.WelcomePending }, None
-            | None -> { model with Status = SignedOut; WelcomePending = false }, None
+            | Some account -> { model with Status = SignedIn account; Configured = destinations.Configured; WelcomePending = destinations.WelcomePending }, None
+            | None -> { model with Status = SignedOut; Configured = destinations.Configured; WelcomePending = false }, None
         | Error () -> { model with Status = Unavailable }, None
     | Loaded _ -> model, None
     | Returned value ->
