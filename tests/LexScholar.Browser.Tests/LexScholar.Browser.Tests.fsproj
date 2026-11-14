@@ -19,6 +19,7 @@
     <Compile Include="ReaderJourneyTests.fs" />
     <Compile Include="SummaryStateTests.fs" />
     <Compile Include="SummaryJourneyTests.fs" />
+    <Compile Include="ChatGptStateTests.fs" />
     <None Include="../Fixtures/**" LinkBase="Fixtures" CopyToOutputDirectory="PreserveNewest" />
     <ProjectReference Include="../../src/LexScholar.Server/LexScholar.Server.fsproj" />
     <PackageReference Include="Microsoft.Playwright" />
