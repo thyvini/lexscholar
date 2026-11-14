@@ -167,25 +167,25 @@ let private call
     (cancellation: CancellationToken)
     (onSuccess: Stream -> CancellationToken -> Task<Result<'a, Summarize.ServiceError>>)
     : Task<Result<'a, Summarize.ServiceError>> = task {
+    // One deadline (the client's timeout) covers the headers and the whole body.
+    use deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellation)
+    deadline.CancelAfter client.Timeout
     try
-        use! response = client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellation)
+        use! response = client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token)
         let status = int response.StatusCode
         if status >= 300 && status < 400 then return Error Summarize.ServiceError.Redirected
         else
-            // The client's timeout stops at the headers; the body gets the same allowance.
-            use bodyLimit = CancellationTokenSource.CreateLinkedTokenSource(cancellation)
-            bodyLimit.CancelAfter client.Timeout
-            use! stream = response.Content.ReadAsStreamAsync(bodyLimit.Token)
+            use! stream = response.Content.ReadAsStreamAsync(deadline.Token)
             if not response.IsSuccessStatusCode then
                 let! refusal =
                     task {
-                        try return! readLimited stream bodyLimit.Token
+                        try return! readLimited stream deadline.Token
                         with
                         | :? OperationCanceledException when cancellation.IsCancellationRequested -> return raise (OperationCanceledException(cancellation))
                         | :? OperationCanceledException | :? IOException | :? HttpRequestException -> return None }
                 return Error(failureOfBody token status refusal)
             else
-                return! onSuccess stream bodyLimit.Token
+                return! onSuccess stream deadline.Token
     with
     | :? OperationCanceledException when cancellation.IsCancellationRequested -> return raise (OperationCanceledException(cancellation))
     | :? OperationCanceledException -> return Error Summarize.ServiceError.TimedOut
