@@ -15,17 +15,17 @@ let private request effect =
 
 let private signedIn welcome =
     let model, effect = update Load initial
-    fst (update (Loaded (request effect, Ok { Account = Some account; WelcomePending = welcome })) model)
+    fst (update (Loaded (request effect, Ok { Account = Some account; Configured = None; WelcomePending = welcome })) model)
 
 let private signedOut =
     let model, effect = update Load initial
-    fst (update (Loaded (request effect, Ok { Account = None; WelcomePending = false })) model)
+    fst (update (Loaded (request effect, Ok { Account = None; Configured = None; WelcomePending = false })) model)
 
 [<Fact; Trait("Task", "T009")>]
 let ``loading requests the destinations and shows the account and the pending welcome`` () =
     let model, effect = update Load initial
     assertState Unknown model.Status
-    let model, effect = update (Loaded (request effect, Ok { Account = Some account; WelcomePending = true })) model
+    let model, effect = update (Loaded (request effect, Ok { Account = Some account; Configured = None; WelcomePending = true })) model
     assertState (SignedIn account) model.Status
     assertState true model.WelcomePending
     assertState None effect
@@ -42,16 +42,16 @@ let ``a failed load is unavailable and can be retried`` () =
     assertState Unavailable model.Status
     let retry, effect = update Load model
     Assert.True((request effect > 0))
-    let loaded, _ = update (Loaded (request effect, Ok { Account = None; WelcomePending = false })) retry
+    let loaded, _ = update (Loaded (request effect, Ok { Account = None; Configured = None; WelcomePending = false })) retry
     assertState SignedOut loaded.Status
 
 [<Fact; Trait("Task", "T009")>]
 let ``a stale destinations response is dropped`` () =
     let first, firstEffect = update Load initial
     let second, secondEffect = update Load first
-    let stale, _ = update (Loaded (request firstEffect, Ok { Account = Some account; WelcomePending = false })) second
+    let stale, _ = update (Loaded (request firstEffect, Ok { Account = Some account; Configured = None; WelcomePending = false })) second
     assertState Unknown stale.Status
-    let fresh, _ = update (Loaded (request secondEffect, Ok { Account = None; WelcomePending = false })) stale
+    let fresh, _ = update (Loaded (request secondEffect, Ok { Account = None; Configured = None; WelcomePending = false })) stale
     assertState SignedOut fresh.Status
 
 [<Fact; Trait("Task", "T009")>]
@@ -138,7 +138,7 @@ let ``each return message is shown once`` () =
         assertState None dismissed.Notice
         // Reloading the state does not bring the message back.
         let reloaded, fetch = update Load dismissed
-        let reloaded, _ = update (Loaded (request fetch, Ok { Account = None; WelcomePending = false })) reloaded
+        let reloaded, _ = update (Loaded (request fetch, Ok { Account = None; Configured = None; WelcomePending = false })) reloaded
         assertState None reloaded.Notice
 
 [<Fact; Trait("Task", "T009")>]
@@ -146,3 +146,10 @@ let ``a successful return and unknown values show nothing`` () =
     assertState None (fst (update (Returned (Some "signed_in")) initial)).Notice
     assertState None (fst (update (Returned (Some "other")) initial)).Notice
     assertState None (fst (update (Returned None) initial)).Notice
+
+[<Fact; Trait("Task", "T010")>]
+let ``loaded destinations keep the configured service`` () =
+    let model, effect = update Load initial
+    let service = { Host = "127.0.0.1:9"; Model = "m"; Local = true }
+    let loaded, _ = update (Loaded (request effect, Ok { Account = None; Configured = Some service; WelcomePending = false })) model
+    assertState (Some service) loaded.Configured

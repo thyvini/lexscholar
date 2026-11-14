@@ -13,7 +13,10 @@ type Status =
     | SignedIn of Account
 
 /// What the destinations answer says about the sign-in.
-type Destinations = { Account: Account option; WelcomePending: bool }
+/// The service from the settings file, when there is one.
+type ConfiguredService = { Host: string; Model: string; Local: bool }
+
+type Destinations = { Account: Account option; Configured: ConfiguredService option; WelcomePending: bool }
 
 /// A message shown once above the account line, then dismissed.
 type Notice =
@@ -31,6 +34,7 @@ type StartProblem =
 type Model =
     { Status: Status
       WelcomePending: bool
+      Configured: ConfiguredService option
       Notice: Notice option
       /// A sign-out is in flight; sign-in and sign-out are ignored meanwhile.
       SigningOut: bool
@@ -57,7 +61,7 @@ type Effect =
     | SendSignOut
     | SendDismissWelcome
 
-let initial = { Status = Unknown; WelcomePending = false; Notice = None; SigningOut = false; Request = 0 }
+let initial = { Status = Unknown; WelcomePending = false; Configured = None; Notice = None; SigningOut = false; Request = 0 }
 
 let update (message: Message) (model: Model) : Model * Effect option =
     match message with
@@ -69,8 +73,8 @@ let update (message: Message) (model: Model) : Model * Effect option =
         match result with
         | Ok destinations ->
             match destinations.Account with
-            | Some account -> { model with Status = SignedIn account; WelcomePending = destinations.WelcomePending }, None
-            | None -> { model with Status = SignedOut; WelcomePending = false }, None
+            | Some account -> { model with Status = SignedIn account; Configured = destinations.Configured; WelcomePending = destinations.WelcomePending }, None
+            | None -> { model with Status = SignedOut; Configured = destinations.Configured; WelcomePending = false }, None
         | Error () -> { model with Status = Unavailable }, None
     | Loaded _ -> model, None
     | Returned value ->

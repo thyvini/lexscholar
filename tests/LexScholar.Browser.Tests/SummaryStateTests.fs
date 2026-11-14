@@ -27,7 +27,7 @@ let private reading = update (ReaderChanged (Some project, Some document)) initi
 let ``requesting a summary starts generating and sends one request`` () =
     let model, effect = update Summarize reading
     assertState (Generating 1) model.State
-    assertState (Some (Send (1, project, document, None))) effect
+    assertState (Some (Send (1, project, document, None, None))) effect
 
 [<Fact; Trait("Task", "T004")>]
 let ``requesting without an open document does nothing`` () =
@@ -58,7 +58,7 @@ let ``a failure is kept as the state, with not configured distinct`` () =
     // After a failure the researcher can ask again.
     let again, effect = update Summarize failed
     assertState (Generating 2) again.State
-    assertState (Some (Send (2, project, document, None))) effect
+    assertState (Some (Send (2, project, document, None, None))) effect
 
 [<Fact; Trait("Task", "T004")>]
 let ``dismissing returns to idle and drops a late result`` () =
@@ -110,11 +110,11 @@ let ``progress of an older or ended request is dropped`` () =
 
 let private confirming =
     let generating, _ = update Summarize reading
-    update (Responded (1, Error (ConfirmationRequired ("summary.example.test:8080", "gpt")))) generating |> fst
+    update (Responded (1, Error (ConfirmationRequired (Service ("summary.example.test:8080", "gpt"))))) generating |> fst
 
 [<Fact; Trait("Task", "T007")>]
 let ``a confirmation required answer asks the researcher and sends nothing more`` () =
-    assertState (Confirming ("summary.example.test:8080", "gpt")) confirming.State
+    assertState (Confirming (Service ("summary.example.test:8080", "gpt"))) confirming.State
     let again, effect = update Summarize confirming
     assertState confirming again
     assertState None effect
@@ -123,7 +123,7 @@ let ``a confirmation required answer asks the researcher and sends nothing more`
 let ``confirming repeats the request with the confirmed host and model under a new request number`` () =
     let model, effect = update ConfirmSend confirming
     assertState (Generating 2) model.State
-    assertState (Some (Send (2, project, document, Some { Host = "summary.example.test:8080"; Model = "gpt" }))) effect
+    assertState (Some (Send (2, project, document, Some UseConfigured, Some (ConfirmedService ("summary.example.test:8080", "gpt"))))) effect
 
 [<Fact; Trait("Task", "T007")>]
 let ``cancelling returns to idle and emits no effect`` () =
@@ -135,7 +135,7 @@ let ``cancelling returns to idle and emits no effect`` () =
     assertState Idle late.State
     assertState None lateEffect
     let _, again = update Summarize model
-    assertState (Some (Send (2, project, document, None))) again
+    assertState (Some (Send (2, project, document, None, None))) again
 
 [<Fact; Trait("Task", "T007")>]
 let ``confirm and cancel do nothing unless a confirmation is open, and a reader change closes it`` () =
@@ -192,7 +192,7 @@ let ``a service failure shows the server's explanation and offers another try th
     Assert.Contains("try again", (failureText (ServiceFailed None)).ToLowerInvariant())
     let again, effect = update Summarize failed
     assertState (Generating 2) again.State
-    assertState (Some (Send (2, project, document, None))) effect
+    assertState (Some (Send (2, project, document, None, None))) effect
     let late, _ = update (Responded (1, Error (ServiceFailed None))) again
     assertState (Generating 2) late.State
 
@@ -204,3 +204,121 @@ let ``abandoning a request is never shown as a failure, even when its fetch ends
     let moved, _ = update (ReaderChanged (Some project, None)) generating
     let lateMoved, _ = update (Responded (1, Error (ServiceFailed None))) moved
     assertState Idle lateMoved.State
+
+// ---- F005 T010: destinations, plan confirmation and the new failures ----
+
+let private planOnly = { Plan = true; Configured = false }
+let private configuredOnly = { Plan = false; Configured = true }
+let private both = { Plan = true; Configured = true }
+let private withAvailable available = update (DestinationsChanged available) reading |> fst
+
+[<Fact; Trait("Task", "T010")>]
+let ``one available destination is used without a choice`` () =
+    let _, plan = update Summarize (withAvailable planOnly)
+    assertState (Some (Send (1, project, document, Some UsePlan, None))) plan
+    let _, configured = update Summarize (withAvailable configuredOnly)
+    assertState (Some (Send (1, project, document, Some UseConfigured, None))) configured
+
+[<Fact; Trait("Task", "T010")>]
+let ``with two destinations nothing is sent until she chooses, and the choice is sent`` () =
+    let model = withAvailable both
+    let unchosen, effect = update Summarize model
+    assertState Idle unchosen.State
+    assertState None effect
+    let chosen = update (Choose UseConfigured) model |> fst
+    assertState (Some UseConfigured) chosen.Choice
+    let _, send = update Summarize chosen
+    assertState (Some (Send (1, project, document, Some UseConfigured, None))) send
+
+[<Fact; Trait("Task", "T010")>]
+let ``a choice is dropped when a destination stops being available`` () =
+    let chosen = update (Choose UsePlan) (withAvailable both) |> fst
+    let signedOut = update (DestinationsChanged configuredOnly) chosen |> fst
+    assertState None signedOut.Choice
+    let _, send = update Summarize signedOut
+    assertState (Some (Send (1, project, document, Some UseConfigured, None))) send
+
+[<Fact; Trait("Task", "T010")>]
+let ``confirming the plan names it, sends the confirmation and keeps the destination`` () =
+    let model = withAvailable planOnly
+    let generating, _ = update Summarize model
+    let asked = update (Responded (1, Error (ConfirmationRequired (Plan "Ada")))) generating |> fst
+    assertState (Confirming (Plan "Ada")) asked.State
+    let confirmed, effect = update ConfirmSend asked
+    assertState (Generating 2) confirmed.State
+    assertState (Some (Send (2, project, document, Some UsePlan, Some ConfirmedPlan))) effect
+
+[<Fact; Trait("Task", "T010")>]
+let ``cancelling the plan confirmation sends nothing`` () =
+    let generating, _ = update Summarize (withAvailable planOnly)
+    let asked = update (Responded (1, Error (ConfirmationRequired (Plan "Ada")))) generating |> fst
+    let cancelled, effect = update CancelSend asked
+    assertState Idle cancelled.State
+    assertState None effect
+
+[<Fact; Trait("Task", "T010")>]
+let ``each new failure is kept as the state and the researcher can ask again`` () =
+    let generating, _ = update Summarize (withAvailable planOnly)
+    for failure in [ UsageLimitReached; SignedOut; NoPlanAccess; DestinationRequired ] do
+        let failed, _ = update (Responded (1, Error failure)) generating
+        assertState (Failed failure) failed.State
+
+[<Fact; Trait("Task", "T010")>]
+let ``failure texts use the wording of the feature`` () =
+    Assert.Equal("Usage limit reached. Review your plan or this app's limit in ChatGPT settings.", failureText UsageLimitReached)
+    Assert.Equal("You are signed out of ChatGPT. Sign in again to summarize with your plan.", failureText SignedOut)
+    Assert.Equal("This ChatGPT account's plan can't be used by apps, so you are signed out.", failureText NoPlanAccess)
+    Assert.Contains("settings file", failureText NotConfigured)
+    Assert.Contains("LexScholar:Summary:Endpoint", failureText NotConfigured)
+
+[<Fact; Trait("Task", "T010")>]
+let ``a signed-out failure reloads the destinations and offers sign-in`` () =
+    for failure in [ SignedOut; NoPlanAccess ] do
+        Assert.True(reloadsDestinations failure)
+        Assert.True(offersSignIn failure)
+    Assert.True(offersSignIn NotConfigured)
+    // With a stale signed-in label the server answers not configured: reload so the sign-in offer becomes usable.
+    Assert.True(reloadsDestinations NotConfigured)
+    Assert.False(reloadsDestinations UsageLimitReached)
+    Assert.False(offersSignIn UsageLimitReached)
+
+[<Fact; Trait("Task", "T010")>]
+let ``the stream and the problem map the new failures alike`` () =
+    let event code = (use json = System.Text.Json.JsonDocument.Parse($"""{{"type":"failed","code":"{code}"}}""") in LexScholar.Client.SummaryStream.outcome json.RootElement)
+    assertState (Some (Error SignedOut)) (event "signed_out")
+    assertState (Some (Error UsageLimitReached)) (event "usage_limit_reached")
+    assertState (Some (Error NoPlanAccess)) (event "no_plan_access")
+    let body code = LexScholar.Client.SummaryStream.failureOfBody $"""{{"code":"{code}"}}"""
+    assertState SignedOut (body "chatgpt_signed_out")
+    assertState DestinationRequired (body "destination_required")
+    assertState NotConfigured (body "summary_service_not_configured")
+    assertState (ConfirmationRequired (Plan "Ada"))
+        (LexScholar.Client.SummaryStream.failureOfBody """{"code":"confirmation_required","destination":"chatgpt","account":"Ada"}""")
+
+[<Fact; Trait("Task", "T010")>]
+let ``the request body carries the destination and the confirmation`` () =
+    let body destination confirmed =
+        use json = System.Text.Json.JsonDocument.Parse(LexScholar.Client.SummaryStream.requestBody destination confirmed)
+        json.RootElement.GetRawText()
+    assertState """{"destination":"chatgpt","confirmSend":false}""" (body (Some UsePlan) None)
+    assertState """{"destination":"configured","confirmSend":false}""" (body (Some UseConfigured) None)
+    assertState """{"destination":"chatgpt","confirmSend":true}""" (body (Some UsePlan) (Some ConfirmedPlan))
+    assertState """{"confirmSend":false}""" (body None None)
+
+[<Fact; Trait("Task", "T010")>]
+let ``confirming sends to the destination the dialog named, even if the destinations changed`` () =
+    let generating, _ = update Summarize (withAvailable both |> update (Choose UsePlan) |> fst)
+    let asked = update (Responded (1, Error (ConfirmationRequired (Plan "Ada")))) generating |> fst
+    // She signs out while the dialog is open: only the configured service remains.
+    let changed = update (DestinationsChanged configuredOnly) asked |> fst
+    let _, effect = update ConfirmSend changed
+    assertState (Some (Send (2, project, document, Some UsePlan, Some ConfirmedPlan))) effect
+
+[<Fact; Trait("Task", "T010")>]
+let ``choosing another destination clears a failure so she can ask again`` () =
+    let generating, _ = update Summarize (withAvailable both |> update (Choose UsePlan) |> fst)
+    let failed, _ = update (Responded (1, Error UsageLimitReached)) generating
+    let chosen, _ = update (Choose UseConfigured) failed
+    assertState Idle chosen.State
+    let _, effect = update Summarize chosen
+    assertState (Some (Send (2, project, document, Some UseConfigured, None))) effect

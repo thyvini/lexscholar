@@ -31,12 +31,32 @@ type Failure =
     /// The server's own explanation, when it gave one.
     | ServiceFailed of detail: string option
     | RequestFailed
-    /// The service is elsewhere and the researcher has not confirmed: its host and the model.
-    | ConfirmationRequired of host: string * model: string
+    /// Her plan's usage limit (or this app's) is reached.
+    | UsageLimitReached
+    /// The ChatGPT sign-in ended (server event `signed_out` or problem `chatgpt_signed_out`).
+    | SignedOut
+    /// The account's plan cannot be used by apps; she is signed out.
+    | NoPlanAccess
+    /// Two destinations exist and none was named.
+    | DestinationRequired
+    /// What is about to leave this machine and has not been confirmed.
+    | ConfirmationRequired of ConfirmTarget
+
+/// Where the text would go: the configured service (host and model) or her ChatGPT plan (account name).
+and ConfirmTarget =
+    | Service of host: string * model: string
+    | Plan of account: string
+
+type Destination =
+    | UsePlan
+    | UseConfigured
+
+/// Which destinations the host offers right now, and the one she chose when there are two.
+type Available = { Plan: bool; Configured: bool }
 
 type State =
     | Idle
-    | Confirming of host: string * model: string
+    | Confirming of ConfirmTarget
     | Generating of request: int
     | Shown of Generated
     | Failed of Failure
@@ -46,6 +66,9 @@ type Model =
       Project: Guid option
       Document: Guid option
       State: State
+      Available: Available
+      /// Her choice when both destinations are available.
+      Choice: Destination option
       /// The latest progress of the running request, if any.
       Progress: Progress option
       /// The latest request; only its result is used.
@@ -56,20 +79,24 @@ type Message =
     | Dismiss
     | ConfirmSend
     | CancelSend
+    | DestinationsChanged of Available
+    | Choose of Destination
     | Progressed of request: int * Progress
     | Responded of request: int * Result<Generated, Failure>
     /// The reader's project and open document, after any change.
     | ReaderChanged of project: Guid option * document: Guid option
 
-/// The service the researcher confirmed, as the dialog showed it.
-type Confirmed = { Host: string; Model: string }
+/// What the researcher confirmed, as the dialog showed it.
+type Confirmed =
+    | ConfirmedService of host: string * model: string
+    | ConfirmedPlan
 
 type Effect =
-    | Send of request: int * project: Guid * document: Guid * confirmed: Confirmed option
+    | Send of request: int * project: Guid * document: Guid * destination: Destination option * confirmed: Confirmed option
     /// Abandon the running request: its fetch is aborted and the server stops (FR-009).
     | Cancel of request: int
 
-let initial = { Project = None; Document = None; State = Idle; Progress = None; Request = 0 }
+let initial = { Project = None; Document = None; State = Idle; Available = { Plan = false; Configured = false }; Choice = None; Progress = None; Request = 0 }
 
 let update (message: Message) (model: Model) : Model * Effect option =
     // A late result is dropped because only `Generating request` accepts its own number,
@@ -79,30 +106,53 @@ let update (message: Message) (model: Model) : Model * Effect option =
     let abandon model =
         reset model, (match model.State with Generating request -> Some (Cancel request) | _ -> None)
     // Every request takes a fresh number.
-    let start project document confirmed =
+    let start project document destination confirmed =
         let request = model.Request + 1
-        { model with State = Generating request; Progress = None; Request = request }, Some (Send (request, project, document, confirmed))
+        { model with State = Generating request; Progress = None; Request = request }, Some (Send (request, project, document, destination, confirmed))
+    // One available destination is used; with two, only her choice (none: nothing can be sent yet).
+    let destination =
+        match model.Available with
+        | { Plan = true; Configured = false } -> Some (Some UsePlan)
+        | { Plan = false; Configured = true } -> Some (Some UseConfigured)
+        | { Plan = true; Configured = true } -> model.Choice |> Option.map Some
+        | _ -> Some None
     match message with
     | Summarize ->
         match model.Project, model.Document, model.State with
-        | Some project, Some document, (Idle | Shown _ | Failed _) -> start project document None
+        | Some project, Some document, (Idle | Shown _ | Failed _) ->
+            match destination with
+            | Some destination -> start project document destination None
+            | None -> model, None
         | _ -> model, None
     | Dismiss -> abandon model
     | ConfirmSend ->
         match model.Project, model.Document, model.State with
-        | Some project, Some document, Confirming (host, name) -> start project document (Some { Host = host; Model = name })
+        | Some project, Some document, Confirming (Service (host, name)) -> start project document (Some UseConfigured) (Some (ConfirmedService (host, name)))
+        | Some project, Some document, Confirming (Plan _) -> start project document (Some UsePlan) (Some ConfirmedPlan)
         | _ -> model, None
     // Cancelling sends nothing: no effect. A late answer is dropped because only `Generating` accepts one.
     | CancelSend ->
         match model.State with
         | Confirming _ -> reset model, None
         | _ -> model, None
+    | DestinationsChanged available ->
+        // A destination that is no longer offered cannot stay chosen.
+        let choice =
+            match model.Choice with
+            | Some UsePlan when not available.Plan -> None
+            | Some UseConfigured when not available.Configured -> None
+            | choice -> choice
+        { model with Available = available; Choice = choice }, None
+    // A failure belongs to the previous destination; choosing another lets her ask again.
+    | Choose choice ->
+        let state = match model.State with Failed _ -> Idle | state -> state
+        { model with Choice = Some choice; State = state }, None
     | Progressed (request, progress) when model.State = Generating request -> { model with Progress = Some progress }, None
     | Progressed _ -> model, None
     | Responded (request, result) when model.State = Generating request ->
         match result with
         | Ok generated -> { model with State = Shown generated; Progress = None }, None
-        | Error (ConfirmationRequired (host, name)) -> { model with State = Confirming (host, name); Progress = None }, None
+        | Error (ConfirmationRequired target) -> { model with State = Confirming target; Progress = None }, None
         | Error failure -> { model with State = Failed failure; Progress = None }, None
     | ReaderChanged (project, document) when (project, document) <> (model.Project, model.Document) ->
         let abandoned, effect = abandon model
@@ -133,7 +183,7 @@ let pageRanges (pages: int list) : string =
 let failureText (failure: Failure) : string =
     match failure with
     | NotConfigured ->
-        "Summaries need a summarization service. Set LexScholar:Summary:Endpoint and LexScholar:Summary:Model in the app's settings file, then restart LexScholar."
+        "Alternatively, set LexScholar:Summary:Endpoint and LexScholar:Summary:Model in the app's settings file, then restart LexScholar, to use your own summarization service."
     | Unavailable ->
         "This document's stored file is missing, unreadable or not the recorded size. Its library record and project associations are unchanged."
     | NoText -> "This document has no readable text to summarize (for example, a scanned PDF without a text layer). Nothing was sent."
@@ -141,4 +191,20 @@ let failureText (failure: Failure) : string =
     | TooManyPages -> "Documents of more than 100 pages aren't supported yet. Nothing was sent."
     | ServiceFailed (Some detail) -> detail
     | ServiceFailed None -> "The summary could not be produced. Please try again."
+    | UsageLimitReached -> "Usage limit reached. Review your plan or this app's limit in ChatGPT settings."
+    | SignedOut -> "You are signed out of ChatGPT. Sign in again to summarize with your plan."
+    | NoPlanAccess -> "This ChatGPT account's plan can't be used by apps, so you are signed out."
+    | DestinationRequired -> "Choose where to send the text, then try again."
     | RequestFailed | ConfirmationRequired _ -> "The request failed. Please try again."
+
+/// Whether a failure means the ChatGPT sign-in is gone, so the destinations must be loaded again.
+let reloadsDestinations (failure: Failure) : bool =
+    match failure with
+    | NotConfigured | SignedOut | NoPlanAccess -> true
+    | _ -> false
+
+/// Whether the failure is answered by offering the ChatGPT sign-in.
+let offersSignIn (failure: Failure) : bool =
+    match failure with
+    | NotConfigured | SignedOut | NoPlanAccess -> true
+    | _ -> false
