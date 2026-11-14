@@ -277,6 +277,8 @@ let ``a signed-out failure reloads the destinations and offers sign-in`` () =
         Assert.True(reloadsDestinations failure)
         Assert.True(offersSignIn failure)
     Assert.True(offersSignIn NotConfigured)
+    // With a stale signed-in label the server answers not configured: reload so the sign-in offer becomes usable.
+    Assert.True(reloadsDestinations NotConfigured)
     Assert.False(reloadsDestinations UsageLimitReached)
     Assert.False(offersSignIn UsageLimitReached)
 
