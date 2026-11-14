@@ -31,6 +31,15 @@ let private write (context: HttpContext) (event: obj) : Task<unit> = task {
 let private failed context code detail (omitted: int option) : Task<unit> =
     write context (box {| ``type`` = "failed"; code = code; detail = detail; omittedPoints = omitted |})
 
+/// The `failed` code of a service error (contract: F003's `service_failed` plus the plan's three).
+let private failureCode : Summarize.ServiceError -> string = function
+    | Summarize.ServiceError.UsageLimitReached -> "usage_limit_reached"
+    | Summarize.ServiceError.SignedOut -> "signed_out"
+    | Summarize.ServiceError.NoPlanAccess -> "no_plan_access"
+    | _ -> "service_failed"
+
+let private signedOutDetail = Summarize.failureDetail Summarize.ServiceError.SignedOut
+
 let private summaryLogger (context: HttpContext) =
     context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger "LexScholar.Summary"
 
@@ -52,7 +61,7 @@ let private summaryEvent documentId (serviceHost: string) (model: string) (pages
            model = model |}
 
 /// Runs the summary through `complete` and writes the NDJSON events. The caller has passed every check.
-let private summarizeOnce (context: HttpContext) (maxChunkCharacters: int) (complete: Summarize.ChatMessage list -> System.Threading.CancellationToken -> Task<Result<string, Summarize.ServiceError>>) (serviceHost: string) (model: string) documentId (pages: ReadablePages) : Task<IResult> = task {
+let private summarizeOnce (context: HttpContext) (token: System.Threading.CancellationToken) (ended: Summarize.ServiceError -> Task<unit>) (maxChunkCharacters: int) (complete: Summarize.ChatMessage list -> System.Threading.CancellationToken -> Task<Result<string, Summarize.ServiceError>>) (serviceHost: string) (model: string) documentId (pages: ReadablePages) : Task<IResult> = task {
     let logger = summaryLogger context
     context.Response.ContentType <- "application/x-ndjson"
     let capabilities : Summarize.Capabilities =
@@ -65,16 +74,28 @@ let private summarizeOnce (context: HttpContext) (maxChunkCharacters: int) (comp
     logger.LogInformation("Summarizing document {DocumentId}: {Readable} readable pages, {Unreadable} unreadable",
                           box documentId, pages.Readable.Length, pages.Unreadable.Length)
     try
-      match! Summarize.summarize capabilities maxChunkCharacters pages context.RequestAborted with
-      | Ok validated -> do! write context (summaryEvent documentId serviceHost model pages validated)
+      match! Summarize.summarize capabilities maxChunkCharacters pages token with
+      | Ok validated ->
+          // A sign-out that came after the last call still ends the run: no summary after sign-out.
+          if token.IsCancellationRequested && not context.RequestAborted.IsCancellationRequested then
+              do! failed context "signed_out" signedOutDetail None
+          else
+              do! write context (summaryEvent documentId serviceHost model pages validated)
       | Error (Summarize.SummaryFailure.NotEnoughText omitted) ->
           do! failed context "not_enough_text" "The service returned no point with valid citations." (Some omitted)
       | Error (Summarize.SummaryFailure.ServiceFailed error) ->
-          do! failed context "service_failed" (Summarize.failureDetail error) None
-    with :? OperationCanceledException when context.RequestAborted.IsCancellationRequested ->
+          // Nothing was written but progress: a failure mid-run (usage limit included) never leaves a partial summary.
+          do! ended error
+          do! failed context (failureCode error) (Summarize.failureDetail error) None
+    with
+    | :? OperationCanceledException when context.RequestAborted.IsCancellationRequested ->
         // The researcher abandoned the request: the service call was cancelled and nothing more is sent.
         // Only the document id is logged, never its text or the service's answer (FR-009, FR-014).
         logger.LogInformation("Summary of document {DocumentId} abandoned", box documentId)
+    | :? OperationCanceledException when token.IsCancellationRequested ->
+        // She signed out (or the sign-in ended) while the summary ran: the call was cancelled, nothing more is sent.
+        logger.LogInformation("Summary of document {DocumentId} ended by sign-out", box documentId)
+        do! failed context "signed_out" signedOutDetail None
     return Results.Empty }
 
 /// The request body when it is at most `limit` bytes, else None (an oversized body is never parsed).
@@ -207,18 +228,32 @@ let private summarizeViaPlan (context: HttpContext) (vault: ChatGptAccess.Vault)
         (summaryLogger context).LogInformation "Summary needs confirmation to use the ChatGPT plan"
         return chatgptConfirmationRequired account
     | ChatGptAccess.NoSignIn -> return chatgptSignedOut ()
+    | ChatGptAccess.SignInEnded -> return! streamFailed context "signed_out" signedOutDetail
     | ChatGptAccess.RefreshUnreachable ->
         return! streamFailed context "service_failed" "ChatGPT could not be reached to renew your sign-in. Try again."
-    | ChatGptAccess.Prepared credentials ->
+    | ChatGptAccess.Prepared (credentials, run) ->
+        use _ = run
+        let token = run.Token
+        // A refusal ends the sign-in (record deleted, other runs cancelled) before the failure is reported.
+        let ended (error: Summarize.ServiceError) : Task<unit> =
+            match error with
+            | Summarize.ServiceError.SignedOut | Summarize.ServiceError.NoPlanAccess -> ChatGptAccess.endSignIn vault credentials
+            | _ -> Task.FromResult()
         use client = chatgptClient context (fun () -> ResponsesApi.createHandler ())
-        match! ResponsesApi.listModels client credentials.AccessToken context.RequestAborted with
-        | Error error -> return! streamFailed context "service_failed" (Summarize.failureDetail error)
-        | Ok models ->
-            match ChatGptSignIn.pickModel models with
-            | None -> return! streamFailed context "service_failed" (Summarize.failureDetail Summarize.ServiceError.UnusableOutput)
-            | Some model ->
-                let settings : ResponsesApi.Settings = { Model = model; AccessToken = credentials.AccessToken }
-                return! summarizeOnce context chatgptChunkCharacters (ResponsesApi.complete (summaryLogger context) client settings) "ChatGPT plan" model documentId pages }
+        try
+            match! ResponsesApi.listModels client credentials.AccessToken token with
+            | Error error ->
+                do! ended error
+                return! streamFailed context (failureCode error) (Summarize.failureDetail error)
+            | Ok models ->
+                match ChatGptSignIn.pickModel models with
+                | None -> return! streamFailed context "service_failed" (Summarize.failureDetail Summarize.ServiceError.UnusableOutput)
+                | Some model ->
+                    let settings : ResponsesApi.Settings = { Model = model; AccessToken = credentials.AccessToken }
+                    return! summarizeOnce context token ended chatgptChunkCharacters (ResponsesApi.complete (summaryLogger context) client settings) "ChatGPT plan" model documentId pages
+        with :? OperationCanceledException when token.IsCancellationRequested && not context.RequestAborted.IsCancellationRequested ->
+            // Signed out while the model list was requested: nothing was sent.
+            return! streamFailed context "signed_out" signedOutDetail }
 
 /// The service from her settings file: F003's rule, unchanged. Elsewhere needs this request's confirmation.
 let private summarizeConfigured (context: HttpContext) (configured: SummaryConfiguration) (body: Body) documentId (pages: ReadablePages) : Task<IResult> = task {
@@ -233,7 +268,7 @@ let private summarizeConfigured (context: HttpContext) (configured: SummaryConfi
         let settings : ChatCompletions.Settings =
             { Endpoint = configured.Endpoint; Model = configured.Model; ApiKey = configured.ApiKey
               Temperature = configured.Temperature; MaxOutputTokens = configured.MaxOutputTokens }
-        return! summarizeOnce context configured.MaxChunkCharacters (ChatCompletions.complete (summaryLogger context) client settings)
+        return! summarizeOnce context context.RequestAborted (fun _ -> Task.FromResult()) configured.MaxChunkCharacters (ChatCompletions.complete (summaryLogger context) client settings)
                     configured.Endpoint.Authority configured.Model documentId pages }
 
 /// Resolves the destination before anything else (research §10): `Error` is the answer to send.

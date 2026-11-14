@@ -726,7 +726,10 @@ let ``a summary naming the configured service does not wait for a refresh in fli
 // ---- T008: failure states ----
 
 let failedCode (text: string) =
-    let event = Assert.Single(events text)
+    let all = events text
+    // Progress may come first; a failed run never carries a summary and ends with its `failed` event.
+    Assert.DoesNotContain(all, fun e -> e.GetProperty("type").GetString() = "summary")
+    let event = Array.last all
     Assert.Equal("failed", event.GetProperty("type").GetString())
     event.GetProperty("code").GetString()
 
@@ -801,3 +804,22 @@ let ``signing out while the fake waits ends the request with signed_out and send
     Assert.Equal("signed_out", failedCode text)
     Assert.Equal(1, fake.RequestsTo("api.openai.com", "/v1/responses").Length)
     expectSignedOutEverywhere harness
+
+[<Fact; Trait("Task", "T008")>]
+let ``ending a sign-in never deletes a newer sign-in and cancels no run of it`` () =
+    let credentials host : LexScholar.Domain.Credentials =
+        { ClientId = "c"; HostId = host; Subject = "s"; Account = "a"; AccessToken = "t"; RefreshToken = "r"; IdToken = "i"
+          ExpiresAt = DateTimeOffset.UtcNow.AddHours 1.; Scopes = []; SignedInAt = DateTimeOffset.UtcNow; ConfirmedAt = None }
+    let record = ref (Some(credentials "new"))
+    let store : LexScholar.Application.ChatGptAccess.CredentialStore =
+        { Read = (fun () -> record.Value)
+          Save = (fun c -> record.Value <- Some c)
+          Delete = (fun () -> record.Value <- None) }
+    let vault = LexScholar.Application.ChatGptAccess.Vault store
+    use run = vault.BeginRun Threading.CancellationToken.None
+    LexScholar.Application.ChatGptAccess.endSignIn vault (credentials "old") |> fun t -> t.GetAwaiter().GetResult()
+    Assert.True(record.Value.IsSome)
+    Assert.False(run.Token.IsCancellationRequested)
+    LexScholar.Application.ChatGptAccess.endSignIn vault (credentials "new") |> fun t -> t.GetAwaiter().GetResult()
+    Assert.True(record.Value.IsNone)
+    Assert.True(run.Token.IsCancellationRequested)

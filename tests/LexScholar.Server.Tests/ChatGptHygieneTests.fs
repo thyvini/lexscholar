@@ -136,9 +136,12 @@ let ``no secret reaches a log line, a response or a file in any flow`` () =
             Assert.False(text.Contains fake.Email, $"{what} response contains the account")
     // After sign-out no file in the data directory holds the account or a token.
     Assert.False(IO.File.Exists(recordPath harness))
-    for file in IO.Directory.EnumerateFiles(harness.Root, "*", IO.SearchOption.AllDirectories) do
-        let bytes = IO.File.ReadAllBytes file
-        let content = Text.Encoding.Latin1.GetString bytes
+    // The directory lock file is held open by the host and holds no content.
+    for file in IO.Directory.EnumerateFiles(harness.Root, "*", IO.SearchOption.AllDirectories) |> Seq.filter (fun f -> IO.Path.GetFileName f <> ".lexscholar.lock") do
+        use stream = new IO.FileStream(file, IO.FileMode.Open, IO.FileAccess.Read, IO.FileShare.ReadWrite ||| IO.FileShare.Delete)
+        use memory = new IO.MemoryStream()
+        stream.CopyTo memory
+        let content = Text.Encoding.Latin1.GetString(memory.ToArray())
         for secret in tokens @ [ fake.Email ] do
             Assert.False(content.Contains secret, $"{IO.Path.GetFileName file} contains a secret")
 
