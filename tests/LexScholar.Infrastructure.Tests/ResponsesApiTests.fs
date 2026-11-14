@@ -170,6 +170,45 @@ type private StallingStreamHandler() =
                             return 0 }) }
         Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK, Content = new StreamContent(stream)))
 
+/// Delivers the body in the given chunks, one per read.
+type private ChunkedHandler(chunks: byte array list) =
+    inherit HttpMessageHandler()
+    override _.SendAsync(_, _) =
+        let remaining = ref chunks
+        let stream =
+            { new Stream() with
+                member _.CanRead = true
+                member _.CanSeek = false
+                member _.CanWrite = false
+                member _.Length = raise (NotSupportedException())
+                member _.Position with get () = raise (NotSupportedException()) and set _ = raise (NotSupportedException())
+                member _.Flush() = ()
+                member _.Read(_, _, _) = raise (NotSupportedException())
+                member _.Seek(_, _) = raise (NotSupportedException())
+                member _.SetLength _ = raise (NotSupportedException())
+                member _.Write(_, _, _) = raise (NotSupportedException())
+                member _.ReadAsync(buffer: Memory<byte>, _: CancellationToken) =
+                    match remaining.Value with
+                    | [] -> ValueTask<int>(0)
+                    | next :: rest ->
+                        remaining.Value <- rest
+                        next.AsMemory().CopyTo buffer
+                        ValueTask<int>(next.Length) }
+        Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK, Content = new StreamContent(stream)))
+
+[<Fact; Trait("Task", "T006")>]
+let ``a multi-byte character split across reads is decoded and the text is kept`` () = task {
+    let text = "\U0001F600" + String('a', 9000)
+    let body =
+        Encoding.UTF8.GetBytes(
+            sse [ "response.output_text.delta", $$"""{"type":"response.output_text.delta","delta":"{{text}}"}"""
+                  "response.completed", """{"type":"response.completed"}""" ])
+    // The first read ends after three of the four bytes of the emoji; the second is a full read.
+    let cut = Array.findIndex (fun b -> b = 0xF0uy) body + 3
+    let chunks = [ body[.. cut - 1]; body[cut .. cut + 8191]; body[cut + 8192 ..] ]
+    let! result = complete (new ChunkedHandler(chunks)) (CapturingLogger())
+    Assert.Equal(Ok text, result) }
+
 let private guard (call: Task<'a>) =
     let finished = Task.WhenAny(call, Task.Delay(TimeSpan.FromSeconds 10.0)).GetAwaiter().GetResult()
     Assert.True(obj.ReferenceEquals(finished, call), "the call is still pending")
