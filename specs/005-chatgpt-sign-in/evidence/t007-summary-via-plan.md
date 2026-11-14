@@ -21,3 +21,8 @@
 - SummaryContractTests.fs is unchanged: F003's not-configured test still passes as is, and "signed in with nothing configured goes through the plan" is covered in ChatGptContractTests (`confirming sends the summary through the plan...`, which has no configured service).
 
 CI run for the full suite: see the PR.
+
+## Review follow-up (Greptile, two P2)
+
+- P2 local summary waited for the vault (must fix): a request naming `configured` while a configured service exists no longer reads the vault. Test: `a summary naming the configured service does not wait for a refresh in flight` (refresh held at the fake). Sensitivity: with the fix disabled (uncommitted) it fails on the 10 s guard; restored. Accepted limit: a request that names nothing still reads the vault to know whether she is signed in.
+- P2 race test cannot prove sign-out reached the vault (accepted risk): the refresh holds the lock from before the token request, so the end state is the same whenever the sign-out request arrives; a comment in the test says so. Observing a wait on the lock would need a hook in `Vault`, not worth it.

@@ -679,6 +679,8 @@ let ``a refresh in flight when she signs out leaves her signed out with no recor
     let summary = Threading.Tasks.Task.Run(fun () -> sendJson harness path confirmed)
     refreshArrived.Task.WaitAsync(TimeSpan.FromSeconds 10.).GetAwaiter().GetResult()
     // The refresh holds the vault lock, so this sign-out can only run after it finishes.
+    // Whether or not this request has reached the vault by the time the refresh is released, the
+    // lock gives one outcome: sign-out runs after the refresh saved, and deletes what it saved.
     let signOutRun = Threading.Tasks.Task.Run(fun () -> signOut harness)
     release ()
     summary.GetAwaiter().GetResult() |> ignore
@@ -695,3 +697,23 @@ let ``a sign-in whose record cannot be saved fails and revokes the issued tokens
     let _, location = signInThrough harness fake ""
     Assert.Equal("/index.html?chatgpt=failed", location)
     Assert.Single(fake.RequestsTo("auth.openai.com", "/api/accounts/oauth/revoke")) |> ignore
+
+[<Fact; Trait("Task", "T007")>]
+let ``a summary naming the configured service does not wait for a refresh in flight`` () =
+    let fake = new FakeOpenAi(ResponsesScript.Completed answer)
+    let refreshArrived = Threading.Tasks.TaskCompletionSource()
+    let signedInYet = ref false
+    let tap (request: HttpRequestMessage) =
+        if signedInYet.Value && request.RequestUri.AbsolutePath = tokenPath then refreshArrived.TrySetResult() |> ignore
+    use harness = TestHarness.Start(settings = sumSettings, summaryHandler = new Router(fake, new FakeChatService(Reply answer), tap))
+    let path = documentPath harness
+    signInExpiring harness fake
+    signedInYet.Value <- true
+    let release = fake.HoldTokens()
+    let viaPlan = Threading.Tasks.Task.Run(fun () -> sendJson harness path """{"destination":"chatgpt","confirmSend":true}""")
+    refreshArrived.Task.WaitAsync(TimeSpan.FromSeconds 10.).GetAwaiter().GetResult()
+    // The refresh holds the vault lock; the local summary must finish while it is held.
+    let local = Threading.Tasks.Task.Run(fun () -> sendJson harness path """{"destination":"configured","confirmSend":false}""")
+    expectSummary (local.WaitAsync(TimeSpan.FromSeconds 10.).GetAwaiter().GetResult()) |> ignore
+    release ()
+    expectSummary (viaPlan.GetAwaiter().GetResult()) |> ignore

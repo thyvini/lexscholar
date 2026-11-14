@@ -259,8 +259,17 @@ let map (app: WebApplication) (configuration: WorkspaceConfiguration) (vault: Ch
     app.MapPost("/api/projects/{projectId:guid}/documents/{documentId:guid}/summary",
                 Func<Guid, Guid, HttpContext, Task<IResult>>(fun projectId documentId context -> task {
         let! body = readBody context
-        let! record = vault.Read()
-        match resolveDestination configuration record.IsSome body.Destination with
+        // Reading the vault waits for a refresh in flight, so a request that explicitly names its
+        // configured service (which exists) never reads it: a local summary does not wait for ChatGPT.
+        let! signedIn =
+            task {
+                match body.Destination with
+                | Named Configured when configuration.Summary.IsSome -> return false
+                | _ ->
+                    let! record = vault.Read()
+                    return record.IsSome
+            }
+        match resolveDestination configuration signedIn body.Destination with
         | Error answer -> return answer
         | Ok destination ->
             if notAssociated directory projectId documentId then
