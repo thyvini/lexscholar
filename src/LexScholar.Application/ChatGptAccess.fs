@@ -198,16 +198,23 @@ let completeSignIn (vault: Vault) (session: SignInSession) (auth: AuthClient) (c
                                 return NoPlanAccess
                             else
                                 // A sign-in that finished first wins, and one replaced by a newer start is never saved.
+                                // If the save itself throws, the issued tokens are revoked like any other unsaved grant.
                                 let! saved =
                                     vault.Locked(fun store -> task {
-                                        if store.Read().IsSome || session.Superseded attempt then return false
+                                        if store.Read().IsSome || session.Superseded attempt then return Some false
                                         else
-                                            store.Save credentials
-                                            return true })
-                                if saved then return SignedIn
-                                else
+                                            try
+                                                store.Save credentials
+                                                return Some true
+                                            with _ -> return None })
+                                match saved with
+                                | Some true -> return SignedIn
+                                | Some false ->
                                     let! _ = auth.Revoke credentials cleanup
                                     return Cancelled
+                                | None ->
+                                    let! _ = auth.Revoke credentials cleanup
+                                    return Failed
                 with _ ->
                     return failedUnlessSuperseded attempt
             | _ -> return Failed }
@@ -229,3 +236,53 @@ let signOut (vault: Vault) (session: SignInSession) (auth: AuthClient) (cancella
                     with _ -> return false
             }
         return revoked })
+
+
+/// What `prepareSend` found for a summary through her plan.
+type SendPreparation =
+    /// Confirmed, and the access token is good for the run.
+    | Prepared of Credentials
+    /// Not confirmed in this sign-in and the request did not confirm: nothing was refreshed or sent.
+    | AwaitingConfirmation of account: string
+    /// No sign-in (never, signed out, or the refresh ended it).
+    | NoSignIn
+    /// The refresh failed on the network or with a non-terminal answer; the record is kept.
+    | RefreshUnreachable
+
+/// Everything that must hold before text goes to her plan, in one locked step on one record:
+/// the confirmation (recorded only when the run goes on), the refresh when the access token
+/// expires within ten minutes, and the save of the result. Confirmation is checked before any
+/// network call. A refresh saves only if the record still exists with the same refresh token.
+/// Lock order is vault, then session.
+let prepareSend (vault: Vault) (auth: AuthClient) (clock: unit -> DateTimeOffset) (confirmSend: bool) (cancellation: CancellationToken) : Task<SendPreparation> =
+    vault.Locked(fun store -> task {
+        match store.Read() with
+        | None -> return NoSignIn
+        | Some record ->
+            let confirming = record.ConfirmedAt.IsNone
+            if confirming && not confirmSend then return AwaitingConfirmation record.Account
+            else
+                let stamp (credentials: Credentials) =
+                    { credentials with ConfirmedAt = (if confirming then Some(clock ()) else record.ConfirmedAt) }
+                if not (ChatGptSignIn.needsRefresh (clock ()) record) then
+                    let ready = stamp record
+                    if confirming then store.Save ready
+                    return Prepared ready
+                else
+                    let! refreshed =
+                        task {
+                            try return! auth.Refresh record cancellation
+                            with error when not (error :? OperationCanceledException) -> return Error RefreshFailure.Unreachable
+                        }
+                    match refreshed with
+                    | Error RefreshFailure.Ended ->
+                        store.Delete()
+                        return NoSignIn
+                    | Error RefreshFailure.Unreachable -> return RefreshUnreachable
+                    | Ok renewed ->
+                        match store.Read() with
+                        | Some current when current.RefreshToken = record.RefreshToken ->
+                            let ready = stamp renewed
+                            store.Save ready
+                            return Prepared ready
+                        | _ -> return NoSignIn })
