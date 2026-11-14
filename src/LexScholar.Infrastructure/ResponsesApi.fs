@@ -128,7 +128,7 @@ let private readStream (token: string) (stream: Stream) (cancellation: Cancellat
     let pending = StringBuilder()
     let decoder = Encoding.UTF8.GetDecoder()
     let chunk = Array.zeroCreate<byte> 8192
-    let chars = Array.zeroCreate<char> 8192
+    let chars = Array.zeroCreate<char> (Encoding.UTF8.GetMaxCharCount chunk.Length)
     let mutable total = 0
     let mutable outcome : Result<string, Summarize.ServiceError> option = None
     let handleLine (line: string) =

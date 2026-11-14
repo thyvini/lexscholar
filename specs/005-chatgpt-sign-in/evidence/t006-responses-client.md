@@ -9,3 +9,7 @@
 
 - The models response shape `{"models":[{"slug","visibility"}]}` is **unverified** against the live endpoint. Public sources (Codex's bundled model catalog) use `models` with `slug` and `visibility` (`list`, `hide`, `none`), but no document shows the raw `GET /v1/models` envelope. Confirm in T012; an unreadable list is `UnusableOutput`, which the summary reports as an unusable service answer.
 - A mid-stream `response.failed` with an unknown code reports `ErrorStatus (200, message)`, since the stream's HTTP status was 200.
+
+## Greptile P1 (fixed)
+
+The decoder's character buffer was as large as the byte buffer, so a multi-byte character split across two reads could overflow it. RED (`test(f005): multi-byte character split across reads`): `ArgumentException: The output char buffer is too small`. GREEN: buffer sized with `Encoding.UTF8.GetMaxCharCount`; `scripts/check.sh T006` gave `Tests: 41 total, 0 failed, 0 skipped.`
