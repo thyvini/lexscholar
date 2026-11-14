@@ -135,9 +135,11 @@ if grep -Eiq '^[[:space:]]*VERDICT:[[:space:]]*approve' "$work/review.md" && ! g
 else
   conclusion=failure; title="Changes requested by GPT ($model)"
 fi
-finish_check "$conclusion" "$title" "$(printf 'Review of %s by %s through Codex CLI.\n\n%s\n' "${head_sha:0:7}" "$model" "$(cat "$work/review.md")")"
+# Comment first, then complete the check: if the comment fails, the cleanup
+# marks the check failed, so the gate never passes without a posted review.
 printf '[gpt-review · %s] Review of %s (check gpt-review: %s)\n\n%s\n' \
   "$model" "${head_sha:0:7}" "$conclusion" "$(cat "$work/review.md")" >"$work/comment.md"
 token="$(bot_token)"
 as_bot "repos/$repo/issues/$pr/comments" -F body=@"$work/comment.md" >/dev/null
+finish_check "$conclusion" "$title" "$(printf 'Review of %s by %s through Codex CLI.\n\n%s\n' "${head_sha:0:7}" "$model" "$(cat "$work/review.md")")"
 echo "(posted to PR #$pr as the reviewer app: check gpt-review $conclusion)"
