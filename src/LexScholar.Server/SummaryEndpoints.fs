@@ -74,13 +74,14 @@ let private summarizeOnce (context: HttpContext) (token: System.Threading.Cancel
     logger.LogInformation("Summarizing document {DocumentId}: {Readable} readable pages, {Unreadable} unreadable",
                           box documentId, pages.Readable.Length, pages.Unreadable.Length)
     try
-      match! Summarize.summarize capabilities maxChunkCharacters pages token with
-      | Ok validated ->
-          // A sign-out that came after the last call still ends the run: no summary after sign-out.
-          if token.IsCancellationRequested && not context.RequestAborted.IsCancellationRequested then
-              do! failed context "signed_out" signedOutDetail None
-          else
-              do! write context (summaryEvent documentId serviceHost model pages validated)
+      let! result = Summarize.summarize capabilities maxChunkCharacters pages token
+      // A sign-out that came after the last call still ends the run, whatever the result: no summary and no
+      // service error is reported once she is signed out, so the client reloads the signed-out state.
+      if token.IsCancellationRequested && not context.RequestAborted.IsCancellationRequested then
+          do! failed context "signed_out" signedOutDetail None
+      else
+      match result with
+      | Ok validated -> do! write context (summaryEvent documentId serviceHost model pages validated)
       | Error (Summarize.SummaryFailure.NotEnoughText omitted) ->
           do! failed context "not_enough_text" "The service returned no point with valid citations." (Some omitted)
       | Error (Summarize.SummaryFailure.ServiceFailed error) ->
@@ -243,8 +244,12 @@ let private summarizeViaPlan (context: HttpContext) (vault: ChatGptAccess.Vault)
         try
             match! ResponsesApi.listModels client credentials.AccessToken token with
             | Error error ->
-                do! ended error
-                return! streamFailed context (failureCode error) (Summarize.failureDetail error)
+                // Checked before `ended`, which cancels this run's own token.
+                if token.IsCancellationRequested && not context.RequestAborted.IsCancellationRequested then
+                    return! streamFailed context "signed_out" signedOutDetail
+                else
+                    do! ended error
+                    return! streamFailed context (failureCode error) (Summarize.failureDetail error)
             | Ok models ->
                 match ChatGptSignIn.pickModel models with
                 | None -> return! streamFailed context "service_failed" (Summarize.failureDetail Summarize.ServiceError.UnusableOutput)

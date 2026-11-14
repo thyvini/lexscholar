@@ -122,13 +122,16 @@ let ``no secret reaches a log line, a response or a file in any flow`` () =
     let logged = String.Join('\n', lines.All)
     Assert.NotEmpty lines.All
     Assert.Empty(leaks logged)
-    // Responses of this API: no secret anywhere, except the allowed fields: `authorizationUrl` (state and nonce) of a
-    // start response and the display name in the `account` field of destinations.
+    // Responses of this API: no secret anywhere, except the allowed fields: `state` and `nonce` values of an
+    // `authorizationUrl` (only those two query values) and the display name in the `account` field of destinations.
     let withoutAllowed (what: string) (text: string) =
         match what with
         | "start" ->
+            // Only the `state` and `nonce` values of the address are allowed; the rest of the address is still scanned.
             use json = JsonDocument.Parse text
-            text.Replace(JsonSerializer.Serialize(json.RootElement.GetProperty("authorizationUrl").GetString()).Trim('"'), "")
+            let address = json.RootElement.GetProperty("authorizationUrl").GetString()
+            let allowed = [ (query (Uri address))["state"]; (query (Uri address))["nonce"] ]
+            allowed |> List.fold (fun (body: string) value -> body.Replace(value, "")) text
         | "destinations" -> text.Replace($"\"account\":\"{fake.Email}\"", "\"account\":\"\"")
         | _ -> text
     for what, text in observed do
