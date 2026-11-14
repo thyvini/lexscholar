@@ -1,7 +1,6 @@
-/// Summary of a document (F003, contracts/summary-api.yaml). The local checks run
-/// in contract order before anything is sent; then one request goes to the
-/// configured service and the answer is one NDJSON event (progress, confirmation
-/// and chunking arrive in later slices).
+/// Summary of a document (F003, contracts/summary-api.yaml, F005 contracts/chatgpt-api.yaml).
+/// The destination is resolved first, then the local checks run in contract order, then the
+/// confirmation; only after that does text go to the configured service or to her ChatGPT plan.
 module LexScholar.Server.SummaryEndpoints
 
 open System
@@ -41,7 +40,7 @@ let private serviceClient (context: HttpContext) (summary: SummaryConfiguration)
     | null -> new HttpClient(ChatCompletions.createHandler summary.Endpoint, true)
     | injected -> new HttpClient(injected, false)
 
-let private summaryEvent documentId (summary: SummaryConfiguration) (pages: ReadablePages) (validated: ValidatedPoints) : obj =
+let private summaryEvent documentId (serviceHost: string) (model: string) (pages: ReadablePages) (validated: ValidatedPoints) : obj =
     box {| ``type`` = "summary"
            documentId = documentId
            points = validated.Points |> List.map (fun point -> {| text = point.Text; pages = point.Pages |})
@@ -49,28 +48,25 @@ let private summaryEvent documentId (summary: SummaryConfiguration) (pages: Read
            unreadablePages = pages.Unreadable
            omittedPoints = validated.Omitted
            generatedAt = DateTimeOffset.UtcNow
-           serviceHost = summary.Endpoint.Authority
-           model = summary.Model |}
+           serviceHost = serviceHost
+           model = model |}
 
-let private summarizeOnce (context: HttpContext) (summary: SummaryConfiguration) documentId (pages: ReadablePages) : Task<IResult> = task {
-    use client = serviceClient context summary
+/// Runs the summary through `complete` and writes the NDJSON events. The caller has passed every check.
+let private summarizeOnce (context: HttpContext) (maxChunkCharacters: int) (complete: Summarize.ChatMessage list -> System.Threading.CancellationToken -> Task<Result<string, Summarize.ServiceError>>) (serviceHost: string) (model: string) documentId (pages: ReadablePages) : Task<IResult> = task {
     let logger = summaryLogger context
-    let settings : ChatCompletions.Settings =
-        { Endpoint = summary.Endpoint; Model = summary.Model; ApiKey = summary.ApiKey
-          Temperature = summary.Temperature; MaxOutputTokens = summary.MaxOutputTokens }
     context.Response.ContentType <- "application/x-ndjson"
     let capabilities : Summarize.Capabilities =
         { ExtractPages = fun _ -> failwith "pages are extracted by the endpoint"
-          Complete = ChatCompletions.complete logger client settings
+          Complete = complete
           Report = function
               | Summarize.Progress.PagesProcessed (processed, total) ->
                   write context (box {| ``type`` = "progress"; pagesProcessed = processed; totalPages = total |})
-              | Summarize.Progress.Combining -> write context (box {| ``type`` = "combining" |}) }
+              | Summarize.Progress.Combining -> write context (box {| ``type`` = "combining"  |}) }
     logger.LogInformation("Summarizing document {DocumentId}: {Readable} readable pages, {Unreadable} unreadable",
                           box documentId, pages.Readable.Length, pages.Unreadable.Length)
     try
-      match! Summarize.summarize capabilities summary.MaxChunkCharacters pages context.RequestAborted with
-      | Ok validated -> do! write context (summaryEvent documentId summary pages validated)
+      match! Summarize.summarize capabilities maxChunkCharacters pages context.RequestAborted with
+      | Ok validated -> do! write context (summaryEvent documentId serviceHost model pages validated)
       | Error (Summarize.SummaryFailure.NotEnoughText omitted) ->
           do! failed context "not_enough_text" "The service returned no point with valid citations." (Some omitted)
       | Error (Summarize.SummaryFailure.ServiceFailed error) ->
@@ -96,25 +92,57 @@ let private stringProperty (name: string) (root: JsonElement) =
     | true, value when value.ValueKind = JsonValueKind.String -> Some (value.GetString())
     | _ -> None
 
-/// The (host, model) a confirmation names, or None when the object is not one.
-let private confirmationOf (root: JsonElement) =
-    match root.TryGetProperty "confirmSend" with
-    | true, flag when flag.ValueKind = JsonValueKind.True ->
-        Option.map2 (fun host model -> host, model) (stringProperty "confirmedHost" root) (stringProperty "confirmedModel" root)
-    | _ -> None
+type private Destination =
+    | Chatgpt
+    | Configured
 
-/// The service the request body says the researcher confirmed, or None. A confirmation is
-/// `"confirmSend": true` with string `confirmedHost` and `confirmedModel`; anything else
-/// (missing, malformed, oversized, another type) is not one.
-let private confirmedService (context: HttpContext) : Task<(string * string) option> = task {
+/// What the request names as its destination.
+type private Requested =
+    | NotNamed
+    | Named of Destination
+    /// Present but not `chatgpt` or `configured` (or not a string).
+    | Unrecognized
+
+/// The request body as far as it is understood: anything missing, malformed, oversized or of
+/// another type counts as absent, so it can never confirm anything.
+type private Body =
+    { Destination: Requested
+      /// `"confirmSend": true`, the JSON boolean.
+      ConfirmSend: bool
+      /// The (host, model) a `configured` confirmation names.
+      ConfirmedService: (string * string) option }
+
+let private emptyBody = { Destination = NotNamed; ConfirmSend = false; ConfirmedService = None }
+
+let private parseBody (root: JsonElement) : Body =
+    let confirmSend =
+        match root.TryGetProperty "confirmSend" with
+        | true, flag -> flag.ValueKind = JsonValueKind.True
+        | _ -> false
+    let destination =
+        match root.TryGetProperty "destination" with
+        | true, value when value.ValueKind = JsonValueKind.String ->
+            match value.GetString() with
+            | "chatgpt" -> Named Chatgpt
+            | "configured" -> Named Configured
+            | _ -> Unrecognized
+        | true, _ -> Unrecognized
+        | _ -> NotNamed
+    { Destination = destination
+      ConfirmSend = confirmSend
+      ConfirmedService =
+        if confirmSend then Option.map2 (fun host model -> host, model) (stringProperty "confirmedHost" root) (stringProperty "confirmedModel" root)
+        else None }
+
+let private readBody (context: HttpContext) : Task<Body> = task {
     match! readBoundedBody context 4096 with
-    | None -> return None
+    | None -> return emptyBody
     | Some body ->
         try
             use document = JsonDocument.Parse body
             let root = document.RootElement
-            return if root.ValueKind = JsonValueKind.Object then confirmationOf root else None
-        with :? JsonException -> return None }
+            return if root.ValueKind = JsonValueKind.Object then parseBody root else emptyBody
+        with :? JsonException -> return emptyBody }
 
 let private extractionProblem : Summarize.ExtractionError -> IResult = function
     | Summarize.ExtractionError.DocumentNotFound -> problem 404 "document_not_found" "Document not found" null
@@ -142,32 +170,113 @@ let private confirmationRequired (summary: SummaryConfiguration) : IResult =
                             "serviceHost", box summary.Endpoint.Authority
                             "model", box summary.Model ])
 
-let map (app: WebApplication) (configuration: WorkspaceConfiguration) =
+let private chatgptConfirmationRequired (account: string) : IResult =
+    Results.Problem(
+        statusCode = Nullable 409,
+        title = "Confirmation needed",
+        detail = "The text of this document will be sent to your ChatGPT plan. Nothing was sent.",
+        extensions = dict [ "code", box "confirmation_required"
+                            "destination", box "chatgpt"
+                            "account", box account ])
+
+let private chatgptSignedOut () =
+    problem 503 "chatgpt_signed_out" "Not signed in to ChatGPT" "Sign in with ChatGPT to summarize with your plan. Nothing was sent."
+
+/// Chunk size for the plan: F003's default.
+let private chatgptChunkCharacters = 12_000
+
+/// A failure before any summary event: the stream starts with one `failed` event.
+let private streamFailed (context: HttpContext) code detail : Task<IResult> = task {
+    context.Response.ContentType <- "application/x-ndjson"
+    do! failed context code detail None
+    return Results.Empty }
+
+/// The outgoing client for the ChatGPT API and the sign-in service: the injected handler (tests) or a real one.
+let private chatgptClient (context: HttpContext) (real: unit -> HttpMessageHandler) =
+    match context.RequestServices.GetService<HttpMessageHandler>() with
+    | null -> new HttpClient(real (), true)
+    | injected -> new HttpClient(injected, false)
+
+/// The summary through her plan. `prepareSend` is the only way to a token: confirmation, refresh
+/// and save happen there under one lock, and nothing is sent before it returns `Prepared`.
+let private summarizeViaPlan (context: HttpContext) (vault: ChatGptAccess.Vault) (body: Body) documentId (pages: ReadablePages) : Task<IResult> = task {
+    let clock () = DateTimeOffset.UtcNow
+    use authHttp = chatgptClient context (fun () -> OpenAiAuth.createHandler ())
+    match! ChatGptAccess.prepareSend vault (ChatGptEndpoints.authClient authHttp clock) clock body.ConfirmSend context.RequestAborted with
+    | ChatGptAccess.AwaitingConfirmation account ->
+        (summaryLogger context).LogInformation "Summary needs confirmation to use the ChatGPT plan"
+        return chatgptConfirmationRequired account
+    | ChatGptAccess.NoSignIn -> return chatgptSignedOut ()
+    | ChatGptAccess.RefreshUnreachable ->
+        return! streamFailed context "service_failed" "ChatGPT could not be reached to renew your sign-in. Try again."
+    | ChatGptAccess.Prepared credentials ->
+        use client = chatgptClient context (fun () -> ResponsesApi.createHandler ())
+        match! ResponsesApi.listModels client credentials.AccessToken context.RequestAborted with
+        | Error error -> return! streamFailed context "service_failed" (Summarize.failureDetail error)
+        | Ok models ->
+            match ChatGptSignIn.pickModel models with
+            | None -> return! streamFailed context "service_failed" (Summarize.failureDetail Summarize.ServiceError.UnusableOutput)
+            | Some model ->
+                let settings : ResponsesApi.Settings = { Model = model; AccessToken = credentials.AccessToken }
+                return! summarizeOnce context chatgptChunkCharacters (ResponsesApi.complete (summaryLogger context) client settings) "ChatGPT plan" model documentId pages }
+
+/// The service from her settings file: F003's rule, unchanged. Elsewhere needs this request's confirmation.
+let private summarizeConfigured (context: HttpContext) (configured: SummaryConfiguration) (body: Body) documentId (pages: ReadablePages) : Task<IResult> = task {
+    // FR-014: for a service elsewhere nothing is sent without this request's confirmation
+    // of the host and model currently configured.
+    let current = configured.Endpoint.Authority, configured.Model
+    if ServiceLocation.classify configured.Endpoint.Host = Elsewhere && body.ConfirmedService <> Some current then
+        (summaryLogger context).LogInformation("Summary needs confirmation for {Host}, model {Model}", configured.Endpoint.Authority, configured.Model)
+        return confirmationRequired configured
+    else
+        use client = serviceClient context configured
+        let settings : ChatCompletions.Settings =
+            { Endpoint = configured.Endpoint; Model = configured.Model; ApiKey = configured.ApiKey
+              Temperature = configured.Temperature; MaxOutputTokens = configured.MaxOutputTokens }
+        return! summarizeOnce context configured.MaxChunkCharacters (ChatCompletions.complete (summaryLogger context) client settings)
+                    configured.Endpoint.Authority configured.Model documentId pages }
+
+/// Resolves the destination before anything else (research §10): `Error` is the answer to send.
+let private resolveDestination (configuration: WorkspaceConfiguration) (signedIn: bool) (requested: Requested) : Result<Destination, IResult> =
+    let notConfigured () =
+        problem 503 "summary_service_not_configured" "No summary service is configured"
+            "Set LexScholar:Summary:Endpoint and LexScholar:Summary:Model (see the quickstart) and restart LexScholar."
+    let required () =
+        problem 400 "destination_required" "A destination is needed"
+            "Say whether to use chatgpt or the configured service. Nothing was sent."
+    match configuration.Summary.IsSome, signedIn, requested with
+    | false, false, _ -> Error(notConfigured ())
+    | _, _, Unrecognized -> Error(required ())
+    | true, true, NotNamed -> Error(required ())
+    | true, false, NotNamed | true, _, Named Configured -> Ok Configured
+    | false, true, NotNamed -> Ok Chatgpt
+    | _, false, Named Chatgpt -> Error(chatgptSignedOut ())
+    | _, true, Named Chatgpt -> Ok Chatgpt
+    | false, _, Named Configured -> Error(notConfigured ())
+
+let map (app: WebApplication) (configuration: WorkspaceConfiguration) (vault: ChatGptAccess.Vault) =
     let directory = configuration.DataDirectory
     app.MapPost("/api/projects/{projectId:guid}/documents/{documentId:guid}/summary",
                 Func<Guid, Guid, HttpContext, Task<IResult>>(fun projectId documentId context -> task {
-        match configuration.Summary with
-        | None ->
-            return problem 503 "summary_service_not_configured" "No summary service is configured"
-                       "Set LexScholar:Summary:Endpoint and LexScholar:Summary:Model (see the quickstart) and restart LexScholar."
-        | Some _ when notAssociated directory projectId documentId ->
-            if LibraryRepository.list directory |> List.exists (fun document -> document.Id = documentId) then
-                return problem 404 "not_found" "Association not found" null
+        let! body = readBody context
+        let! record = vault.Read()
+        match resolveDestination configuration record.IsSome body.Destination with
+        | Error answer -> return answer
+        | Ok destination ->
+            if notAssociated directory projectId documentId then
+                if LibraryRepository.list directory |> List.exists (fun document -> document.Id = documentId) then
+                    return problem 404 "not_found" "Association not found" null
+                else
+                    return problem 404 "document_not_found" "Document not found" null
             else
-                return problem 404 "document_not_found" "Document not found" null
-        | Some configured ->
-            match! PdfText.extractPages directory documentId context.RequestAborted with
-            | Error error -> return extractionProblem error
-            | Ok pages ->
-                match Summaries.readability pages with
-                | Error failure -> return readabilityProblem failure
-                | Ok readable ->
-                    // FR-014: for a service elsewhere nothing is sent without this request's confirmation
-                    // of the host and model currently configured. This is the only path to
-                    // `summarizeOnce`, and it runs after the local checks.
-                    let! confirmation = confirmedService context
-                    let current = configured.Endpoint.Authority, configured.Model
-                    if ServiceLocation.classify configured.Endpoint.Host = Elsewhere && confirmation <> Some current then
-                        (summaryLogger context).LogInformation("Summary needs confirmation for {Host}, model {Model}", configured.Endpoint.Authority, configured.Model)
-                        return confirmationRequired configured
-                    else return! summarizeOnce context configured documentId readable })) |> ignore
+                match! PdfText.extractPages directory documentId context.RequestAborted with
+                | Error error -> return extractionProblem error
+                | Ok pages ->
+                    match Summaries.readability pages with
+                    | Error failure -> return readabilityProblem failure
+                    | Ok readable ->
+                        // These two calls are the only paths to `summarizeOnce`, and both run after the local checks
+                        // and after their own confirmation rule.
+                        match destination with
+                        | Chatgpt -> return! summarizeViaPlan context vault body documentId readable
+                        | Configured -> return! summarizeConfigured context configuration.Summary.Value body documentId readable })) |> ignore

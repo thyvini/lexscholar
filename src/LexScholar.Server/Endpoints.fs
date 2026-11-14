@@ -7,5 +7,5 @@ module Endpoints =
         ProjectEndpoints.map app configuration.DataDirectory
         LibraryEndpoints.map app configuration
         ReaderEndpoints.map app configuration
-        SummaryEndpoints.map app configuration
-        ChatGptEndpoints.map app configuration
+        let vault = ChatGptEndpoints.map app configuration
+        SummaryEndpoints.map app configuration vault

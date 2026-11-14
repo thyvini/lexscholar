@@ -29,7 +29,7 @@ let private serviceClient (context: HttpContext) =
     | null -> new HttpClient(OpenAiAuth.createHandler (), true)
     | injected -> new HttpClient(injected, false)
 
-let private authClient (http: HttpClient) (clock: unit -> DateTimeOffset) : AuthClient =
+let authClient (http: HttpClient) (clock: unit -> DateTimeOffset) : AuthClient =
     { Exchange = fun clientId code verifier redirect cancellation -> OpenAiAuth.exchange http clock clientId code verifier redirect cancellation
       VerifyIdToken =
         fun clientId nonce idToken cancellation ->
@@ -62,7 +62,8 @@ let private outcomeName = function
     | NoPlanAccess -> "no_plan_access"
     | Failed -> "failed"
 
-let map (app: WebApplication) (configuration: WorkspaceConfiguration) =
+/// Registers the routes and returns the vault they use, so the summary endpoint takes the same lock.
+let map (app: WebApplication) (configuration: WorkspaceConfiguration) : Vault =
     let directory = configuration.DataDirectory
     let vault =
         Vault(
@@ -99,3 +100,4 @@ let map (app: WebApplication) (configuration: WorkspaceConfiguration) =
     app.MapPost("/api/chatgpt/welcome/dismiss", Func<IResult>(fun () ->
         ChatGptCredentials.markShown directory
         Results.NoContent())) |> ignore
+    vault

@@ -685,3 +685,13 @@ let ``a refresh in flight when she signs out leaves her signed out with no recor
     signOutRun.GetAwaiter().GetResult() |> ignore
     Assert.False(IO.File.Exists(recordPath harness))
     Assert.False(signedIn harness)
+
+[<Fact; Trait("Task", "T007")>]
+let ``a sign-in whose record cannot be saved fails and revokes the issued tokens`` () =
+    let fake = new FakeOpenAi()
+    use harness = TestHarness.Start(summaryHandler = fake)
+    // A directory where the record belongs makes the save throw.
+    IO.Directory.CreateDirectory(recordPath harness) |> ignore
+    let _, location = signInThrough harness fake ""
+    Assert.Equal("/index.html?chatgpt=failed", location)
+    Assert.Single(fake.RequestsTo("auth.openai.com", "/api/accounts/oauth/revoke")) |> ignore
