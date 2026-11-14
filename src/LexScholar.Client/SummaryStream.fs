@@ -25,7 +25,7 @@ let failureOfBody (body: string) : Summary.Failure =
         let root = json.RootElement
         match root.GetProperty("code").GetString() with
         | "confirmation_required" ->
-            Summary.ConfirmationRequired (root.GetProperty("serviceHost").GetString(), root.GetProperty("model").GetString())
+            Summary.ConfirmationRequired (Summary.Service (root.GetProperty("serviceHost").GetString(), root.GetProperty("model").GetString()))
         | code -> failureOfCode code
     with _ -> Summary.RequestFailed
 
@@ -65,7 +65,8 @@ let progress (element: JsonElement) : Summary.Progress option =
     | _ -> None
 
 /// `confirmSend` names the service the researcher confirmed, so the server can check it is still the configured one.
-let requestBody (confirmed: Summary.Confirmed option) : string =
+let requestBody (destination: Summary.Destination option) (confirmed: Summary.Confirmed option) : string =
     match confirmed with
-    | Some service -> JsonSerializer.Serialize({| confirmSend = true; confirmedHost = service.Host; confirmedModel = service.Model |})
+    | Some (Summary.ConfirmedService (host, model)) -> JsonSerializer.Serialize({| confirmSend = true; confirmedHost = host; confirmedModel = model |})
+    | Some Summary.ConfirmedPlan -> JsonSerializer.Serialize({| confirmSend = true |})
     | None -> JsonSerializer.Serialize({| confirmSend = false |})

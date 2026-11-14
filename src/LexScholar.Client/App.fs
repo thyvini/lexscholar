@@ -165,7 +165,7 @@ module Api =
 
     /// Requests a summary and reads the NDJSON stream until its one `summary` or
     /// `failed` event. Failures never show response details.
-    let summarize (http: HttpClient) (projectId: Guid) (documentId: Guid) (confirmed: Summary.Confirmed option) (onProgress: Summary.Progress -> unit) (cancellation: Threading.CancellationToken) = async {
+    let summarize (http: HttpClient) (projectId: Guid) (documentId: Guid) (destination: Summary.Destination option) (confirmed: Summary.Confirmed option) (onProgress: Summary.Progress -> unit) (cancellation: Threading.CancellationToken) = async {
         try
             use! tokenResponse = http.GetAsync("api/antiforgery", cancellation) |> Async.AwaitTask
             if not tokenResponse.IsSuccessStatusCode then return Error Summary.RequestFailed
@@ -174,7 +174,7 @@ module Api =
                 use tokenJson = JsonDocument.Parse(tokenBody)
                 use request = new HttpRequestMessage(HttpMethod.Post, $"api/projects/{projectId:D}/documents/{documentId:D}/summary")
                 request.Headers.Add("X-CSRF-TOKEN", tokenJson.RootElement.GetProperty("requestToken").GetString())
-                request.Content <- new StringContent(SummaryStream.requestBody confirmed, Encoding.UTF8, "application/json")
+                request.Content <- new StringContent(SummaryStream.requestBody destination confirmed, Encoding.UTF8, "application/json")
                 request.SetBrowserResponseStreamingEnabled(true) |> ignore
                 use! response = http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellation) |> Async.AwaitTask
                 if not response.IsSuccessStatusCode then
@@ -216,7 +216,7 @@ module ChatGptApi =
                         Some { ChatGpt.Name = (if chatgpt.TryGetProperty("account", &name) then name.GetString() else "your ChatGPT account")
                                ChatGpt.Confirmed = chatgpt.TryGetProperty("confirmed", &confirmed) && confirmed.GetBoolean() }
                     else None
-                return Ok { ChatGpt.Account = account; ChatGpt.WelcomePending = root.GetProperty("welcomePending").GetBoolean() }
+                return Ok { ChatGpt.Account = account; ChatGpt.Configured = None; ChatGpt.WelcomePending = root.GetProperty("welcomePending").GetBoolean() }
         with _ -> return Error () }
 
     /// Unsafe request with a fresh antiforgery token; the status and body, or None when it could not be sent.
@@ -315,12 +315,12 @@ module private Ui =
 
     let private summaryCommand http (effect: Summary.Effect option) : Cmd<Msg> =
         match effect with
-        | Some (Summary.Send (request, projectId, documentId, confirmed)) ->
+        | Some (Summary.Send (request, projectId, documentId, destination, confirmed)) ->
             let source = new Threading.CancellationTokenSource()
             running[request] <- source
             Cmd.ofEffect (fun dispatch ->
                 Async.StartImmediate(async {
-                    let! result = Api.summarize http projectId documentId confirmed (fun progress -> dispatch (SummaryMsg (Summary.Progressed (request, progress)))) source.Token
+                    let! result = Api.summarize http projectId documentId destination confirmed (fun progress -> dispatch (SummaryMsg (Summary.Progressed (request, progress)))) source.Token
                     running.Remove request |> ignore
                     source.Dispose()
                     dispatch (SummaryMsg (Summary.Responded (request, result))) }))
@@ -657,7 +657,8 @@ module private Ui =
                         plainButton "Dismiss" None (fun _ -> dispatch Summary.Dismiss)
                     }
                 | Summary.Shown _ -> empty ()
-                | Summary.Confirming (host, model) -> confirmDialog document host model dispatch
+                | Summary.Confirming (Summary.Service (host, model)) -> confirmDialog document host model dispatch
+                | Summary.Confirming (Summary.Plan _) -> empty ()
                 | Summary.Idle -> plainButton "Summarize" None (fun _ -> dispatch Summary.Summarize)
                 | Summary.Failed _ -> plainButton "Try again" (Some "summary-retry") (fun _ -> dispatch Summary.Summarize)
             cond summary.State <| function
