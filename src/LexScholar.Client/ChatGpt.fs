@@ -58,4 +58,54 @@ type Effect =
 let initial = { Status = Unknown; WelcomePending = false; Notice = None; SigningOut = false; Request = 0 }
 
 let update (message: Message) (model: Model) : Model * Effect option =
-    model, None
+    match message with
+    | Load ->
+        let request = model.Request + 1
+        { model with Request = request }, Some (FetchDestinations request)
+    // Starting owns the state until the tab navigates away or the start fails.
+    | Loaded (request, result) when request = model.Request && model.Status <> Starting ->
+        match result with
+        | Ok destinations ->
+            match destinations.Account with
+            | Some account -> { model with Status = SignedIn account; WelcomePending = destinations.WelcomePending }, None
+            | None -> { model with Status = SignedOut; WelcomePending = false }, None
+        | Error () -> model, None
+    | Loaded _ -> model, None
+    | Returned value ->
+        let notice =
+            match value with
+            | Some "cancelled" -> Some Cancelled
+            | Some "no_plan_access" -> Some NoPlanAccess
+            | Some "failed" -> Some Failed
+            | _ -> None
+        { model with Notice = notice }, None
+    | SignIn when model.Status = SignedOut && not model.SigningOut ->
+        { model with Status = Starting; Notice = None }, Some StartSignIn
+    | SignIn -> model, None
+    | AuthorizationReady result when model.Status = Starting ->
+        match result with
+        | Ok url -> model, Some (Navigate url)
+        | Error AlreadySignedIn ->
+            let request = model.Request + 1
+            { model with Status = SignedOut; Request = request }, Some (FetchDestinations request)
+        | Error RequestFailed -> { model with Status = SignedOut; Notice = Some StartFailed }, None
+    | AuthorizationReady _ -> model, None
+    | SignOut when not model.SigningOut ->
+        match model.Status with
+        | SignedIn _ -> { model with SigningOut = true; Notice = None }, Some SendSignOut
+        | _ -> model, None
+    | SignOut -> model, None
+    | SignedOutResult result when model.SigningOut ->
+        match result with
+        | Ok revoked ->
+            { model with
+                Status = SignedOut
+                WelcomePending = false
+                SigningOut = false
+                Notice = if revoked then None else Some NotRevoked },
+            None
+        | Error () -> { model with SigningOut = false; Notice = Some SignOutFailed }, None
+    | SignedOutResult _ -> model, None
+    | DismissWelcome when model.WelcomePending -> { model with WelcomePending = false }, Some SendDismissWelcome
+    | DismissWelcome -> model, None
+    | DismissNotice -> { model with Notice = None }, None
