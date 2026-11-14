@@ -142,9 +142,10 @@ let ``another refusal gives the sanitized status and message only`` () = task {
     | other -> failwith $"unexpected {other}" }
 
 /// Sends one event, then stalls without ending the stream.
-type private StallingStreamHandler() =
+type private StallingStreamHandler(headerDelay: TimeSpan) =
     inherit HttpMessageHandler()
-    override _.SendAsync(_, _) =
+    override _.SendAsync(_, cancellation) = task {
+        if headerDelay > TimeSpan.Zero then do! Task.Delay(headerDelay, cancellation)
         let head = Encoding.UTF8.GetBytes(sse [ "response.output_text.delta", """{"type":"response.output_text.delta","delta":"a"}""" ])
         let served = ref false
         let stream =
@@ -168,7 +169,7 @@ type private StallingStreamHandler() =
                         else
                             do! Task.Delay(Timeout.Infinite, cancellation)
                             return 0 }) }
-        Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK, Content = new StreamContent(stream)))
+        return new HttpResponseMessage(HttpStatusCode.OK, Content = new StreamContent(stream)) }
 
 /// Delivers the body in the given chunks, one per read.
 type private ChunkedHandler(chunks: byte array list) =
@@ -222,10 +223,20 @@ let ``a service that never answers times out`` () =
 
 [<Fact; Trait("Task", "T006")>]
 let ``a stream that stalls after some text times out`` () =
-    use client = new HttpClient(new StallingStreamHandler(), Timeout = TimeSpan.FromMilliseconds 300.0)
+    use client = new HttpClient(new StallingStreamHandler(TimeSpan.Zero), Timeout = TimeSpan.FromMilliseconds 300.0)
     let call = ResponsesApi.complete (CapturingLogger()) client settings messages none
     guard call
     Assert.Equal(Error Summarize.ServiceError.TimedOut, call.GetAwaiter().GetResult())
+
+[<Fact; Trait("Task", "T006")>]
+let ``the time limit is one deadline for the headers and the stream together`` () =
+    // Headers arrive after 500 ms, then the stream stalls; the whole call ends at the 1 s limit, not at 1.5 s.
+    use client = new HttpClient(new StallingStreamHandler(TimeSpan.FromMilliseconds 500.0), Timeout = TimeSpan.FromSeconds 1.0)
+    let clock = System.Diagnostics.Stopwatch.StartNew()
+    let call = ResponsesApi.complete (CapturingLogger()) client settings messages none
+    guard call
+    Assert.Equal(Error Summarize.ServiceError.TimedOut, call.GetAwaiter().GetResult())
+    Assert.True(clock.ElapsedMilliseconds < 1350L, $"the call took {clock.ElapsedMilliseconds} ms")
 
 [<Fact; Trait("Task", "T006")>]
 let ``a caller's cancellation is a cancellation, not a timeout`` () =
