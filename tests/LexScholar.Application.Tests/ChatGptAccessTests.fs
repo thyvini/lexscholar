@@ -196,3 +196,21 @@ let ``any error with an unknown, reused or missing state is cancelled`` () =
         Assert.Equal(Cancelled, rig.Complete { Code = None; State = None; Error = Some error; ClientId = None })
     Assert.Equal(Failed, rig.Complete { callback url with Code = None; Error = Some "server_error" })
     Assert.Equal(Cancelled, rig.Complete { callback url with Code = None; Error = Some "server_error" })
+
+[<Fact; Trait("Task", "T004")>]
+let ``a callback that reaches the vault while a start is replacing the attempt is never saved`` () = task {
+    let rig = Rig()
+    let a = rig.Start()
+    let mutable finishing : Task<SignInOutcome> option = None
+    // The start's clock runs between its "not signed in" check and the replacement of the pending
+    // attempt. Run the older callback right there: if the vault is not held, it finishes and saves
+    // inside the window; if it is held, it waits and sees the replacement.
+    let clock () =
+        if finishing.IsNone then
+            finishing <- Some(completeSignIn rig.Vault rig.Session rig.Auth (fun () -> now) (callback a) none)
+        now
+    let! started = startSignIn rig.Vault rig.Session clock redirect
+    Assert.True(started.IsOk)
+    let! outcome = finishing.Value
+    Assert.Equal(Cancelled, outcome)
+    Assert.Equal(None, rig.Record) }
