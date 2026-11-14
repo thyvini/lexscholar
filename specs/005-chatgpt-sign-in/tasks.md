@@ -26,7 +26,7 @@ Each task is one vertical slice and one PR: tests first (meaningful RED, then GR
 ## Phase 3: Release gate
 
 - [x] T013 Accept ChatGPT's undocumented `response.metadata` stream event (research §12): an unknown event kind that does not end in ".delta" is skipped; an unknown ".delta" kind, a name/type mismatch and a missing or non-string type stay unusable output, and success still needs `response.completed` with non-empty text. `FakeOpenAi`'s completed stream sends `response.metadata` like the real service. **Files**: `src/LexScholar.Infrastructure/ResponsesApi.fs`, `tests/LexScholar.Infrastructure.Tests/ResponsesApiTests.fs`, `tests/LexScholar.Server.Tests/FakeOpenAi.fs`. Found in T012; Codecks $13z. Evidence: [`evidence/t013-stream-metadata.md`](evidence/t013-stream-metadata.md).
-- [ ] T012 Manual validation on the researcher's real ChatGPT account (quickstart steps 1–10); also completes F003's T012, and v0.2.0 is released only after both. **Files**: `specs/005-chatgpt-sign-in/evidence/t012-manual-validation.md`.
+- [x] T012 Manual validation on the researcher's real ChatGPT account (quickstart steps 1–10); also completes F003's T012, and v0.2.0 is released only after both. **Files**: `specs/005-chatgpt-sign-in/evidence/t012-manual-validation.md`. Run on the owner's own plan; found T013; step 8 (usage limit) is optional by owner decision and was not run (covered by the fake service, see the quickstart). Evidence: [t012-manual-validation.md](evidence/t012-manual-validation.md).
 
 ## Dependencies
 

@@ -26,7 +26,7 @@ Each task is one vertical slice and one PR: tests first (meaningful RED, then GR
 ## Phase 3: Polish
 
 - [x] T013 [US1] Show the service's own error message when it refuses a request (found during T012). **Files**: `src/LexScholar.Infrastructure/ChatCompletions.fs` (`errorMessage`), `src/LexScholar.Application/Summarize.fs` (`ErrorStatus` carries the message, `failureDetail`), `specs/003-document-summary/research.md` §5 and `contracts/summary-api.yaml` (`detail`). **Tests**: contract (400 and 401 with the OpenAI error shape; generic detail without a usable message), `ChatCompletionsTests` (only `error.message`, one plain line, 300-character cap, oversized body, key echo, never logged). Covers FR-004 edge cases (service failure). **Risky** (untrusted input). Evidence: [t013-service-error-detail.md](evidence/t013-service-error-detail.md).
-- [ ] T012 Manual validation on the researcher's real setup (quickstart "Manual validation"): SC-002 (9 of 10 points supported), SC-003 in Firefox and Chromium, SC-004, SC-006 with `strace`, SC-007 (40 pages within 2 minutes, recording hardware), FR-002 with `article-pt.pdf`. **Files**: `specs/003-document-summary/evidence/t012-manual-validation.md`. **Partial (2026-11-13):** not-configured message, service refusal and confirmation checked; everything needing a working service is blocked. See [evidence](evidence/t012-manual-validation.md). v0.2.0 is not released until T012 is complete.
+- [x] T012 Manual validation on the researcher's real setup (quickstart "Manual validation"), for now through her ChatGPT plan (F005), the only working service (owner decision, 2026-11-14): SC-002 (9 of 10 points supported), SC-003 in Firefox and Chromium, SC-004, SC-007 (40 pages within 2 minutes), FR-002 with `article-pt.pdf`. SC-006's `strace` check needs a local model and is not part of this task: it is deferred until a local model is usable (automated coverage in T007, T009). **Files**: `specs/003-document-summary/evidence/t012-manual-validation.md`. **Complete (2026-11-14).** Evidence: [t012-manual-validation.md](evidence/t012-manual-validation.md).
 
 ## Dependencies
 
@@ -58,5 +58,5 @@ Parallel: T009 with T004/T005 (Infrastructure only vs client only); T011 with T0
 | SC-003 | T005, T012 |
 | SC-004 | T012 |
 | SC-005 | T011 |
-| SC-006 | T007, T009, T012 |
+| SC-006 | T007, T009 (manual `strace` check deferred until a local model is usable) |
 | SC-007 | T012 |
