@@ -76,8 +76,6 @@ let ``no secret reaches a log line, a response or a file in any flow`` () =
     let _, start = call harness "start" HttpMethod.Post "/api/chatgpt/sign-in" "{}"
     let url = urlOf start
     fake.Nonce <- (query url)["nonce"]
-    let state = (query url)["state"]
-    let nonce = (query url)["nonce"]
     callbackObserved harness (callbackPath url $"&client_id={fake.ClientId}")
     fake.ExpiresIn <- 3600
     fake.AccessToken <- "ACCESSSECRET-B"
@@ -100,6 +98,8 @@ let ``no secret reaches a log line, a response or a file in any flow`` () =
     let url3 = urlOf start3
     fake.Nonce <- (query url3)["nonce"]
     callbackObserved harness (callbackPath url3 $"&client_id={fake.ClientId}")
+    // Every attempt's state and nonce (they appear only inside `authorizationUrl`).
+    let attempts = [ url; url2; url3 ] |> List.collect (fun u -> [ (query u)["state"]; (query u)["nonce"] ])
     let verifiers =
         fake.Requests
         |> List.choose (fun r ->
@@ -114,27 +114,29 @@ let ``no secret reaches a log line, a response or a file in any flow`` () =
             yield $"ACCESSSECRET-{letter}"
             yield $"REFRESHSECRET-{letter}" ]
     let secrets = tokens @ [ "code-1"; "CODESECRET" ] @ verifiers
-    let idTokenMarker = "eyJ" // every JWT starts with this
+    // A JWT is three base64url parts joined by dots; authorization URLs never contain a dot after random text.
+    let jwt = Text.RegularExpressions.Regex(@"eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*")
+    let leaks (text: string) =
+        (secrets @ attempts @ [ fake.Email ]) |> List.filter text.Contains
+        |> fun found -> if jwt.IsMatch text then "ID token" :: found else found
     let logged = String.Join('\n', lines.All)
     Assert.NotEmpty lines.All
-    for secret in secrets @ [ state; nonce; fake.Email; idTokenMarker ] do
-        Assert.DoesNotContain(secret, logged)
-    // Responses of this API: tokens, code and verifier never; state and nonce only in the start response's address; the
-    // account display name only in the `account` field.
+    Assert.Empty(leaks logged)
+    // Responses of this API: no secret anywhere, except the allowed fields: `authorizationUrl` (state and nonce) of a
+    // start response and the display name in the `account` field of destinations.
+    let withoutAllowed (what: string) (text: string) =
+        match what with
+        | "start" ->
+            use json = JsonDocument.Parse text
+            text.Replace(JsonSerializer.Serialize(json.RootElement.GetProperty("authorizationUrl").GetString()).Trim('"'), "")
+        | "destinations" -> text.Replace($"\"account\":\"{fake.Email}\"", "\"account\":\"\"")
+        | _ -> text
     for what, text in observed do
-        for secret in secrets @ [ idTokenMarker ] do
-            Assert.False(text.Contains secret, $"{what} response contains a secret")
-        if what <> "start" then
-            Assert.False(text.Contains state, $"{what} response contains the state")
-            Assert.False(text.Contains nonce, $"{what} response contains the nonce")
-        if what = "destinations" then
-            use json = JsonDocument.Parse(text.Substring(text.IndexOf('{')))
-            let chatgpt = json.RootElement.GetProperty "chatgpt"
-            if chatgpt.GetProperty("signedIn").GetBoolean() then
-                Assert.Equal(fake.Email, chatgpt.GetProperty("account").GetString())
-        elif what <> "start" then
-            Assert.False(text.Contains fake.Email, $"{what} response contains the account")
-    // After sign-out no file in the data directory holds the account or a token.
+        // Status and headers are always scanned whole; only the body loses its allowed field.
+        let split = if what = "destinations" || what = "start" then text.IndexOf('{') else text.Length
+        let scanned = text.Substring(0, split) + withoutAllowed what (text.Substring split)
+        Assert.True((leaks scanned).IsEmpty, $"{what} response leaks: {String.Join(',', leaks scanned)}")
+    // After sign-out no file in the data directory holds the account, a token or an ID token.
     Assert.False(IO.File.Exists(recordPath harness))
     // The directory lock file is held open by the host and holds no content.
     for file in IO.Directory.EnumerateFiles(harness.Root, "*", IO.SearchOption.AllDirectories) |> Seq.filter (fun f -> IO.Path.GetFileName f <> ".lexscholar.lock") do
@@ -142,8 +144,8 @@ let ``no secret reaches a log line, a response or a file in any flow`` () =
         use memory = new IO.MemoryStream()
         stream.CopyTo memory
         let content = Text.Encoding.Latin1.GetString(memory.ToArray())
-        for secret in tokens @ [ fake.Email ] do
-            Assert.False(content.Contains secret, $"{IO.Path.GetFileName file} contains a secret")
+        let found = (tokens @ [ fake.Email ]) |> List.filter content.Contains
+        Assert.True(found.IsEmpty && not (jwt.IsMatch content), $"{IO.Path.GetFileName file} contains a secret")
 
 [<Fact; Trait("Task", "T008")>]
 let ``the working tree contains no chatgpt-signin.json`` () =

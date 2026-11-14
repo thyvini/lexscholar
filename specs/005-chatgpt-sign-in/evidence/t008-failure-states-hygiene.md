@@ -21,3 +21,9 @@
 - T007 follow-up (d), unknown stream event kinds being `UnusableOutput`, is left to T012.
 
 CI run for the full suite: see the PR.
+
+## Review follow-up (Greptile)
+
+- P1 summary can arrive after sign-out (accepted, answered on the thread): the token check and the write are not atomic, but a summary whose last service call finished before the sign-out is a completed result of that run; sign-out revokes and deletes and no further call is made. Closing the window would hold the vault lock (or a sign-out gate) across a write to a possibly slow client, so sign-out could wait on the browser; not worth it for one local researcher. Bytes already written cannot be recalled in any design.
+- P2 `eyJ` search can flake on random base64url (must fix): ID tokens are now matched as a JWT shape (three dot-separated parts).
+- P2 hygiene gaps (must fix): state and nonce of every attempt are checked; files are scanned for JWTs; responses lose only their allowed field (`authorizationUrl` of start, `account` of destinations) and headers are always scanned.
