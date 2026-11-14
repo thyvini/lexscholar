@@ -142,7 +142,7 @@ let ``another refusal gives the sanitized status and message only`` () = task {
     | other -> failwith $"unexpected {other}" }
 
 /// Sends one event, then stalls without ending the stream.
-type private StallingStreamHandler() =
+type private StallingStreamHandler(status: HttpStatusCode) =
     inherit HttpMessageHandler()
     let stalled = TaskCompletionSource()
     /// Completes when the client waits for more of the stream after the first event (headers are already in).
@@ -172,7 +172,7 @@ type private StallingStreamHandler() =
                             stalled.TrySetResult() |> ignore
                             do! Task.Delay(Timeout.Infinite, cancellation)
                             return 0 }) }
-        return new HttpResponseMessage(HttpStatusCode.OK, Content = new StreamContent(stream)) }
+        return new HttpResponseMessage(status, Content = new StreamContent(stream)) }
 
 /// Delivers the body in the given chunks, one per read.
 type private ChunkedHandler(chunks: byte array list) =
@@ -226,14 +226,14 @@ let ``a service that never answers times out`` () =
 
 [<Fact; Trait("Task", "T006")>]
 let ``a stream that stalls after some text times out`` () =
-    use client = new HttpClient(new StallingStreamHandler(), Timeout = TimeSpan.FromMilliseconds 300.0)
+    use client = new HttpClient(new StallingStreamHandler(HttpStatusCode.OK), Timeout = TimeSpan.FromMilliseconds 300.0)
     let call = ResponsesApi.complete (CapturingLogger()) client settings messages none
     guard call
     Assert.Equal(Error Summarize.ServiceError.TimedOut, call.GetAwaiter().GetResult())
 
 [<Fact; Trait("Task", "T006")>]
 let ``the deadline ends the call after the headers while the stream stalls`` () =
-    let handler = new StallingStreamHandler()
+    let handler = new StallingStreamHandler(HttpStatusCode.OK)
     use client = new HttpClient(handler, Timeout = TimeSpan.FromSeconds 30.0)
     use deadline = new CancellationTokenSource()
     let call = ResponsesApi.completeWithDeadline (CapturingLogger()) client settings messages deadline.Token none
@@ -256,16 +256,65 @@ let ``the deadline ends the call while the service has not answered the headers`
     guard call
     Assert.Equal(Error Summarize.ServiceError.TimedOut, call.GetAwaiter().GetResult())
 
+let private rawStream (text: string) = new FixedHandler(HttpStatusCode.OK, "text/event-stream", text)
+
+let private goodDelta = "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"good\"}\n\n"
+let private completedEvent = "event: response.completed\ndata: {\"type\":\"response.completed\"}\n\n"
+
+/// Every case is one event between two good text events; none may end as a success.
+let private unusableEvents =
+    [ "name says text delta, JSON has no type", "event: response.output_text.delta\ndata: {\"delta\":\"x\"}\n\n"
+      "name says text delta, JSON has no delta", "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\"}\n\n"
+      "name says text delta, JSON type is another kind", "event: response.output_text.delta\ndata: {\"type\":\"response.created\",\"delta\":\"x\"}\n\n"
+      "name says created, JSON type says text delta", "event: response.created\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"x\"}\n\n"
+      "no name and no type", "data: {\"delta\":\"x\"}\n\n"
+      "type is not a string", "data: {\"type\":5,\"delta\":\"x\"}\n\n"
+      "JSON type missing for a text delta, no name", "data: {\"delta\":\"x\",\"type\":null}\n\n"
+      "unknown kind", "event: response.mystery\ndata: {\"type\":\"response.mystery\"}\n\n"
+      "text delta name without any data", "event: response.output_text.delta\n\n"
+      "data is not an object", "data: [1]\n\n"
+      "data is not JSON", "event: response.output_text.delta\ndata: {not json\n\n"
+      "text delta without a string delta", "data: {\"type\":\"response.output_text.delta\",\"delta\":5}\n\n" ]
+
 [<Fact; Trait("Task", "T006")>]
-let ``a malformed text event is unusable output and never a partial summary`` () = task {
-    let delta text = ("response.output_text.delta", $$"""{"type":"response.output_text.delta","delta":"{{text}}"}""")
-    let completed = ("response.completed", """{"type":"response.completed"}""")
-    for bad in
-        [ "response.output_text.delta", """{"type":"response.output_text.delta"}"""
-          "response.output_text.delta", """{"type":"response.output_text.delta","delta":5}"""
-          "response.output_text.delta", "{not json" ] do
-        let! result = complete (new FixedHandler(HttpStatusCode.OK, "text/event-stream", sse [ delta "good "; bad; delta "rest"; completed ])) (CapturingLogger())
-        Assert.Equal(Error Summarize.ServiceError.UnusableOutput, result) }
+let ``an event that is, may be or cannot be told apart from a text delta is unusable output`` () = task {
+    for name, event in unusableEvents do
+        let! result = complete (rawStream (goodDelta + event + goodDelta + completedEvent)) (CapturingLogger())
+        Assert.True((result = Error Summarize.ServiceError.UnusableOutput), $"{name}: got {result}") }
+
+[<Fact; Trait("Task", "T006")>]
+let ``known harmless events are skipped`` () = task {
+    let harmless =
+        "event: response.created\ndata: {\"type\":\"response.created\"}\n\n"
+        + "event: response.in_progress\ndata: {\"type\":\"response.in_progress\"}\n\n"
+        + "event: response.output_item.added\ndata: {\"type\":\"response.output_item.added\"}\n\n"
+        + "event: response.content_part.added\ndata: {\"type\":\"response.content_part.added\"}\n\n"
+        + ": comment\n\n"
+        + "event: ping\ndata: {}\n\n"
+        + "event: ping\n\n"
+    let! result =
+        complete (rawStream (harmless + goodDelta
+                             + "event: response.output_text.done\ndata: {\"type\":\"response.output_text.done\"}\n\n"
+                             + "event: response.output_item.done\ndata: {\"type\":\"response.output_item.done\"}\n\n"
+                             + completedEvent)) (CapturingLogger())
+    Assert.Equal(Ok "good", result) }
+
+[<Fact; Trait("Task", "T006")>]
+let ``an event without a final blank line still counts when the stream ends`` () = task {
+    let! result = complete (rawStream (goodDelta + "event: response.completed\ndata: {\"type\":\"response.completed\"}\n")) (CapturingLogger())
+    Assert.Equal(Ok "good", result) }
+
+[<Fact; Trait("Task", "T006")>]
+let ``the deadline reached while reading a refusal's body is a timeout`` () =
+    let handler = new StallingStreamHandler(HttpStatusCode.TooManyRequests)
+    use client = new HttpClient(handler, Timeout = TimeSpan.FromSeconds 30.0)
+    use deadline = new CancellationTokenSource()
+    let call = ResponsesApi.completeWithDeadline (CapturingLogger()) client settings messages deadline.Token none
+    let reached = Task.WhenAny(handler.Stalled, Task.Delay(TimeSpan.FromSeconds 10.0)).GetAwaiter().GetResult()
+    Assert.True(obj.ReferenceEquals(reached, handler.Stalled), "the body never started")
+    deadline.Cancel()
+    guard call
+    Assert.Equal(Error Summarize.ServiceError.TimedOut, call.GetAwaiter().GetResult())
 
 [<Fact; Trait("Task", "T006")>]
 let ``a caller's cancellation is a cancellation, not a timeout`` () =
