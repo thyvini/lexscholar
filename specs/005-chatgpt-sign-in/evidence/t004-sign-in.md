@@ -27,3 +27,7 @@
 
 - P1: a new start now supersedes an attempt that is already mid-exchange (`SignInSession.Superseded`, checked under the vault lock before saving); the stale finisher is revoked and reports `cancelled`. RED: `a callback in flight is superseded by a newer start and is never saved` failed (the older attempt was saved); GREEN after the change.
 - P2: an error callback gives `cancelled` unless its state matches the live attempt and the error is not `access_denied` (then `failed`). RED: `any error with an unknown, reused or missing state is cancelled` failed; GREEN after the change. `scripts/check.sh T004`: 29 tests, 0 failed.
+
+## Review follow-up 2 (GPT, P1: check and save not atomic with a start)
+
+- `startSignIn` now checks "signed in?" and replaces the pending attempt inside `vault.Locked`, the lock the callback's check-and-save holds, so the two serialize. RED: `a callback that reaches the vault while a start is replacing the attempt is never saved` runs the older callback from the start's clock (inside the window, no sleeps); it was saved before the fix. GREEN after. `scripts/check.sh T004` below.

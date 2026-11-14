@@ -97,21 +97,23 @@ let private randomToken () =
 
 /// Starts a sign-in: new state, nonce, code verifier and host id; returns the address her
 /// browser goes to. `Error ()` when she is already signed in. Nothing is stored.
-let startSignIn (vault: Vault) (session: SignInSession) (clock: unit -> DateTimeOffset) (redirectUri: string) : Task<Result<string, unit>> = task {
-    let! existing = vault.Read()
-    if existing.IsSome then return Error()
-    else
-        let attempt =
-            { State = randomToken ()
-              Nonce = randomToken ()
-              Verifier = randomToken ()
-              RedirectUri = redirectUri
-              HostId = $"urn:uuid:{Guid.NewGuid()}"
-              ExpiresAt = clock().Add pendingLifetime }
-        session.Start attempt
-        return
-            Ok(ChatGptSignIn.authorizationUrl "dynamic_agent_client" redirectUri attempt.State attempt.Nonce
-                (ChatGptSignIn.challengeOf attempt.Verifier) (Some attempt.HostId)) }
+let startSignIn (vault: Vault) (session: SignInSession) (clock: unit -> DateTimeOffset) (redirectUri: string) : Task<Result<string, unit>> =
+    // The check and the replacement run under the vault lock, the same lock the final
+    // check-and-save of a callback holds, so a callback sees the replacement or finishes first.
+    vault.Locked(fun store -> task {
+        if store.Read().IsSome then return Error()
+        else
+            let attempt =
+                { State = randomToken ()
+                  Nonce = randomToken ()
+                  Verifier = randomToken ()
+                  RedirectUri = redirectUri
+                  HostId = $"urn:uuid:{Guid.NewGuid()}"
+                  ExpiresAt = clock().Add pendingLifetime }
+            session.Start attempt
+            return
+                Ok(ChatGptSignIn.authorizationUrl "dynamic_agent_client" redirectUri attempt.State attempt.Nonce
+                    (ChatGptSignIn.challengeOf attempt.Verifier) (Some attempt.HostId)) })
 
 /// Finishes a sign-in at the callback. Nothing is saved until the exchange and every check
 /// succeed, so any other path leaves her signed out.
