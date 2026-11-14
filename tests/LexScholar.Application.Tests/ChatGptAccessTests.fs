@@ -214,3 +214,82 @@ let ``a callback that reaches the vault while a start is replacing the attempt i
     let! outcome = finishing.Value
     Assert.Equal(Cancelled, outcome)
     Assert.Equal(None, rig.Record) }
+
+
+// ---- T005: sign-out ordering and issued tokens ----
+
+let private storedRecord : Credentials =
+    { ClientId = "client-issued"; HostId = "urn:uuid:1"; Subject = "user-1"; Account = "researcher@example.test"
+      AccessToken = "access"; RefreshToken = "refresh"; IdToken = "id"; ExpiresAt = now.AddHours 1.
+      Scopes = [ ChatGptSignIn.planScope ]; SignedInAt = now; ConfirmedAt = None }
+
+let private memoryStore (initial: Credentials option) =
+    let mutable record = initial
+    let store = { Read = (fun () -> record); Save = (fun c -> record <- Some c); Delete = (fun () -> record <- None) }
+    store, (fun () -> record)
+
+let private failingAuth (revoke: Credentials -> CancellationToken -> Task<bool>) : AuthClient =
+    { Exchange = fun _ _ _ _ _ -> Task.FromResult(Error())
+      VerifyIdToken = fun _ _ _ _ -> Task.FromResult(Error())
+      Refresh = fun _ _ -> Task.FromResult(Error Ended)
+      Revoke = revoke }
+
+[<Fact; Trait("Task", "T005")>]
+let ``sign-out deletes the record before it asks the service to revoke`` () =
+    let store, current = memoryStore (Some storedRecord)
+    let mutable recordWhenRevoking = Some storedRecord
+    let mutable revoked : string option = None
+    let auth =
+        failingAuth (fun credentials _ ->
+            recordWhenRevoking <- current ()
+            revoked <- Some credentials.RefreshToken
+            Task.FromResult true)
+    let result = (signOut (Vault store) (SignInSession()) auth none).GetAwaiter().GetResult()
+    Assert.True result
+    Assert.Equal(None, recordWhenRevoking)
+    Assert.Equal(Some "refresh", revoked)
+    Assert.Equal(None, current ())
+
+[<Fact; Trait("Task", "T005")>]
+let ``sign-out whose revocation is stopped has already deleted the record`` () = task {
+    let store, current = memoryStore (Some storedRecord)
+    let reached = TaskCompletionSource()
+    let auth = failingAuth (fun _ ct -> reached.SetResult(); Task.Delay(Timeout.Infinite, ct).ContinueWith(fun _ -> true))
+    use request = new CancellationTokenSource()
+    let pending = signOut (Vault store) (SignInSession()) auth request.Token
+    do! reached.Task
+    request.Cancel()
+    let! _ = pending
+    Assert.Equal(None, current ()) }
+
+[<Fact; Trait("Task", "T005")>]
+let ``a sign-in cancelled by sign-out while its ID token is checked still revokes the issued tokens`` () = task {
+    let store, current = memoryStore None
+    let vault = Vault(store)
+    let session = SignInSession()
+    let reached = TaskCompletionSource()
+    let gate = TaskCompletionSource()
+    let revocations = System.Collections.Concurrent.ConcurrentQueue<string * bool>()
+    let grant =
+        { AccessToken = "access"; RefreshToken = "issued-refresh"; IdToken = "id"; ExpiresAt = now.AddHours 1.
+          Scopes = [ "openid"; ChatGptSignIn.planScope ] }
+    let auth =
+        { failingAuth (fun credentials ct -> revocations.Enqueue((credentials.RefreshToken, ct.IsCancellationRequested)); Task.FromResult true) with
+            Exchange = fun _ _ _ _ _ -> Task.FromResult(Ok grant)
+            VerifyIdToken =
+                fun _ _ _ ct ->
+                    task {
+                        reached.SetResult()
+                        do! gate.Task
+                        ct.ThrowIfCancellationRequested()
+                        return Ok { Subject = "user-1"; Account = "researcher@example.test" }
+                    } }
+    let url = match (startSignIn vault session (fun () -> now) redirect).GetAwaiter().GetResult() with Ok u -> Uri u | Error () -> failwith "signed in"
+    let outcome = completeSignIn vault session auth (fun () -> now) (callback url) none
+    do! reached.Task
+    let! _ = signOut vault session auth none
+    gate.SetResult()
+    let! result = outcome
+    Assert.Equal(Cancelled, result)
+    Assert.Equal(None, current ())
+    Assert.Equal<(string * bool) list>([ "issued-refresh", false ], revocations |> Seq.toList) }

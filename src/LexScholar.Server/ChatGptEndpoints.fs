@@ -1,5 +1,5 @@
 /// Routes of the ChatGPT sign-in (F005, contracts/chatgpt-api.yaml): destinations, sign-in
-/// start and the callback. Sign-out and the welcome answer 501 until T005.
+/// start and the callback. Sign-out and the welcome dismissal.
 module LexScholar.Server.ChatGptEndpoints
 
 open System
@@ -12,8 +12,6 @@ open LexScholar.Application
 open LexScholar.Application.ChatGptAccess
 open LexScholar.Domain
 open LexScholar.Infrastructure
-
-let private notImplemented () : IResult = Results.StatusCode 501
 
 /// The query parameter of the callback that carries the client id issued at registration.
 /// Unverified against the real service; T012 confirms the name.
@@ -94,5 +92,10 @@ let map (app: WebApplication) (configuration: WorkspaceConfiguration) =
         use http = serviceClient context
         let! outcome = completeSignIn vault session (authClient http clock) clock query context.RequestAborted
         return Results.Redirect($"/index.html?chatgpt={outcomeName outcome}") })) |> ignore
-    app.MapPost("/api/chatgpt/sign-out", Func<IResult>(notImplemented)) |> ignore
-    app.MapPost("/api/chatgpt/welcome/dismiss", Func<IResult>(notImplemented)) |> ignore
+    app.MapPost("/api/chatgpt/sign-out", Func<HttpContext, Task<IResult>>(fun context -> task {
+        use http = serviceClient context
+        let! revoked = signOut vault session (authClient http clock) context.RequestAborted
+        return json {| revoked = revoked |} })) |> ignore
+    app.MapPost("/api/chatgpt/welcome/dismiss", Func<IResult>(fun () ->
+        ChatGptCredentials.markShown directory
+        Results.NoContent())) |> ignore

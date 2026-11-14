@@ -65,21 +65,38 @@ type SignInSession() =
     let mutable pending : PendingSignIn option = None
     // The state of the attempt whose exchange is running, if it is still the current one.
     let mutable inFlight : string option = None
+    // Cancels the exchange of the attempt that is mid-exchange.
+    let mutable running : CancellationTokenSource option = None
+    let endRunning () =
+        running |> Option.iter (fun source -> source.Cancel())
+        running <- None
     /// A start replaces the pending attempt and also supersedes one that is mid-exchange.
     member _.Start(attempt: PendingSignIn) =
         lock sync (fun () ->
             pending <- Some attempt
-            inFlight <- None)
+            inFlight <- None
+            endRunning ())
+    /// Forgets the pending attempt, supersedes one that is mid-exchange and cancels its calls.
+    /// Sign-out calls this under the vault lock, so no attempt saves after it.
+    member _.Clear() =
+        lock sync (fun () ->
+            pending <- None
+            inFlight <- None
+            endRunning ())
     /// Whether a newer start replaced this attempt after it was taken.
     member _.Superseded(attempt: PendingSignIn) : bool = lock sync (fun () -> inFlight <> Some attempt.State)
     /// Consumes the attempt when `state` matches and it has not expired; a reused state finds nothing.
-    member _.Take(state: string, now: DateTimeOffset) : PendingSignIn option =
+    /// The token is cancelled when a start or a sign-out supersedes the attempt.
+    member _.Take(state: string, now: DateTimeOffset) : (PendingSignIn * CancellationToken) option =
         lock sync (fun () ->
             match pending with
             | Some attempt when attempt.State = state && attempt.ExpiresAt > now ->
+                endRunning ()
                 pending <- None
                 inFlight <- Some attempt.State
-                Some attempt
+                let source = new CancellationTokenSource()
+                running <- Some source
+                Some(attempt, source.Token)
             | _ -> None)
 
 /// What came back to the callback address.
@@ -128,15 +145,41 @@ let completeSignIn (vault: Vault) (session: SignInSession) (auth: AuthClient) (c
     | None, Some state ->
         match session.Take(state, clock ()) with
         | None -> return Cancelled
-        | Some attempt ->
+        | Some(attempt, superseded) ->
+            use linked = CancellationTokenSource.CreateLinkedTokenSource(cancellation, superseded)
+            let cancellation = linked.Token
+            // Cleanup revocations must not inherit a cancellation caused by sign-out or a newer
+            // start; `Revoke` has its own short time limit.
+            let cleanup = CancellationToken.None
+            // A sign-out or a newer start cancelled the calls: that is not a failure.
+            let failedUnlessSuperseded attempt = if session.Superseded attempt then Cancelled else Failed
             match query.Code, query.ClientId with
             | Some code, Some clientId when clientId <> "" && clientId <> "dynamic_agent_client" ->
                 try
                     match! auth.Exchange clientId code attempt.Verifier attempt.RedirectUri cancellation with
-                    | Error () -> return Failed
+                    | Error () -> return failedUnlessSuperseded attempt
                     | Ok grant ->
-                        match! auth.VerifyIdToken clientId attempt.Nonce grant.IdToken cancellation with
-                        | Error () -> return Failed
+                        // The tokens exist from here on: any path that does not save them revokes them.
+                        let revokeIssued () =
+                            task {
+                                try
+                                    let issued =
+                                        { ClientId = clientId; HostId = attempt.HostId; Subject = ""; Account = ""
+                                          AccessToken = grant.AccessToken; RefreshToken = grant.RefreshToken; IdToken = grant.IdToken
+                                          ExpiresAt = grant.ExpiresAt; Scopes = grant.Scopes; SignedInAt = clock (); ConfirmedAt = None }
+                                    let! _ = auth.Revoke issued cleanup
+                                    ()
+                                with _ -> ()
+                            }
+                        let! verified =
+                            task {
+                                try return! auth.VerifyIdToken clientId attempt.Nonce grant.IdToken cancellation
+                                with _ -> return Error()
+                            }
+                        match verified with
+                        | Error () ->
+                            do! revokeIssued ()
+                            return failedUnlessSuperseded attempt
                         | Ok identity ->
                             let credentials =
                                 { ClientId = clientId
@@ -151,7 +194,7 @@ let completeSignIn (vault: Vault) (session: SignInSession) (auth: AuthClient) (c
                                   SignedInAt = clock ()
                                   ConfirmedAt = None }
                             if not (ChatGptSignIn.grantsPlanUsage (String.Join(' ', grant.Scopes))) then
-                                let! _ = auth.Revoke credentials cancellation
+                                let! _ = auth.Revoke credentials cleanup
                                 return NoPlanAccess
                             else
                                 // A sign-in that finished first wins, and one replaced by a newer start is never saved.
@@ -163,7 +206,26 @@ let completeSignIn (vault: Vault) (session: SignInSession) (auth: AuthClient) (c
                                             return true })
                                 if saved then return SignedIn
                                 else
-                                    let! _ = auth.Revoke credentials cancellation
+                                    let! _ = auth.Revoke credentials cleanup
                                     return Cancelled
-                with _ -> return Failed
+                with _ ->
+                    return failedUnlessSuperseded attempt
             | _ -> return Failed }
+
+/// Signs out. Under the vault lock: supersedes any pending or mid-exchange attempt (cancelling
+/// its calls), deletes the record, then asks the service to revoke the stored sign-in (best effort). `revoked` is whether the service confirmed. Lock order is vault, then session.
+let signOut (vault: Vault) (session: SignInSession) (auth: AuthClient) (cancellation: CancellationToken) : Task<bool> =
+    vault.Locked(fun store -> task {
+        session.Clear()
+        // The local removal is the guarantee: delete first, then revoke from memory, best effort.
+        let credentials = store.Read()
+        store.Delete()
+        let! revoked =
+            task {
+                match credentials with
+                | None -> return false
+                | Some credentials ->
+                    try return! auth.Revoke credentials cancellation
+                    with _ -> return false
+            }
+        return revoked })
