@@ -121,3 +121,11 @@ let ``a record violating the data model is signed out and deleted`` () =
         ChatGptCredentials.save directory.Path record
         Assert.True((ChatGptCredentials.read directory.Path).IsNone, $"accepted: {name}")
         Assert.False(File.Exists(signInPath directory.Path), $"not deleted: {name}")
+
+[<Fact; Trait("Task", "T002")>]
+let ``reading a valid record still removes a stale temporary file`` () =
+    use directory = new TemporaryDirectory()
+    ChatGptCredentials.save directory.Path credentials
+    File.WriteAllText(Path.Combine(directory.Path, "chatgpt-signin.json.0123abcd.tmp"), "secret")
+    Assert.Equal(Some credentials, ChatGptCredentials.read directory.Path)
+    Assert.Equal<string list>([ "chatgpt-signin.json" ], Directory.GetFileSystemEntries directory.Path |> Array.map Path.GetFileName |> List.ofArray)
