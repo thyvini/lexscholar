@@ -89,10 +89,60 @@ let private randomToken () =
 
 /// Starts a sign-in: new state, nonce, code verifier and host id; returns the address her
 /// browser goes to. `Error ()` when she is already signed in. Nothing is stored.
-let startSignIn (vault: Vault) (session: SignInSession) (clock: unit -> DateTimeOffset) (redirectUri: string) : Task<Result<string, unit>> =
-    Task.FromResult(Ok "")
+let startSignIn (vault: Vault) (session: SignInSession) (clock: unit -> DateTimeOffset) (redirectUri: string) : Task<Result<string, unit>> = task {
+    let! existing = vault.Read()
+    if existing.IsSome then return Error()
+    else
+        let attempt =
+            { State = randomToken ()
+              Nonce = randomToken ()
+              Verifier = randomToken ()
+              RedirectUri = redirectUri
+              HostId = $"urn:uuid:{Guid.NewGuid()}"
+              ExpiresAt = clock().Add pendingLifetime }
+        session.Start attempt
+        return
+            Ok(ChatGptSignIn.authorizationUrl "dynamic_agent_client" redirectUri attempt.State attempt.Nonce
+                (ChatGptSignIn.challengeOf attempt.Verifier) (Some attempt.HostId)) }
 
 /// Finishes a sign-in at the callback. Nothing is saved until the exchange and every check
 /// succeed, so any other path leaves her signed out.
-let completeSignIn (vault: Vault) (session: SignInSession) (auth: AuthClient) (clock: unit -> DateTimeOffset) (query: CallbackQuery) (cancellation: CancellationToken) : Task<SignInOutcome> =
-    Task.FromResult Failed
+let completeSignIn (vault: Vault) (session: SignInSession) (auth: AuthClient) (clock: unit -> DateTimeOffset) (query: CallbackQuery) (cancellation: CancellationToken) : Task<SignInOutcome> = task {
+    match query.Error, query.State with
+    | Some error, _ ->
+        session.Clear()
+        return (if error = "access_denied" then Cancelled else Failed)
+    | None, None -> return Cancelled
+    | None, Some state ->
+        match session.Take(state, clock ()) with
+        | None -> return Cancelled
+        | Some attempt ->
+            match query.Code, query.ClientId with
+            | Some code, Some clientId when clientId <> "" && clientId <> "dynamic_agent_client" ->
+                try
+                    match! auth.Exchange clientId code attempt.Verifier attempt.RedirectUri cancellation with
+                    | Error () -> return Failed
+                    | Ok grant ->
+                        match! auth.VerifyIdToken clientId attempt.Nonce grant.IdToken cancellation with
+                        | Error () -> return Failed
+                        | Ok identity ->
+                            let credentials =
+                                { ClientId = clientId
+                                  HostId = attempt.HostId
+                                  Subject = identity.Subject
+                                  Account = identity.Account
+                                  AccessToken = grant.AccessToken
+                                  RefreshToken = grant.RefreshToken
+                                  IdToken = grant.IdToken
+                                  ExpiresAt = grant.ExpiresAt
+                                  Scopes = grant.Scopes
+                                  SignedInAt = clock ()
+                                  ConfirmedAt = None }
+                            if not (ChatGptSignIn.grantsPlanUsage (String.Join(' ', grant.Scopes))) then
+                                let! _ = auth.Revoke credentials cancellation
+                                return NoPlanAccess
+                            else
+                                do! vault.Locked(fun store -> task { store.Save credentials })
+                                return SignedIn
+                with _ -> return Failed
+            | _ -> return Failed }

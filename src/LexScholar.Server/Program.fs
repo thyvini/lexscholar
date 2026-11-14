@@ -38,6 +38,9 @@ let private createHost (builder: WebApplicationBuilder) (serveClient: bool) port
                 // it is built but never started. ApplicationStopped also releases it
                 // after a normal stop; SafeFileHandle disposal is idempotent.
                 builder.Services.AddSingleton<DataDirectoryLease>(fun _ -> lease) |> ignore
+                // The request-start line carries the query string, which on /auth/callback holds
+                // the authorization code and state (F005). Warnings and errors still log.
+                builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.Warning) |> ignore
                 let app = builder.Build()
                 try
                     app.Services.GetRequiredService<DataDirectoryLease>() |> ignore

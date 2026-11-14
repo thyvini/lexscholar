@@ -123,3 +123,22 @@ let ``failed exchange, invalid ID token, missing client id and a failing save st
         let url = rig.Start()
         Assert.Equal(Failed, rig.Complete(query url))
         Assert.Equal(None, rig.Record)
+
+[<Fact; Trait("Task", "T004")>]
+let ``the vault runs one change at a time`` () = task {
+    let store = { Read = (fun () -> None); Save = ignore; Delete = ignore }
+    let vault = Vault(store)
+    let release = TaskCompletionSource()
+    let entered = TaskCompletionSource()
+    let mutable second = false
+    let first = vault.Locked(fun _ -> task { entered.SetResult(); do! release.Task })
+    do! entered.Task
+    let other = vault.Locked(fun _ -> task { second <- true })
+    // The first holder has not released, so the second cannot have started.
+    do! Task.Yield()
+    Assert.False(other.IsCompleted)
+    Assert.False(second)
+    release.SetResult()
+    do! first
+    do! other
+    Assert.True(second) }

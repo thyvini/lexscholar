@@ -1,0 +1,19 @@
+# T004: sign in, once, in her browser
+
+- RED: `scripts/check.sh T004` on stubs (`completeSignIn` returned `Failed`, sign-in routes answered 501): 13 of 24 failed on assertions (expected `SignedIn`, got `Failed`; expected 200 or 302, got 501; the query string `state=SECRETSTATE&code=SECRETCODE` found in a log line).
+- GREEN: `scripts/check.sh T004`: 25 tests, 0 failed (Application workflow tests, contract tests with `FakeOpenAi`, the vault test). CI runs the full suite on the PR.
+
+## What the tests show
+
+- The stored record has every field of data-model.md; `confirmedAt` is absent.
+- Start gives an address with state, nonce, challenge, host id and the redirect `http://127.0.0.1:<port>/auth/callback`; a second start while signed in is `409 already_signed_in`; a new start replaces the pending attempt.
+- Callback outcomes: `signed_in`; `cancelled` (access_denied, unknown, reused or missing state, no attempt; the fake saw no token exchange for a bad state); `no_plan_access` (one revocation, no file); `failed` (token error, wrong audience, empty code, missing issued client id). No unsuccessful outcome leaves `chatgpt-signin.json`.
+- The record survives a host restart.
+- The callback's query string is not in any log line: `Program.fs` raises `Microsoft.AspNetCore.Hosting.Diagnostics` to Warning because its request-start line includes the query.
+
+## Decisions and limits
+
+- The issued client id is read from the callback's `client_id` query parameter (one constant, `IssuedClientIdParameter` in `ChatGptEndpoints.fs`). Unverified against the real service: confirm in T012. When it is absent the outcome is `failed`.
+- The lock lives in Application only (`Vault`); every caller of `ChatGptCredentials.read/save/delete` goes through it, so the T002 follow-up (a read deleting the temp file of a save in progress) is satisfied without an Infrastructure change.
+- Sensitivity check for the vault: removing the wait on the lock made `the vault runs one change at a time` fail; reverted.
+- Real `HttpClient`: `OpenAiAuth.createHandler` (no redirects) unless a handler is injected through DI (tests).
