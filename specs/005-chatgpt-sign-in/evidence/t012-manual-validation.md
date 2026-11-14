@@ -15,7 +15,7 @@ The first run found a defect: every summary through the plan failed with "did no
 | 5 | Restart: still signed in | FR-003 | Pass |
 | 6 | Sign out, then search the data directory and the log for the account's email and token text (`eyJ`) | FR-004, FR-012, SC-002, SC-006 | Pass: no `chatgpt-signin.json`, no match. The log file covered the run since the last restart (`tee` overwrote it); the earlier part, read before the restart, showed only the request summary lines |
 | 7 | Disconnect LexScholar in ChatGPT's settings, then summarize | FR-008, SC-003 | Pass: "Signed out" with a sign-in action, nothing technical |
-| 8 | Usage limit reached | FR-009, SC-005 | Not run (optional, would have limited the owner's plan). Covered by the fake service in T008 and T011 |
+| 8 | Usage limit reached | FR-009, SC-005 | Not run: optional on the real account by owner decision (quickstart). Covered by the fake service in T008 and T011 |
 | 9 | Steps 1–4 in Chromium | SC-007 | Pass |
 | 10 | `long-40.pdf` | F003 SC-007 | Pass: progress out of 40, about 1 minute |
 

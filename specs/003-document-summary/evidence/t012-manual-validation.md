@@ -1,6 +1,6 @@
 # T012: manual validation on the researcher's setup
 
-Status: **complete, with SC-006's `strace` check deferred** (see below).
+Status: **complete**, for now through her ChatGPT plan (owner decision, 2026-11-14). SC-006's `strace` check is not part of T012 for now (see below).
 
 Run by the owner on 2026-11-12 and 2026-11-13 with a settings-file service, and on 2026-11-14 through a ChatGPT plan (F005, see its [T012 evidence](../../005-chatgpt-sign-in/evidence/t012-manual-validation.md) for the setup), following the quickstart's "Manual validation". Documents: the reference set in `tests/Fixtures/summary/` only.
 
@@ -31,7 +31,7 @@ No settings-file service returned a full summary (no API credits; Gemini's free 
 
 The reference articles repeat short passages across pages, so almost any point is supported somewhere; the accuracy check is weak on them. A real openly licensed article remains deferred (fixtures README).
 
-## Deferred: SC-006 (only loopback connections with a local model)
+## Not part of T012 for now: SC-006 (only loopback connections with a local model)
 
 The `strace` check needs a working local model, and none was usable on the owner's hardware. Through the plan, text goes to OpenAI after her confirmation by design (F005 FR-010), so SC-006 doesn't apply to that route. It is deferred to when local models are tuned (F004 or later); T007 and T009 cover the classifier, the connect guard and no request before confirmation.
 

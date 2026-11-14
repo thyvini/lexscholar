@@ -41,8 +41,10 @@ LexScholar__DataDirectory=/tmp/lexscholar-f005 dotnet run --project src/LexSchol
 | 5 | Restart LexScholar | Still signed in |
 | 6 | Sign out; list the data directory; search it and the logs for the account's email and for token text | No `chatgpt-signin.json`; no email or token anywhere (SC-002, SC-006) |
 | 7 | Sign in again, then disconnect LexScholar in ChatGPT's settings, then ask for a summary | "Signed out" with a sign-in button; nothing technical |
-| 8 | Set LexScholar's weekly limit very low in ChatGPT's usage settings, summarize a long document | "Usage limit reached" with **Manage usage** opening the usage settings |
+| 8 | (Optional, see below) Set LexScholar's weekly limit very low in ChatGPT's usage settings, summarize a long document | "Usage limit reached" with **Manage usage** opening the usage settings |
 | 9 | Repeat 1–4 in Chromium | Same |
 | 10 | Summarize a 40-page document | Within F003's SC-007 time on her plan |
 
 "No plan access" (free tier) is verified with the fake service only: no free account is available.
+
+Step 8 (usage limit) is optional on the real account (owner decision, 2026-11-14): lowering the limit restricts the owner's own plan, and the message and **Manage usage** are verified with the fake service (T008, T011).
