@@ -72,7 +72,6 @@ type SignInSession() =
                 pending <- None
                 Some attempt
             | _ -> None)
-    member _.Clear() = lock sync (fun () -> pending <- None)
 
 /// What came back to the callback address.
 type CallbackQuery =
@@ -109,8 +108,9 @@ let startSignIn (vault: Vault) (session: SignInSession) (clock: unit -> DateTime
 /// succeed, so any other path leaves her signed out.
 let completeSignIn (vault: Vault) (session: SignInSession) (auth: AuthClient) (clock: unit -> DateTimeOffset) (query: CallbackQuery) (cancellation: CancellationToken) : Task<SignInOutcome> = task {
     match query.Error, query.State with
-    | Some error, _ ->
-        session.Clear()
+    | Some error, state ->
+        // Only the attempt this error belongs to ends; a stale or missing state leaves the current one alone.
+        state |> Option.iter (fun state -> session.Take(state, clock ()) |> ignore)
         return (if error = "access_denied" then Cancelled else Failed)
     | None, None -> return Cancelled
     | None, Some state ->
@@ -142,7 +142,16 @@ let completeSignIn (vault: Vault) (session: SignInSession) (auth: AuthClient) (c
                                 let! _ = auth.Revoke credentials cancellation
                                 return NoPlanAccess
                             else
-                                do! vault.Locked(fun store -> task { store.Save credentials })
-                                return SignedIn
+                                // A sign-in that finished first wins: a second one never replaces it.
+                                let! saved =
+                                    vault.Locked(fun store -> task {
+                                        if store.Read().IsSome then return false
+                                        else
+                                            store.Save credentials
+                                            return true })
+                                if saved then return SignedIn
+                                else
+                                    let! _ = auth.Revoke credentials cancellation
+                                    return Cancelled
                 with _ -> return Failed
             | _ -> return Failed }

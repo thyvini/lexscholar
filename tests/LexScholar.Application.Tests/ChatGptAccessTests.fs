@@ -142,3 +142,24 @@ let ``the vault runs one change at a time`` () = task {
     do! first
     do! other
     Assert.True(second) }
+
+[<Fact; Trait("Task", "T004")>]
+let ``an error without the current state leaves the pending attempt alone`` () =
+    let rig = Rig()
+    let url = rig.Start()
+    Assert.Equal(Cancelled, rig.Complete { Code = None; State = None; Error = Some "access_denied"; ClientId = None })
+    Assert.Equal(Cancelled, rig.Complete { Code = None; State = Some "stale"; Error = Some "access_denied"; ClientId = None })
+    Assert.Equal(SignedIn, rig.Complete(callback url))
+
+[<Fact; Trait("Task", "T004")>]
+let ``a sign-in that finishes second does not replace the first and is revoked`` () =
+    let rig = Rig()
+    let url = rig.Start()
+    // Another sign-in saved its record while this one was in flight.
+    let other : Credentials =
+        { ClientId = "client-other"; HostId = "urn:uuid:1"; Subject = "other"; Account = "other@example.test"; AccessToken = "a"; RefreshToken = "r"
+          IdToken = "i"; ExpiresAt = now; Scopes = [ ChatGptSignIn.planScope ]; SignedInAt = now; ConfirmedAt = None }
+    (rig.Vault.Locked(fun store -> task { store.Save other })).GetAwaiter().GetResult()
+    Assert.Equal(Cancelled, rig.Complete(callback url))
+    Assert.Equal(1, rig.Revocations)
+    Assert.Equal("other", rig.Record.Value.Subject)

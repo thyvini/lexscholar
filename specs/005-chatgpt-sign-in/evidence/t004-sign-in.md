@@ -17,3 +17,8 @@
 - The lock lives in Application only (`Vault`); every caller of `ChatGptCredentials.read/save/delete` goes through it, so the T002 follow-up (a read deleting the temp file of a save in progress) is satisfied without an Infrastructure change.
 - Sensitivity check for the vault: removing the wait on the lock made `the vault runs one change at a time` fail; reverted.
 - Real `HttpClient`: `OpenAiAuth.createHandler` (no redirects) unless a handler is injected through DI (tests).
+
+## Review follow-up (Greptile)
+
+- P1 (older sign-in overwrites a newer one): the save now checks under the lock that no record exists; a second finisher is revoked and reports `cancelled`. Test: `a sign-in that finishes second does not replace the first and is revoked`.
+- P2 (error callback cancels an unrelated attempt), verdict must fix: an error ends only the attempt whose `state` it carries. Test: `an error without the current state leaves the pending attempt alone`.
