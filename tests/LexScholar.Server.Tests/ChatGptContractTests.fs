@@ -5,7 +5,24 @@ open System
 open System.Net
 open System.Net.Http
 open System.Text.Json
+open Microsoft.AspNetCore.Hosting.Server
+open Microsoft.AspNetCore.Hosting.Server.Features
+open Microsoft.Extensions.DependencyInjection
+open Microsoft.Extensions.Logging
+open LexScholar.Server
 open Xunit
+
+/// Collects every formatted log line.
+type private CapturingProvider() =
+    let lines = System.Collections.Concurrent.ConcurrentQueue<string>()
+    member _.Lines = lines |> Seq.toList
+    interface ILoggerProvider with
+        member _.CreateLogger(_category) =
+            { new ILogger with
+                member _.BeginScope(_state) = null
+                member _.IsEnabled(_level) = true
+                member _.Log(_level, _eventId, state, error, formatter) = lines.Enqueue(formatter.Invoke(state, error)) }
+        member _.Dispose() = ()
 
 let private token (client: HttpClient) =
     use response = client.GetAsync("/api/antiforgery").GetAwaiter().GetResult()
@@ -46,19 +63,12 @@ let ``destinations reports the configured service from the settings`` () =
     Assert.True(configured.GetProperty("local").GetBoolean())
 
 [<Theory; Trait("Task", "T001")>]
-[<InlineData("/api/chatgpt/sign-in")>]
 [<InlineData("/api/chatgpt/sign-out")>]
 [<InlineData("/api/chatgpt/welcome/dismiss")>]
 let ``unsafe chatgpt routes need the antiforgery token and are not implemented yet`` (path: string) =
     use harness = TestHarness.Start()
     Assert.Equal(HttpStatusCode.Forbidden, post harness.Client path None)
     Assert.Equal(HttpStatusCode.NotImplemented, post harness.Client path (Some (token harness.Client)))
-
-[<Fact; Trait("Task", "T001")>]
-let ``the callback route exists`` () =
-    use harness = TestHarness.Start()
-    use response = harness.Client.GetAsync("/auth/callback?error=access_denied").GetAwaiter().GetResult()
-    Assert.Equal(HttpStatusCode.NotImplemented, response.StatusCode)
 
 [<Fact; Trait("Task", "T001")>]
 let ``a client sending Host 127.0.0.1 with the port is accepted`` () =
@@ -82,3 +92,172 @@ let ``the fake OpenAI service answers token, discovery, keys, models and a Respo
     let events = stream.Content.ReadAsStringAsync().GetAwaiter().GetResult()
     Assert.Contains("response.completed", events)
     Assert.Equal(5, fake.Requests.Length)
+
+
+// ---- T004: sign in ----
+
+let private workspaceRoot (harness: TestHarness) = harness.Root
+
+/// A client that does not follow redirects, for the callback.
+let private plainClient (harness: TestHarness) = new HttpClient(new HttpClientHandler(AllowAutoRedirect = false), true, BaseAddress = harness.Client.BaseAddress)
+
+let private startSignIn (harness: TestHarness) =
+    use message = new HttpRequestMessage(HttpMethod.Post, "/api/chatgpt/sign-in")
+    message.Headers.TryAddWithoutValidation("Origin", harness.Client.BaseAddress.GetLeftPart(UriPartial.Authority)) |> ignore
+    message.Headers.TryAddWithoutValidation("X-CSRF-TOKEN", token harness.Client) |> ignore
+    message.Content <- new StringContent("{}", Text.Encoding.UTF8, "application/json")
+    use response = harness.Client.Send message
+    let body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+    response.StatusCode, body
+
+let private urlOf (body: string) =
+    use json = JsonDocument.Parse body
+    Uri(json.RootElement.GetProperty("authorizationUrl").GetString())
+
+let private query (url: Uri) =
+    url.Query.TrimStart('?').Split('&') |> Array.map (fun p -> let parts = p.Split('=', 2) in parts[0], Uri.UnescapeDataString parts[1]) |> dict
+
+let private callbackAt (harness: TestHarness) (path: string) =
+    use client = plainClient harness
+    use response = client.GetAsync(path).GetAwaiter().GetResult()
+    response.StatusCode, (if isNull response.Headers.Location then "" else response.Headers.Location.ToString())
+
+/// Starts a sign-in and returns the callback path the browser would reach with these extras.
+let private callbackPath (url: Uri) (extra: string) =
+    let state = Uri.EscapeDataString((query url).["state"])
+    $"/auth/callback?state={state}&code=code-1{extra}"
+
+let private signedIn (harness: TestHarness) =
+    use json = destinations harness.Client
+    json.RootElement.GetProperty("chatgpt").GetProperty("signedIn").GetBoolean()
+
+let private recordPath (harness: TestHarness) = IO.Path.Combine(workspaceRoot harness, "chatgpt-signin.json")
+
+let private signInThrough (harness: TestHarness) (fake: FakeOpenAi) (extra: string) =
+    let status, body = startSignIn harness
+    Assert.Equal(HttpStatusCode.OK, status)
+    let url = urlOf body
+    fake.Nonce <- (query url)["nonce"]
+    callbackAt harness (callbackPath url (if extra = "" then $"&client_id={fake.ClientId}" else extra))
+
+[<Fact; Trait("Task", "T004")>]
+let ``start returns the authorization address with every parameter and the host's own callback`` () =
+    use harness = TestHarness.Start()
+    let status, body = startSignIn harness
+    Assert.Equal(HttpStatusCode.OK, status)
+    let url = urlOf body
+    let p = query url
+    Assert.Equal("auth.openai.com", url.Host)
+    Assert.Equal("dynamic_agent_client", p["client_id"])
+    Assert.Equal($"http://127.0.0.1:{harness.Client.BaseAddress.Port}/auth/callback", p["redirect_uri"])
+    Assert.Equal("S256", p["code_challenge_method"])
+    for name in [ "state"; "nonce"; "code_challenge"; "scope"; "resource"; "ext_agent_host_id" ] do
+        Assert.False(String.IsNullOrEmpty p[name], name)
+    Assert.Contains("chatgpt.tokens.use.direct", p["scope"])
+    Assert.False(IO.File.Exists(recordPath harness))
+
+[<Fact; Trait("Task", "T004")>]
+let ``a completed sign-in shows the account and survives a host restart`` () =
+    use workspace = TemporaryWorkspace.Create()
+    let fake = new FakeOpenAi()
+    do
+        use harness = TestHarness.Start(summaryHandler = fake, workspace = workspace)
+        let status, location = signInThrough harness fake ""
+        Assert.Equal(HttpStatusCode.Redirect, status)
+        Assert.Equal("/index.html?chatgpt=signed_in", location)
+        use json = destinations harness.Client
+        let chatgpt = json.RootElement.GetProperty("chatgpt")
+        Assert.True(chatgpt.GetProperty("signedIn").GetBoolean())
+        Assert.Equal("researcher@example.test", chatgpt.GetProperty("account").GetString())
+        Assert.False(chatgpt.GetProperty("confirmed").GetBoolean())
+        Assert.True(json.RootElement.GetProperty("welcomePending").GetBoolean())
+        Assert.True(IO.File.Exists(recordPath harness))
+        let exchange = fake.RequestsTo("auth.openai.com", "/api/accounts/oauth/token") |> List.exactlyOne
+        Assert.Contains("client_id=client-test", exchange.Body)
+    use again = TestHarness.Start(summaryHandler = fake, workspace = workspace)
+    Assert.True(signedIn again)
+
+[<Fact; Trait("Task", "T004")>]
+let ``starting while signed in answers 409 already_signed_in`` () =
+    let fake = new FakeOpenAi()
+    use harness = TestHarness.Start(summaryHandler = fake)
+    signInThrough harness fake "" |> ignore
+    let status, body = startSignIn harness
+    Assert.Equal(HttpStatusCode.Conflict, status)
+    Assert.Contains("already_signed_in", body)
+
+[<Fact; Trait("Task", "T004")>]
+let ``cancelled outcomes leave no record and exchange nothing for a bad state`` () =
+    let fake = new FakeOpenAi()
+    use harness = TestHarness.Start(summaryHandler = fake)
+    let expectCancelled (path: string) =
+        let status, location = callbackAt harness path
+        Assert.Equal(HttpStatusCode.Redirect, status)
+        Assert.Equal("/index.html?chatgpt=cancelled", location)
+        Assert.False(IO.File.Exists(recordPath harness))
+    // no pending attempt
+    expectCancelled "/auth/callback?state=x&code=c"
+    // she declined
+    let _, body = startSignIn harness
+    expectCancelled "/auth/callback?error=access_denied"
+    // unknown state
+    let url = urlOf body
+    expectCancelled "/auth/callback?state=unknown&code=c"
+    Assert.Empty(fake.RequestsTo("auth.openai.com", "/api/accounts/oauth/token"))
+    // the declined attempt is gone; a reused state after success is cancelled too
+    let _, body2 = startSignIn harness
+    let url2 = urlOf body2
+    fake.Nonce <- (query url2)["nonce"]
+    let ok = callbackPath url2 $"&client_id={fake.ClientId}"
+    Assert.Equal("/index.html?chatgpt=signed_in", snd (callbackAt harness ok))
+    Assert.Equal("/index.html?chatgpt=cancelled", snd (callbackAt harness ok))
+    ignore url
+
+[<Fact; Trait("Task", "T004")>]
+let ``a grant without plan usage revokes the tokens and stores nothing`` () =
+    let fake = new FakeOpenAi(Scope = "openid profile email offline_access")
+    use harness = TestHarness.Start(summaryHandler = fake)
+    let _, location = signInThrough harness fake ""
+    Assert.Equal("/index.html?chatgpt=no_plan_access", location)
+    Assert.False(IO.File.Exists(recordPath harness))
+    Assert.Single(fake.RequestsTo("auth.openai.com", "/api/accounts/oauth/revoke")) |> ignore
+    Assert.False(signedIn harness)
+
+[<Fact; Trait("Task", "T004")>]
+let ``failed outcomes leave no record`` () =
+    let cases : (FakeOpenAi * string) list =
+        [ new FakeOpenAi(TokenFailure = Some(400, "{\"error\":\"invalid_grant\"}")), ""
+          new FakeOpenAi(), "&client_id=other-client"      // ID token audience is not the issued client id
+          new FakeOpenAi(), "&code=" ]
+    for fake, extra in cases do
+        use harness = TestHarness.Start(summaryHandler = fake)
+        let _, location = signInThrough harness fake (if extra = "" then $"&client_id={fake.ClientId}" else extra)
+        Assert.Equal("/index.html?chatgpt=failed", location)
+        Assert.False(IO.File.Exists(recordPath harness))
+    // the issued client id is missing from the callback
+    let fake = new FakeOpenAi()
+    use harness = TestHarness.Start(summaryHandler = fake)
+    let _, location = signInThrough harness fake "&other=1"
+    Assert.Equal("/index.html?chatgpt=failed", location)
+    Assert.False(IO.File.Exists(recordPath harness))
+
+[<Fact; Trait("Task", "T004")>]
+let ``the callback query string is never logged`` () =
+    use workspace = TemporaryWorkspace.Create()
+    let provider = new CapturingProvider()
+    let builder = HostSetup.builder workspace.Root []
+    builder.Logging.AddProvider provider |> ignore
+    let fake = new FakeOpenAi()
+    builder.Services.AddSingleton<HttpMessageHandler>(fake) |> ignore
+    match Program.create builder false with
+    | Error error -> Assert.Fail $"{error}"
+    | Ok app ->
+        use app = app
+        app.StartAsync().GetAwaiter().GetResult()
+        let address = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>().Addresses |> Seq.exactlyOne
+        use client = new HttpClient(new HttpClientHandler(AllowAutoRedirect = false), true, BaseAddress = Uri address)
+        use _ = client.GetAsync("/auth/callback?state=SECRETSTATE&code=SECRETCODE").GetAwaiter().GetResult()
+        app.StopAsync().GetAwaiter().GetResult()
+        for line in provider.Lines do
+            Assert.DoesNotContain("SECRETSTATE", line)
+            Assert.DoesNotContain("SECRETCODE", line)

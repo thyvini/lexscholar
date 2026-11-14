@@ -47,7 +47,7 @@ let private parameters (url: Uri) =
     url.Query.TrimStart('?').Split('&') |> Array.map (fun p -> let parts = p.Split('=', 2) in parts[0], Uri.UnescapeDataString parts[1]) |> dict
 
 let private callback (url: Uri) =
-    { Code = Some "code-1"; State = Some (parameters url)["state"]; Error = None; ClientId = Some "client-issued" }
+    { Code = Some "code-1"; State = Some((parameters url).["state"]); Error = None; ClientId = Some "client-issued" }
 
 [<Fact; Trait("Task", "T004")>]
 let ``a completed sign-in stores a record with every field of the data model`` () =
@@ -76,9 +76,9 @@ let ``starting while signed in is refused and each start uses fresh secrets`` ()
     let rig = Rig()
     let first = parameters (rig.Start())
     let second = parameters (rig.Start())
-    Assert.NotEqual(first["state"], second["state"])
-    Assert.NotEqual(first["nonce"], second["nonce"])
-    Assert.NotEqual(first["code_challenge"], second["code_challenge"])
+    Assert.NotEqual<string>(first["state"], second["state"])
+    Assert.NotEqual<string>(first["nonce"], second["nonce"])
+    Assert.NotEqual<string>(first["code_challenge"], second["code_challenge"])
     rig.Complete { Code = Some "c"; State = Some second["state"]; Error = None; ClientId = Some "client-issued" } |> ignore
     Assert.True((startSignIn rig.Vault rig.Session (fun () -> now) redirect).GetAwaiter().GetResult() = Error ())
 
