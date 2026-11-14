@@ -159,8 +159,27 @@ let completeSignIn (vault: Vault) (session: SignInSession) (auth: AuthClient) (c
                     match! auth.Exchange clientId code attempt.Verifier attempt.RedirectUri cancellation with
                     | Error () -> return failedUnlessSuperseded attempt
                     | Ok grant ->
-                        match! auth.VerifyIdToken clientId attempt.Nonce grant.IdToken cancellation with
-                        | Error () -> return failedUnlessSuperseded attempt
+                        // The tokens exist from here on: any path that does not save them revokes them.
+                        let revokeIssued () =
+                            task {
+                                try
+                                    let issued =
+                                        { ClientId = clientId; HostId = attempt.HostId; Subject = ""; Account = ""
+                                          AccessToken = grant.AccessToken; RefreshToken = grant.RefreshToken; IdToken = grant.IdToken
+                                          ExpiresAt = grant.ExpiresAt; Scopes = grant.Scopes; SignedInAt = clock (); ConfirmedAt = None }
+                                    let! _ = auth.Revoke issued cleanup
+                                    ()
+                                with _ -> ()
+                            }
+                        let! verified =
+                            task {
+                                try return! auth.VerifyIdToken clientId attempt.Nonce grant.IdToken cancellation
+                                with _ -> return Error()
+                            }
+                        match verified with
+                        | Error () ->
+                            do! revokeIssued ()
+                            return failedUnlessSuperseded attempt
                         | Ok identity ->
                             let credentials =
                                 { ClientId = clientId
@@ -194,18 +213,19 @@ let completeSignIn (vault: Vault) (session: SignInSession) (auth: AuthClient) (c
             | _ -> return Failed }
 
 /// Signs out. Under the vault lock: supersedes any pending or mid-exchange attempt (cancelling
-/// its calls), asks the service to revoke the stored sign-in (best effort), and always deletes
-/// the record. `revoked` is whether the service confirmed. Lock order is vault, then session.
+/// its calls), deletes the record, then asks the service to revoke the stored sign-in (best effort). `revoked` is whether the service confirmed. Lock order is vault, then session.
 let signOut (vault: Vault) (session: SignInSession) (auth: AuthClient) (cancellation: CancellationToken) : Task<bool> =
     vault.Locked(fun store -> task {
         session.Clear()
+        // The local removal is the guarantee: delete first, then revoke from memory, best effort.
+        let credentials = store.Read()
+        store.Delete()
         let! revoked =
             task {
-                match store.Read() with
+                match credentials with
                 | None -> return false
                 | Some credentials ->
                     try return! auth.Revoke credentials cancellation
                     with _ -> return false
             }
-        store.Delete()
         return revoked })
