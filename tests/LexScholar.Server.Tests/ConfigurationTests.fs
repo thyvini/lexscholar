@@ -153,3 +153,86 @@ let ``omitted data directory resolves to an absolute per-user path`` () =
     | Ok result ->
         Assert.True(Path.IsPathFullyQualified(result.DataDirectory))
         Assert.Equal("lexscholar", Path.GetFileName(result.DataDirectory))
+
+// F003 T001: optional LexScholar:Summary section (research §1).
+let private summaryKey name = "LexScholar:Summary:" + name
+
+let private loadSummary overrides =
+    use workspace = TemporaryWorkspace.Create()
+    let builder = HostSetup.builder workspace.Root overrides
+    Configuration.load builder.Configuration
+
+let private validSummary = [ summaryKey "Endpoint", "http://127.0.0.1:11434/v1"; summaryKey "Model", "qwen3:8b" ]
+
+[<Fact; Trait("Task", "T001")>]
+let ``summary is not configured without an endpoint`` () =
+    match loadSummary [] with
+    | Ok configuration -> Assert.True(configuration.Summary.IsNone)
+    | Error error -> Assert.Fail($"Rejected: {error}")
+    // A model or key alone does not enable the feature.
+    match loadSummary [ summaryKey "Model", "m"; summaryKey "ApiKey", "k" ] with
+    | Ok configuration -> Assert.True(configuration.Summary.IsNone)
+    | Error error -> Assert.Fail($"Rejected: {error}")
+
+[<Fact; Trait("Task", "T001")>]
+let ``summary defaults apply when only endpoint and model are set`` () =
+    match loadSummary validSummary with
+    | Ok { Summary = Some summary } ->
+        Assert.Equal(Uri("http://127.0.0.1:11434/v1"), summary.Endpoint)
+        Assert.Equal("qwen3:8b", summary.Model)
+        Assert.Equal(12_000, summary.MaxChunkCharacters)
+        Assert.True(summary.ApiKey.IsNone && summary.Temperature.IsNone && summary.MaxOutputTokens.IsNone)
+    | other -> Assert.Fail($"Expected a configured summary, got {other}")
+
+[<Fact; Trait("Task", "T001")>]
+let ``summary accepts every optional setting`` () =
+    let overrides =
+        [ summaryKey "Endpoint", "https://api.example.com/v1"
+          summaryKey "Model", "m"
+          summaryKey "ApiKey", "secret-key"
+          summaryKey "MaxChunkCharacters", "4000"
+          summaryKey "Temperature", "0.2"
+          summaryKey "MaxOutputTokens", "1024" ]
+    match loadSummary overrides with
+    | Ok { Summary = Some summary } ->
+        Assert.Equal(Some "secret-key", summary.ApiKey)
+        Assert.Equal(4000, summary.MaxChunkCharacters)
+        Assert.Equal(Some 0.2, summary.Temperature)
+        Assert.Equal(Some 1024, summary.MaxOutputTokens)
+    | other -> Assert.Fail($"Expected a configured summary, got {other}")
+
+let private invalidSummary: (string * string) list list =
+    let set name value = [ summaryKey name, value ]
+    [ set "Endpoint" "relative/path" |> List.append [ summaryKey "Model", "m" ]
+      set "Endpoint" "ftp://host/v1" |> List.append [ summaryKey "Model", "m" ]
+      set "Endpoint" "http://user:pass-word@host/v1" |> List.append [ summaryKey "Model", "m" ]
+      set "Endpoint" "http://host/v1?key=secret-key" |> List.append [ summaryKey "Model", "m" ]
+      set "Endpoint" "http://host/v1#fragment" |> List.append [ summaryKey "Model", "m" ]
+      [ summaryKey "Endpoint", "http://127.0.0.1:1/v1" ]
+      [ summaryKey "Endpoint", "http://127.0.0.1:1/v1"; summaryKey "Model", "  " ]
+      validSummary @ set "MaxChunkCharacters" "3999"
+      validSummary @ set "MaxChunkCharacters" "abc"
+      validSummary @ set "Temperature" "-0.1"
+      validSummary @ set "Temperature" "2.1"
+      validSummary @ set "Temperature" "NaN"
+      validSummary @ set "Temperature" "warm"
+      validSummary @ set "MaxOutputTokens" "0"
+      validSummary @ set "MaxOutputTokens" "1.5"
+      validSummary @ set "MaxOutputTokens" "many" ]
+
+let invalidSummaryCases () = invalidSummary |> Seq.map (fun overrides -> [| box overrides |])
+
+[<Theory; Trait("Task", "T001")>]
+[<MemberData(nameof invalidSummaryCases)>]
+let ``each invalid summary setting fails startup without echoing values`` (overrides: (string * string) list) =
+    let apiKey = "secret-key"
+    match loadSummary (overrides @ [ summaryKey "ApiKey", apiKey ]) with
+    | Error (InvalidSummarySetting (key, reason) as error) ->
+        Assert.StartsWith("LexScholar:Summary:", key)
+        let text = Program.describeStartupError (Program.ConfigurationFailure error)
+        Assert.Contains(key, text)
+        Assert.False(String.IsNullOrWhiteSpace(reason))
+        Assert.DoesNotContain(apiKey, text)
+        for _, value in overrides do
+            if value.Contains("pass-word") then Assert.DoesNotContain("pass-word", text)
+    | other -> Assert.Fail($"Expected InvalidSummarySetting, got {other}")

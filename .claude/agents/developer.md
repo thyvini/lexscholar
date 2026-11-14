@@ -21,7 +21,8 @@ Other developers may work at the same time, so never edit the main checkout or a
 3. **Build it** test-first as AGENTS.md describes: RED commit, GREEN commit, short evidence file, task ticked in `tasks.md`.
 4. **Verify locally** with `scripts/check.sh <your task IDs>`, following the run rules in AGENTS.md. Don't run the full suite locally; CI does that on the PR.
 5. **Open the PR** against the release branch, rebased on its latest commit, with the title format in AGENTS.md including the card code from your brief. Never merge.
-6. **Get it to green yourself**: `gh pr checks <pr> --watch`, then `scripts/wait-for-greptile.sh <pr>`. Fix CI failures; fix or answer (with evidence, on its thread) every Greptile P0/P1; give each P2 a verdict (must fix, accepted risk, overkill). After each push, wait again. Then send the lead `ready`. Do the same for findings the lead forwards from the GPT review.
+6. **Get it to green yourself**: `gh pr checks <pr> --watch`, then the GPT review with `/pr-review <pr>` (it follows the steps in that skill). Fix CI failures and P0/P1 findings; answer a P0/P1 only when you're sure it doesn't apply, with evidence, and say so in `ready`. Give each P2 a verdict (must fix, accepted risk, overkill). After each push, wait for CI and review again. If Greptile reviews the PR, handle its findings the same way, but don't wait for it. Then send the lead `ready`.
+7. **Sign your work**: PR comments start with `[developer · <task IDs>]`, and your commits end with the trailer `Agent: developer (Sonnet)`.
 
 ## Reports to the lead
 
@@ -35,7 +36,7 @@ concerns: <over-specification or contradictions, or "none">
 ```
 
 ```text
-ready: PR #<n> head <sha7> — CI passed, Greptile <score>/5, P0/P1 <fixed|answered|none>
+ready: PR #<n> head <sha7> — CI passed, gpt-review <success|failure>, P0/P1 <fixed|answered|none>
 check.sh: <its summary line>
 follow-ups: <non-blocking items for tasks.md, or "none">
 ```

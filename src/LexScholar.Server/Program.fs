@@ -14,6 +14,7 @@ let describeStartupError = function
     | ConfigurationFailure (InvalidLimit (name, value)) -> $"Invalid {name} value '{value}': enter a positive whole number within the supported range."
     | ConfigurationFailure (NonPositiveLimit name) -> $"Invalid {name}: the limit must be greater than zero."
     | ConfigurationFailure (InvalidDataDirectory reason) -> $"Invalid {Configuration.DataDirectoryKey}: {reason}"
+    | ConfigurationFailure (InvalidSummarySetting (key, reason)) -> $"Invalid {key}: {reason}"
     | LockFailure (DirectoryAlreadyInUse directory) -> $"Data directory '{directory}' is already in use by another instance. Connect to that instance or choose a different directory."
     | InvalidPort value -> $"Invalid LexScholar:Port '{value}': use an integer from 0 to 65535."
 
@@ -37,6 +38,9 @@ let private createHost (builder: WebApplicationBuilder) (serveClient: bool) port
                 // it is built but never started. ApplicationStopped also releases it
                 // after a normal stop; SafeFileHandle disposal is idempotent.
                 builder.Services.AddSingleton<DataDirectoryLease>(fun _ -> lease) |> ignore
+                // The request-start line carries the query string, which on /auth/callback holds
+                // the authorization code and state (F005). Warnings and errors still log.
+                builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.Warning) |> ignore
                 let app = builder.Build()
                 try
                     app.Services.GetRequiredService<DataDirectoryLease>() |> ignore

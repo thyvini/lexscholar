@@ -44,11 +44,11 @@ Group the open tasks into slices of about one PR, following the dependencies in 
 
    Set the card to started.
 2. **Plan**: approve it if it stays within the slice. If it flags over-specification, a contradiction, or a needed change to spec.md, plan.md, research.md, data-model.md or a contract, ask the user and keep any other developer moving. Never approve constitution edits.
-3. **Ready**: the developer opens the PR, waits for CI and Greptile itself, fixes CI failures and answers every Greptile P0/P1, then reports `ready`. Check the gate fields yourself (CI conclusion and Greptile on the reported head commit); don't re-read the diff.
-4. **Extra review, risky slices only**: when the slice touches storage, migrations, startup, host security or concurrency, or Greptile's confidence is below 4/5, or the developer answered a Greptile P0/P1 instead of fixing it, run `scripts/gpt-review.sh <pr> --post` (GPT through Codex CLI, read-only). Send any P0/P1 it reports to the developer; after fixes, wait for CI and Greptile on the new head and run it again. If Codex isn't available, ask the user instead of skipping the review.
+3. **Ready**: the developer opens the PR, waits for CI, runs the GPT review (`/pr-review <pr>`), fixes CI failures and P0/P1 findings, then reports `ready`. Check the gate fields yourself: the conclusions of `build-and-test` and `gpt-review` on the reported head commit (`gh pr view <pr> --json headRefOid,statusCheckRollup`); don't re-read the diff or the review.
+4. **Answered findings**: if the developer answered a P0/P1 instead of fixing it, `gpt-review` stays failed. Send the user the finding and the answer in two lines and wait for their decision; keep any other developer moving. If Codex or the reviewer app isn't available, ask the user instead of skipping the review.
 5. **Merge gate** (AGENTS.md), then
    `gh pr merge <pr> --squash --match-head-commit <sha> --subject "<PR title> (#<pr>)"`
-   Keep the branch (don't pass `--delete-branch`).
+   Keep the branch (don't pass `--delete-branch`). Comments you post start with `[lead]`.
 6. **After the merge**: set the card to done, shut down the developer, remove its worktree, tell any other developer to rebase if it shares files, and send the user one status line. Record review follow-ups in `tasks.md` with the next PR that touches the task.
 
 **Always stop and ask the user** before: changing spec.md or the constitution, force-pushing, rewriting the release branch or `main`, merging anything into `main`, or deleting branches. Also stop if the same failure happens twice for reasons nobody can explain.

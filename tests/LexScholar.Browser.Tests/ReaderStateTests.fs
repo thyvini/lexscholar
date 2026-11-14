@@ -232,3 +232,27 @@ let ``a content check that returns after the removal does not reopen the documen
     let reader, _ = step (ContentChecked (fst (check pending), Ok ())) reader
     assertState None reader.Open
     assertState None reader.Opening
+
+[<Fact; Trait("Task", "T005")>]
+let ``showing a cited page records it and counts the navigation`` () =
+    let model, effect = step (ShowPage 3) (showing alpha paper)
+    assertState None effect
+    assertState (Some 3) model.Page
+    assertState 1 model.Navigation
+
+[<Fact; Trait("Task", "T005")>]
+let ``showing the same page again counts a new navigation`` () =
+    let model = showing alpha paper |> step (ShowPage 3) |> fst |> step (ShowPage 3) |> fst
+    assertState (Some 3) model.Page
+    assertState 2 model.Navigation
+
+[<Fact; Trait("Task", "T005")>]
+let ``a page request without an open document changes nothing`` () =
+    let model = inProject alpha
+    assertState (model, None) (step (ShowPage 2) model)
+
+[<Fact; Trait("Task", "T005")>]
+let ``opening or closing a document forgets the cited page`` () =
+    let cited = showing alpha paper |> step (ShowPage 3) |> fst
+    assertState None (step (Open notes) cited |> fst).Page
+    assertState None (step Close cited |> fst).Page

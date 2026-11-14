@@ -10,6 +10,7 @@ open Bolero.Html
 open Elmish
 open Microsoft.AspNetCore.Components
 open Microsoft.AspNetCore.Components.Forms
+open Microsoft.AspNetCore.Components.WebAssembly.Http
 open LexScholar.Domain
 open LexScholar.Client.Projects
 
@@ -162,13 +163,116 @@ module Api =
             | Library.InvalidRole -> Reader.InvalidRole
             | _ -> Reader.RequestFailed) }
 
-/// The whole page: projects, shared library and native reader.
-type State = { Projects: Model; Library: Library.Model; Reader: Reader.Model }
+    /// Requests a summary and reads the NDJSON stream until its one `summary` or
+    /// `failed` event. Failures never show response details.
+    let summarize (http: HttpClient) (projectId: Guid) (documentId: Guid) (destination: Summary.Destination option) (confirmed: Summary.Confirmed option) (onProgress: Summary.Progress -> unit) (cancellation: Threading.CancellationToken) = async {
+        try
+            use! tokenResponse = http.GetAsync("api/antiforgery", cancellation) |> Async.AwaitTask
+            if not tokenResponse.IsSuccessStatusCode then return Error Summary.RequestFailed
+            else
+                let! tokenBody = tokenResponse.Content.ReadAsStringAsync() |> Async.AwaitTask
+                use tokenJson = JsonDocument.Parse(tokenBody)
+                use request = new HttpRequestMessage(HttpMethod.Post, $"api/projects/{projectId:D}/documents/{documentId:D}/summary")
+                request.Headers.Add("X-CSRF-TOKEN", tokenJson.RootElement.GetProperty("requestToken").GetString())
+                request.Content <- new StringContent(SummaryStream.requestBody destination confirmed, Encoding.UTF8, "application/json")
+                request.SetBrowserResponseStreamingEnabled(true) |> ignore
+                use! response = http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellation) |> Async.AwaitTask
+                if not response.IsSuccessStatusCode then
+                    let! body = response.Content.ReadAsStringAsync() |> Async.AwaitTask
+                    return Error (SummaryStream.failureOfBody body)
+                else
+                    use! stream = response.Content.ReadAsStreamAsync() |> Async.AwaitTask
+                    use reader = new IO.StreamReader(stream)
+                    let rec next () = async {
+                        match! reader.ReadLineAsync(cancellation).AsTask() |> Async.AwaitTask with
+                        | null -> return Error Summary.RequestFailed
+                        | line when String.IsNullOrWhiteSpace line -> return! next ()
+                        | line ->
+                            use json = JsonDocument.Parse(line)
+                            match SummaryStream.outcome json.RootElement with
+                            | Some outcome -> return outcome
+                            | None ->
+                                SummaryStream.progress json.RootElement |> Option.iter onProgress
+                                return! next () }
+                    return! next ()
+        with _ -> return Error Summary.RequestFailed }
+
+module ChatGptApi =
+    let private json (body: string) = JsonDocument.Parse(body)
+
+    let destinations (http: HttpClient) = async {
+        try
+            use! response = http.GetAsync("api/summary/destinations") |> Async.AwaitTask
+            if not response.IsSuccessStatusCode then return Error ()
+            else
+                let! body = response.Content.ReadAsStringAsync() |> Async.AwaitTask
+                use document = json body
+                let root = document.RootElement
+                let chatgpt = root.GetProperty("chatgpt")
+                let account =
+                    if chatgpt.GetProperty("signedIn").GetBoolean() then
+                        let mutable name = Unchecked.defaultof<JsonElement>
+                        let mutable confirmed = Unchecked.defaultof<JsonElement>
+                        Some { ChatGpt.Name = (if chatgpt.TryGetProperty("account", &name) then name.GetString() else "your ChatGPT account")
+                               ChatGpt.Confirmed = chatgpt.TryGetProperty("confirmed", &confirmed) && confirmed.GetBoolean() }
+                    else None
+                let configured =
+                    match root.TryGetProperty "configured" with
+                    | true, value when value.ValueKind = JsonValueKind.Object ->
+                        Some { ChatGpt.Host = value.GetProperty("serviceHost").GetString()
+                               ChatGpt.Model = value.GetProperty("model").GetString()
+                               ChatGpt.Local = value.GetProperty("local").GetBoolean() }
+                    | _ -> None
+                return Ok { ChatGpt.Account = account; ChatGpt.Configured = configured; ChatGpt.WelcomePending = root.GetProperty("welcomePending").GetBoolean() }
+        with _ -> return Error () }
+
+    /// Unsafe request with a fresh antiforgery token; the status and body, or None when it could not be sent.
+    let private post (http: HttpClient) (path: string) = async {
+        try
+            use! tokenResponse = http.GetAsync("api/antiforgery") |> Async.AwaitTask
+            if not tokenResponse.IsSuccessStatusCode then return None
+            else
+                let! tokenBody = tokenResponse.Content.ReadAsStringAsync() |> Async.AwaitTask
+                use tokenJson = json tokenBody
+                use request = new HttpRequestMessage(HttpMethod.Post, path)
+                request.Headers.Add("X-CSRF-TOKEN", tokenJson.RootElement.GetProperty("requestToken").GetString())
+                use! response = http.SendAsync(request) |> Async.AwaitTask
+                let! body = response.Content.ReadAsStringAsync() |> Async.AwaitTask
+                return Some (int response.StatusCode, body)
+        with _ -> return None }
+
+    let startSignIn (http: HttpClient) = async {
+        match! post http "api/chatgpt/sign-in" with
+        | Some (200, body) ->
+            try
+                use document = json body
+                return Ok (document.RootElement.GetProperty("authorizationUrl").GetString())
+            with _ -> return Error ChatGpt.RequestFailed
+        | Some (409, _) -> return Error ChatGpt.AlreadySignedIn
+        | _ -> return Error ChatGpt.RequestFailed }
+
+    let signOut (http: HttpClient) = async {
+        match! post http "api/chatgpt/sign-out" with
+        | Some (200, body) ->
+            try
+                use document = json body
+                return Ok (document.RootElement.GetProperty("revoked").GetBoolean())
+            with _ -> return Error ()
+        | _ -> return Error () }
+
+    let dismissWelcome (http: HttpClient) = async {
+        let! _ = post http "api/chatgpt/welcome/dismiss"
+        return () }
+
+/// The whole page: projects, shared library, native reader and its summary.
+type State = { Projects: Model; Library: Library.Model; Reader: Reader.Model; Summary: Summary.Model; ChatGpt: ChatGpt.Model }
 
 type Msg =
     | ProjectsMsg of Message
     | LibraryMsg of Library.Message
     | ReaderMsg of Reader.Message
+    | SummaryMsg of Summary.Message
+    | ChatGptMsg of ChatGpt.Message
 
 module private Ui =
     let command http = function
@@ -213,8 +317,54 @@ module private Ui =
             state, Cmd.OfAsync.perform (fun () -> Api.changeRole http projectId documentId role) () (fun result -> ReaderMsg (Reader.RoleChanged (projectId, result)))
         | None -> state, Cmd.none
 
-    let update http msg state =
+    /// The requests in flight, by request number, so a `Cancel` effect can abort the fetch (FR-009).
+    let private running = Collections.Generic.Dictionary<int, Threading.CancellationTokenSource>()
+
+    let private summaryCommand http (effect: Summary.Effect option) : Cmd<Msg> =
+        match effect with
+        | Some (Summary.Send (request, projectId, documentId, destination, confirmed)) ->
+            let source = new Threading.CancellationTokenSource()
+            running[request] <- source
+            Cmd.ofEffect (fun dispatch ->
+                Async.StartImmediate(async {
+                    let! result = Api.summarize http projectId documentId destination confirmed (fun progress -> dispatch (SummaryMsg (Summary.Progressed (request, progress)))) source.Token
+                    running.Remove request |> ignore
+                    source.Dispose()
+                    dispatch (SummaryMsg (Summary.Responded (request, result))) }))
+        | Some (Summary.Cancel request) ->
+            match running.TryGetValue request with
+            | true, source -> source.Cancel()
+            | _ -> ()
+            Cmd.none
+        | None -> Cmd.none
+
+    let chatGptCommand http (navigation: NavigationManager) (effect: ChatGpt.Effect option) : Cmd<Msg> =
+        let toMessage message = ChatGptMsg message
+        match effect with
+        | Some (ChatGpt.FetchDestinations request) ->
+            Cmd.OfAsync.perform ChatGptApi.destinations http (fun result -> toMessage (ChatGpt.Loaded (request, result)))
+        | Some ChatGpt.StartSignIn -> Cmd.OfAsync.perform ChatGptApi.startSignIn http (ChatGpt.AuthorizationReady >> toMessage)
+        | Some (ChatGpt.Navigate url) ->
+            Cmd.ofEffect (fun _ -> navigation.NavigateTo(url, forceLoad = true))
+        | Some ChatGpt.SendSignOut -> Cmd.OfAsync.perform ChatGptApi.signOut http (ChatGpt.SignedOutResult >> toMessage)
+        | Some ChatGpt.SendDismissWelcome -> Cmd.ofEffect (fun _ -> ChatGptApi.dismissWelcome http |> Async.StartImmediate)
+        | None -> Cmd.none
+
+    let private updateCore http navigation msg state =
         match msg with
+        | ChatGptMsg message ->
+            let chatGpt, effect = ChatGpt.update message state.ChatGpt
+            { state with ChatGpt = chatGpt }, chatGptCommand http navigation effect
+        | SummaryMsg message ->
+            let summary, effect = Summary.update message state.Summary
+            // A failure that ended the sign-in (stream event or problem alike) reloads the destinations.
+            let reload =
+                match message with
+                | Summary.Responded (request, Error failure) when state.Summary.State = Summary.Generating request && Summary.reloadsDestinations failure -> true
+                | _ -> false
+            let chatGpt, chatGptEffect = if reload then ChatGpt.update ChatGpt.Load state.ChatGpt else state.ChatGpt, None
+            { state with Summary = summary; ChatGpt = chatGpt },
+            Cmd.batch [ summaryCommand http effect; chatGptCommand http navigation chatGptEffect ]
         | ProjectsMsg message ->
             let projects, effect = Projects.update message state.Projects
             let state = { state with Projects = projects }
@@ -234,6 +384,18 @@ module private Ui =
             else state, projectCommand
         | LibraryMsg message -> updateLibrary http message state
         | ReaderMsg message -> updateReader http message state
+
+    /// The summary follows the reader's project and open document after every message.
+    let update http navigation msg state =
+        let state, command = updateCore http navigation msg state
+        // The summary knows which destinations exist from the sign-in state and the configured service.
+        let available =
+            { Summary.Plan = (match state.ChatGpt.Status with ChatGpt.SignedIn _ -> true | _ -> false)
+              Summary.Configured = state.ChatGpt.Configured.IsSome }
+        let summary, _ = Summary.update (Summary.DestinationsChanged available) state.Summary
+        let state = { state with Summary = summary }
+        let summary, effect = Summary.followReader state.Reader state.Summary
+        { state with Summary = summary }, Cmd.batch [ command; summaryCommand http effect ]
 
     let errorText = function
         | InvalidName -> "Enter a project name that is not blank."
@@ -355,6 +517,253 @@ module private Ui =
             }
         }
 
+    /// The context needed to understand and reproduce a summary (FR-008).
+    let summaryContext (document: Reader.Document) (generated: Summary.Generated) =
+        let generatedAt = generated.GeneratedAt.LocalDateTime.ToString("yyyy-MM-dd HH:mm")
+        let unreadable =
+            if generated.UnreadablePages.IsEmpty then ""
+            else $" Not readable (no text layer): {Summary.pageRanges generated.UnreadablePages}."
+        let omitted =
+            if generated.OmittedPoints = 0 then ""
+            else $" {generated.OmittedPoints} generated points were left out because their citations could not be verified."
+        let preposition = if generated.ServiceHost = "ChatGPT plan" then "using" else "at"
+        $"{document.FileName}, covering {Summary.pageRanges generated.PagesCovered}.{unreadable} Generated {generatedAt} by {generated.Model} {preposition} {generated.ServiceHost}.{omitted}"
+
+    let private plainButton label (cssClass: string option) onClick =
+        button {
+            attr.``type`` "button"
+            match cssClass with
+            | Some name -> attr.``class`` name
+            | None -> attr.empty ()
+            on.click onClick
+            text label
+        }
+
+    let private progressText progress =
+        match progress with
+        | Some (Summary.PagesProcessed (processed, total)) ->
+            span { attr.``class`` "summary-progress"; text $"{processed} of {total} pages processed. " }
+        | Some Summary.Combining -> span { attr.``class`` "summary-progress"; text "Combining points. " }
+        | None -> empty ()
+
+    let private confirmDialog (document: Reader.Document) (target: Summary.ConfirmTarget) dispatch =
+        div {
+            attr.``class`` "summary-confirm"
+            "role" => "alertdialog"
+            "aria-label" => "Confirm sending"
+            match target with
+            | Summary.Service (host, model) ->
+                p { text $"The text of {document.FileName} will be sent to {host} (model {model}), which is not on this machine. Send?" }
+            | Summary.Plan account ->
+                p { text $"The text of {document.FileName} will be sent to your ChatGPT plan (account {account}), which is not on this machine." }
+                p {
+                    text "It goes to OpenAI under your ChatGPT account. How it is used and kept follows your ChatGPT data controls (Settings, Data controls, in ChatGPT). "
+                    a {
+                        attr.href "https://help.openai.com/en/articles/20001542-using-your-chatgpt-plan-in-other-apps-and-sites"
+                        "target" => "_blank"; "rel" => "noopener noreferrer"
+                        text "Using your ChatGPT plan in other apps and sites"
+                    }
+                    text ". Send?"
+                }
+            plainButton "Send" (Some "send-confirm") (fun _ -> dispatch Summary.ConfirmSend)
+            " "
+            plainButton "Cancel" (Some "send-cancel") (fun _ -> dispatch Summary.CancelSend)
+        }
+
+    /// Page-number buttons that ask the reader to show that page.
+    let private citation onCite page =
+        button {
+            attr.``type`` "button"
+            attr.``class`` "citation"
+            "data-page" => string page
+            attr.title $"Page {page}"
+            on.click (fun _ -> onCite page)
+            text (string page)
+        }
+
+    let private summaryPanel (document: Reader.Document) (generated: Summary.Generated) onCite dispatch =
+        section {
+            attr.``class`` "summary"
+            h3 { "Generated summary" }
+            p {
+                attr.``class`` "summary-label"
+                strong { "Generated by an AI service for your review." }
+                " It is not verified and not your own text. Check each point against the cited pages."
+            }
+            p { attr.``class`` "summary-context"; text (summaryContext document generated) }
+            ul {
+                attr.``class`` "summary-points"
+                forEach generated.Points <| fun point ->
+                    li {
+                        span { attr.``class`` "point-text"; text point.Text }
+                        " "
+                        forEach point.Pages (citation onCite)
+                    }
+            }
+            plainButton "Dismiss" None (fun _ -> dispatch Summary.Dismiss)
+        }
+
+    /// The summary controls and panel of the open document. Citations are plain
+    /// page-number buttons (`button.citation`, `data-page`) that ask the reader to show that page.
+    /// The sign-in action, branded per OpenAI's guidance: its label, its white logo on a dark button, and its attribute.
+    let private signInButton (disabled: bool) dispatch =
+        button {
+            attr.``type`` "button"
+            attr.``class`` "siwc-button"
+            "data-oai-siwc-button" => ""
+            attr.disabled disabled
+            on.click (fun _ -> dispatch ChatGpt.SignIn)
+            img { attr.src "chatgpt-logo-white.svg"; attr.alt "" }
+            text "Continue with ChatGPT"
+        }
+
+    /// The account line (or the sign-in action) where she asks for a summary.
+    let chatGptAccount (model: ChatGpt.Model) dispatch =
+        cond model.Status <| function
+            | ChatGpt.Unknown -> empty ()
+            | ChatGpt.Unavailable ->
+                p {
+                    attr.``class`` "chatgpt-account error"
+                    "role" => "alert"
+                    "ChatGPT sign-in status could not be loaded. "
+                    plainButton "Try again" (Some "chatgpt-retry") (fun _ -> dispatch ChatGpt.Load)
+                }
+            | ChatGpt.SignedOut -> p { attr.``class`` "chatgpt-account"; "ChatGPT: signed out. "; signInButton false dispatch }
+            | ChatGpt.Starting -> p { attr.``class`` "chatgpt-account"; "role" => "status"; "Opening ChatGPT… "; signInButton true dispatch }
+            | ChatGpt.SignedIn account ->
+                p {
+                    attr.``class`` "chatgpt-account"
+                    text $"Signed in to ChatGPT as {account.Name}. "
+                    button {
+                        attr.``type`` "button"
+                        attr.``class`` "chatgpt-sign-out"
+                        attr.disabled model.SigningOut
+                        on.click (fun _ -> dispatch ChatGpt.SignOut)
+                        text "Sign out"
+                    }
+                }
+
+    let private noticeText = function
+        | ChatGpt.Cancelled -> "Sign-in was cancelled. You are not signed in."
+        | ChatGpt.NoPlanAccess -> "This ChatGPT account's plan can't be used by apps, so you are not signed in."
+        | ChatGpt.Failed -> "Sign-in could not be completed. You are not signed in. Please try again."
+        | ChatGpt.StartFailed -> "Sign-in could not be started. Please try again."
+        | ChatGpt.NotRevoked -> "You are signed out. OpenAI did not confirm the disconnection; you can also disconnect LexScholar in your ChatGPT settings."
+        | ChatGpt.SignOutFailed -> "Signing out failed. Please try again."
+
+    /// The one-time welcome and the return or sign-out message, at the top of the page.
+    let chatGptBanner (model: ChatGpt.Model) dispatch =
+        concat {
+            cond model.WelcomePending <| function
+                | true ->
+                    section {
+                        attr.``class`` "card chatgpt-welcome"
+                        "role" => "status"
+                        h2 { "You’re using your ChatGPT plan" }
+                        p {
+                            "Eligible usage in this app uses your ChatGPT plan. Manage usage in your ChatGPT settings. "
+                            a { attr.href "https://chatgpt.com/settings/usage"; "target" => "_blank"; "rel" => "noopener noreferrer"; "Manage usage" }
+                        }
+                        plainButton "Got it" (Some "chatgpt-welcome-dismiss") (fun _ -> dispatch ChatGpt.DismissWelcome)
+                    }
+                | false -> empty ()
+            cond model.Notice <| function
+                | Some notice ->
+                    section {
+                        attr.``class`` "card chatgpt-notice"
+                        "role" => "status"
+                        p { text (noticeText notice) }
+                        plainButton "Dismiss" (Some "chatgpt-notice-dismiss") (fun _ -> dispatch ChatGpt.DismissNotice)
+                    }
+                | None -> empty ()
+        }
+
+    let private usageLink (caption: string) =
+        a { attr.href "https://chatgpt.com/settings/usage"; "target" => "_blank"; "rel" => "noopener noreferrer"; attr.``class`` "manage-usage"; text caption }
+
+    /// Her plan is the destination of the next request.
+    let private usingPlan (summary: Summary.Model) =
+        summary.Available.Plan && (not summary.Available.Configured || summary.Choice = Some Summary.UsePlan)
+
+    let private destinationChoice (chatGpt: ChatGpt.Model) (summary: Summary.Model) dispatch =
+        let radio (value: Summary.Destination) id (caption: string) =
+            span {
+                input {
+                    attr.``type`` "radio"
+                    attr.name "summary-destination"
+                    attr.id id
+                    attr.``checked`` (summary.Choice = Some value)
+                    on.change (fun _ -> dispatch (Summary.Choose value))
+                }
+                label { attr.``for`` id; text caption }
+                " "
+            }
+        let configured =
+            match chatGpt.Configured with
+            | Some service -> $"{service.Host} (model {service.Model})"
+            | None -> "the configured service"
+        fieldset {
+            attr.``class`` "summary-destination"
+            legend { "Summarize with" }
+            radio Summary.UsePlan "summary-destination-plan" "Your ChatGPT plan"
+            radio Summary.UseConfigured "summary-destination-configured" configured
+        }
+
+    let summaryView (document: Reader.Document) (summary: Summary.Model) (chatGpt: ChatGpt.Model) onCite dispatch dispatchChatGpt =
+        let needsChoice = summary.Available.Plan && summary.Available.Configured
+        concat {
+            cond (needsChoice && (match summary.State with Summary.Generating _ | Summary.Confirming _ -> false | _ -> true)) <| function
+                | true -> destinationChoice chatGpt summary dispatch
+                | false -> empty ()
+            cond summary.State <| function
+                | Summary.Generating _ ->
+                    span {
+                        "role" => "status"
+                        "Summarizing… "
+                        progressText summary.Progress
+                        plainButton "Dismiss" None (fun _ -> dispatch Summary.Dismiss)
+                    }
+                | Summary.Shown _ -> empty ()
+                | Summary.Confirming target -> confirmDialog document target dispatch
+                | Summary.Idle ->
+                    button {
+                        attr.``type`` "button"
+                        attr.disabled (needsChoice && summary.Choice.IsNone)
+                        on.click (fun _ -> dispatch Summary.Summarize)
+                        text "Summarize"
+                    }
+                | Summary.Failed failure ->
+                    // Her other destination stays reachable, so a retry is always offered next to the primary action.
+                    span {
+                        cond (Summary.offersSignIn failure) <| function
+                            | true -> signInButton (chatGpt.Status <> ChatGpt.SignedOut) dispatchChatGpt
+                            | false -> empty ()
+                        cond (failure = Summary.UsageLimitReached) <| function
+                            | true -> usageLink "Manage usage"
+                            | false -> empty ()
+                        " "
+                        button {
+                            attr.``type`` "button"
+                            attr.``class`` "summary-retry"
+                            attr.disabled (needsChoice && summary.Choice.IsNone)
+                            on.click (fun _ -> dispatch Summary.Summarize)
+                            text "Try again"
+                        }
+                    }
+            cond (usingPlan summary && (match summary.State with Summary.Failed Summary.UsageLimitReached -> false | _ -> true)) <| function
+                | true -> span { attr.``class`` "summary-using-plan"; text " Using ChatGPT plan. "; usageLink "Manage usage" }
+                | false -> empty ()
+            cond summary.State <| function
+                | Summary.Failed Summary.NotConfigured ->
+                    p { attr.``class`` "error"; "role" => "alert"; text "Summaries need a ChatGPT sign-in or a summarization service. "
+                        span { attr.``class`` "secondary"; text (Summary.failureText Summary.NotConfigured) } }
+                | Summary.Failed failure -> p { attr.``class`` "error"; "role" => "alert"; text (Summary.failureText failure) }
+                | _ -> empty ()
+            cond summary.State <| function
+                | Summary.Shown generated -> summaryPanel document generated onCite dispatch
+                | _ -> empty ()
+        }
+
     let view (state: State) dispatch =
         let model = state.Projects
         let busy = model.Busy.IsSome
@@ -405,6 +814,7 @@ module private Ui =
                 }
                 button { attr.``type`` "button"; attr.disabled busy; on.click (fun _ -> dispatch Reload); "Refresh" }
             }
+            chatGptBanner state.ChatGpt (ChatGptMsg >> dispatch')
             libraryView state.Library state.Reader (ReaderMsg >> dispatch') (LibraryMsg >> dispatch')
             cond state.Reader.Error <| function
                 | Some error ->
@@ -431,10 +841,14 @@ module private Ui =
                         p { "Use your browser's PDF viewer controls to navigate pages." }
                         a { attr.href document.ContentUrl; "target" => "_blank"; "rel" => "noopener"; "Open in new tab" }
                         button { attr.``type`` "button"; on.click (fun _ -> dispatch' (ReaderMsg Reader.Close)); "Close" }
+                        chatGptAccount state.ChatGpt (ChatGptMsg >> dispatch')
+                        summaryView document state.Summary state.ChatGpt (ReaderMsg << Reader.ShowPage >> dispatch') (SummaryMsg >> dispatch') (ChatGptMsg >> dispatch')
                         iframe {
+                            // Keyed by the navigation counter: every citation click re-creates the frame.
+                            attr.key state.Reader.Navigation
                             attr.``class`` "reader-frame"
                             "title" => document.FileName
-                            "src" => document.ContentUrl
+                            "src" => (match state.Reader.Page with Some page -> $"{document.ContentUrl}#page={page}" | None -> document.ContentUrl)
                             "style" => "width:100%;height:75vh;border:0"
                         }
                     }
@@ -449,7 +863,15 @@ type App() =
         let http = new HttpClient(BaseAddress = Uri(this.Navigation.BaseUri))
         let start _ =
             let library, libraryEffect = Library.update Library.LoadLibrary Library.initial
-            { Projects = { initial with Busy = Some Loading }; Library = library; Reader = Reader.initial },
+            // Returning from ChatGPT: read the outcome once, then drop it from the address.
+            let uri = Uri(this.Navigation.Uri)
+            let query = System.Web.HttpUtility.ParseQueryString(uri.Query)
+            let returned = match query.["chatgpt"] with null -> None | value -> Some value
+            if returned.IsSome then this.Navigation.NavigateTo(uri.GetLeftPart(UriPartial.Path), replace = true)
+            let chatGpt, chatGptEffect = ChatGpt.update ChatGpt.Load ChatGpt.initial
+            let chatGpt, _ = ChatGpt.update (ChatGpt.Returned returned) chatGpt
+            { Projects = { initial with Busy = Some Loading }; Library = library; Reader = Reader.initial; Summary = Summary.initial; ChatGpt = chatGpt },
             Cmd.batch [ Ui.command http Fetch |> Cmd.map ProjectsMsg
+                        Ui.chatGptCommand http this.Navigation chatGptEffect
                         libraryEffect |> Option.map (Ui.libraryCommand http) |> Option.defaultValue Cmd.none ]
-        Program.mkProgram start (Ui.update http) Ui.view
+        Program.mkProgram start (Ui.update http this.Navigation) Ui.view

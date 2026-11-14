@@ -10,6 +10,8 @@
     <Compile Include="../RunnerSmoke.fs" Link="RunnerSmoke.fs" />
     <Compile Include="ProjectTests.fs" />
     <Compile Include="DocumentTests.fs" />
+    <Compile Include="SummaryRulesTests.fs" />
+    <Compile Include="ChatGptSignInTests.fs" />
     <ProjectReference Include="../../src/LexScholar.Domain/LexScholar.Domain.fsproj" />
     <PackageReference Include="xunit.v3" />
   </ItemGroup>
