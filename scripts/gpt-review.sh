@@ -50,9 +50,14 @@ bot_token() {
     curl -fsS -X "$1" "https://api.github.com$2" -H "Authorization: Bearer $jwt" \
       -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28"
   }
-  installation="$(as_app GET "/repos/$repo/installation" | json_field id)" || {
-    echo "The reviewer app is not installed on $repo, or its app-id/key are wrong." >&2; return 1; }
-  as_app POST "/app/installations/$installation/access_tokens" | json_field token
+  local response
+  response="$(as_app GET "/repos/$repo/installation")" || {
+    echo "Reviewer app: 404 means it isn't installed on $repo (install it from the app's settings); 401 means app-id or private-key.pem is wrong." >&2
+    return 1; }
+  installation="$(json_field id <<<"$response")"
+  response="$(as_app POST "/app/installations/$installation/access_tokens")" || {
+    echo "Reviewer app: could not get an installation token for $repo." >&2; return 1; }
+  json_field token <<<"$response"
 }
 as_bot() { GH_TOKEN="$token" gh api "$@"; }
 finish_check() { # conclusion title summary
