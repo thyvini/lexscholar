@@ -10,6 +10,7 @@
     <Compile Include="../RunnerSmoke.fs" Link="RunnerSmoke.fs" />
     <Compile Include="../LexScholar.Server.Tests/TestHarness.fs" Link="TestHarness.fs" />
     <Compile Include="../LexScholar.Server.Tests/FakeChatService.fs" Link="FakeChatService.fs" />
+    <Compile Include="../LexScholar.Server.Tests/FakeOpenAi.fs" Link="FakeOpenAi.fs" />
     <Compile Include="ProjectStateTests.fs" />
     <Compile Include="ProjectJourneyTests.fs" />
     <Compile Include="LibraryStateTests.fs" />
@@ -20,6 +21,7 @@
     <Compile Include="SummaryStateTests.fs" />
     <Compile Include="SummaryJourneyTests.fs" />
     <Compile Include="ChatGptStateTests.fs" />
+    <Compile Include="ChatGptJourneyTests.fs" />
     <None Include="../Fixtures/**" LinkBase="Fixtures" CopyToOutputDirectory="PreserveNewest" />
     <ProjectReference Include="../../src/LexScholar.Server/LexScholar.Server.fsproj" />
     <PackageReference Include="Microsoft.Playwright" />
