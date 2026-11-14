@@ -123,7 +123,7 @@ let ``a confirmation required answer asks the researcher and sends nothing more`
 let ``confirming repeats the request with the confirmed host and model under a new request number`` () =
     let model, effect = update ConfirmSend confirming
     assertState (Generating 2) model.State
-    assertState (Some (Send (2, project, document, None, Some (ConfirmedService ("summary.example.test:8080", "gpt"))))) effect
+    assertState (Some (Send (2, project, document, Some UseConfigured, Some (ConfirmedService ("summary.example.test:8080", "gpt"))))) effect
 
 [<Fact; Trait("Task", "T007")>]
 let ``cancelling returns to idle and emits no effect`` () =
