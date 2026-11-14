@@ -63,13 +63,22 @@ type PendingSignIn =
 type SignInSession() =
     let sync = obj ()
     let mutable pending : PendingSignIn option = None
-    member _.Start(attempt: PendingSignIn) = lock sync (fun () -> pending <- Some attempt)
+    // The state of the attempt whose exchange is running, if it is still the current one.
+    let mutable inFlight : string option = None
+    /// A start replaces the pending attempt and also supersedes one that is mid-exchange.
+    member _.Start(attempt: PendingSignIn) =
+        lock sync (fun () ->
+            pending <- Some attempt
+            inFlight <- None)
+    /// Whether a newer start replaced this attempt after it was taken.
+    member _.Superseded(attempt: PendingSignIn) : bool = lock sync (fun () -> inFlight <> Some attempt.State)
     /// Consumes the attempt when `state` matches and it has not expired; a reused state finds nothing.
     member _.Take(state: string, now: DateTimeOffset) : PendingSignIn option =
         lock sync (fun () ->
             match pending with
             | Some attempt when attempt.State = state && attempt.ExpiresAt > now ->
                 pending <- None
+                inFlight <- Some attempt.State
                 Some attempt
             | _ -> None)
 
@@ -109,9 +118,10 @@ let startSignIn (vault: Vault) (session: SignInSession) (clock: unit -> DateTime
 let completeSignIn (vault: Vault) (session: SignInSession) (auth: AuthClient) (clock: unit -> DateTimeOffset) (query: CallbackQuery) (cancellation: CancellationToken) : Task<SignInOutcome> = task {
     match query.Error, query.State with
     | Some error, state ->
-        // Only the attempt this error belongs to ends; a stale or missing state leaves the current one alone.
-        state |> Option.iter (fun state -> session.Take(state, clock ()) |> ignore)
-        return (if error = "access_denied" then Cancelled else Failed)
+        // Only the attempt this error belongs to ends; a stale, reused or missing state leaves
+        // the current one alone and is cancelled.
+        let live = state |> Option.bind (fun state -> session.Take(state, clock ()))
+        return (if live.IsNone || error = "access_denied" then Cancelled else Failed)
     | None, None -> return Cancelled
     | None, Some state ->
         match session.Take(state, clock ()) with
@@ -142,10 +152,10 @@ let completeSignIn (vault: Vault) (session: SignInSession) (auth: AuthClient) (c
                                 let! _ = auth.Revoke credentials cancellation
                                 return NoPlanAccess
                             else
-                                // A sign-in that finished first wins: a second one never replaces it.
+                                // A sign-in that finished first wins, and one replaced by a newer start is never saved.
                                 let! saved =
                                     vault.Locked(fun store -> task {
-                                        if store.Read().IsSome then return false
+                                        if store.Read().IsSome || session.Superseded attempt then return false
                                         else
                                             store.Save credentials
                                             return true })

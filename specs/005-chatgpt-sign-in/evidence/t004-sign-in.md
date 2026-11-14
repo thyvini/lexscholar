@@ -22,3 +22,8 @@
 
 - P1 (older sign-in overwrites a newer one): the save now checks under the lock that no record exists; a second finisher is revoked and reports `cancelled`. Test: `a sign-in that finishes second does not replace the first and is revoked`.
 - P2 (error callback cancels an unrelated attempt), verdict must fix: an error ends only the attempt whose `state` it carries. Test: `an error without the current state leaves the pending attempt alone`.
+
+## Review follow-up (GPT, P1 and P2)
+
+- P1: a new start now supersedes an attempt that is already mid-exchange (`SignInSession.Superseded`, checked under the vault lock before saving); the stale finisher is revoked and reports `cancelled`. RED: `a callback in flight is superseded by a newer start and is never saved` failed (the older attempt was saved); GREEN after the change.
+- P2: an error callback gives `cancelled` unless its state matches the live attempt and the error is not `access_denied` (then `failed`). RED: `any error with an unknown, reused or missing state is cancelled` failed; GREEN after the change. `scripts/check.sh T004`: 29 tests, 0 failed.
