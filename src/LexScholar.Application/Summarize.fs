@@ -58,9 +58,9 @@ let failureDetail (error: ServiceError) : string =
     | ServiceError.TimedOut -> "The summary service took too long to answer. Try again."
     | ServiceError.Redirected -> "The summary service redirected the request, which LexScholar does not follow. Check the Endpoint setting. Try again."
     | ServiceError.UnusableOutput -> "The summary service did not give a usable answer. Try again."
-    | ServiceError.UsageLimitReached -> "The summary service answered with an error. Try again."
-    | ServiceError.SignedOut -> "The summary service answered with an error. Try again."
-    | ServiceError.NoPlanAccess -> "The summary service answered with an error. Try again."
+    | ServiceError.UsageLimitReached -> "Your ChatGPT plan's usage limit was reached. Review your plan or this app's limit in ChatGPT settings, then try again."
+    | ServiceError.SignedOut -> "You are signed out of ChatGPT. Sign in again to continue."
+    | ServiceError.NoPlanAccess -> "Your ChatGPT account cannot use its plan in this app. Sign in with another account or use a configured service."
 
 let private jsonForm = "{\"points\": [{\"text\": \"...\", \"pages\": [3, 4]}]}"
 

@@ -1,0 +1,11 @@
+# T006 evidence: Responses client and model listing
+
+- RED (`c7bc83f`): `scripts/check.sh T006` gave `Tests: 40 total, 15 failed` (stubs returned `UnusableOutput`; assertions such as `Expected: Error UsageLimitReached` and the empty request list failed).
+- GREEN: `scripts/check.sh T006` gave `Tests: 40 total, 0 failed, 0 skipped.` (includes F003 tests that share the tag).
+- Full suite: CI run on the PR.
+- Covered: request has exactly `model, instructions, input, store, stream` and the Bearer token; system messages become `instructions`; deltas joined; each error code before the stream and as `response.failed`; `response.incomplete`, an ended stream, an empty answer and a stream over 1 MB give `UnusableOutput`; redirect not followed; unknown refusals give only the sanitized message (token and newlines removed); stalled before and after the first event gives `TimedOut`; cancellation stays a cancellation; logs carry only model, count, outcome, duration; model list read in server order; new failure texts.
+
+## Limitations
+
+- The models response shape `{"models":[{"slug","visibility"}]}` is **unverified** against the live endpoint. Public sources (Codex's bundled model catalog) use `models` with `slug` and `visibility` (`list`, `hide`, `none`), but no document shows the raw `GET /v1/models` envelope. Confirm in T012; an unreadable list is `UnusableOutput`, which the summary reports as an unusable service answer.
+- A mid-stream `response.failed` with an unknown code reports `ErrorStatus (200, message)`, since the stream's HTTP status was 200.
