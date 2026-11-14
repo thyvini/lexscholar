@@ -89,14 +89,15 @@ let ``a requested summary is labelled as generated, shows its context and plain-
         do! Assertions.Expect(page.GetByRole(AriaRole.Heading, PageGetByRoleOptions(Name = "Reader"))).ToBeVisibleAsync() })
 
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T004"); Trait("Category", "Browser")>]
-let ``without a configured service the researcher is told how to configure one`` (browserName: string) =
+let ``without a configured service or sign-in the researcher is offered the ChatGPT sign-in`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
         use harness = TestHarness.Start(serveClient = true)
         let! page = openApp browser harness
         do! arrange page
         do! click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = "Summarize", Exact = true)))
-        let alert = page.GetByRole(AriaRole.Alert).Filter(LocatorFilterOptions(HasText = "LexScholar:Summary:Endpoint"))
+        let alert = page.GetByRole(AriaRole.Alert).Filter(LocatorFilterOptions(HasText = "Summaries need a ChatGPT sign-in or a summarization service"))
         do! Assertions.Expect(alert).ToContainTextAsync("LexScholar:Summary:Model")
+        do! Assertions.Expect(page.Locator("button[data-oai-siwc-button]").First).ToContainTextAsync("Continue with ChatGPT")
         do! Assertions.Expect(panel page).ToHaveCountAsync(0) })
 
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T005"); Trait("Category", "Browser")>]
