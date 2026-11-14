@@ -26,3 +26,7 @@ Uncommitted, the file creation mode was widened to include `OtherRead`: `the fil
 
 - P1 `read` with no record left a token-bearing `.tmp` file: must fix. `read` now runs the same cleanup (`delete`) when the record is absent. RED: `reading with no record still removes a temporary file...` failed on `Assert.Empty`; GREEN after the fix.
 - P1 empty fields and scopes without plan usage accepted: must fix. A record is now malformed (signed out, deleted) when any of `clientId`, `hostId`, `subject`, `account`, `accessToken`, `refreshToken`, `idToken` is empty, `clientId` is `dynamic_agent_client`, `hostId` is not `urn:uuid:...`, or `scopes` is empty or lacks `chatgpt.tokens.use.direct`. Missing or mistyped fields and bad dates already failed parsing. One test case per rule. RED (`scripts/check.sh T002`): 35 total, 2 failed (`accepted: empty clientId`, leftover not removed). GREEN: 35 total, 0 failed, 0 skipped.
+
+## Review follow-up (GPT, third round)
+
+- P1 a successful `read` left a stale `.tmp` file (an interrupted save that replaced an existing record): must fix. `read` now removes leftovers whatever the outcome. RED (commit after 796eb37): `reading a valid record still removes a stale temporary file` failed on the directory listing (36 total, 1 failed). GREEN: 36 total, 0 failed, 0 skipped. Concurrent save versus read cleanup is covered by the lock in T004.

@@ -71,8 +71,16 @@ let read (dataDirectory: string) : Credentials option =
     let signedOut () =
         try delete dataDirectory with _ -> ()
         None
+    let removeLeftovers () =
+        try
+            for leftover in Directory.GetFiles(dataDirectory, "chatgpt-signin.json.*.tmp") do
+                File.Delete leftover
+        with _ -> ()
     if not (File.Exists path) then signedOut () else
-    try Some(parse (File.ReadAllBytes path))
+    try
+        let credentials = parse (File.ReadAllBytes path)
+        removeLeftovers ()
+        Some credentials
     with _ -> signedOut ()
 
 /// Writes to a temporary file created with mode 0600 (never readable by others, not even
