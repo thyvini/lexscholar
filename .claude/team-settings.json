@@ -45,6 +45,7 @@
       "Bash(gh api*git/refs*)",
       "Bash(gh api*DELETE*)",
       "Bash(gh repo delete*)",
+      "Read(~/.config/pull-request-reviewer/**)",
       "Edit(**/.specify/memory/constitution.md)",
       "Write(**/.specify/memory/constitution.md)"
     ]
