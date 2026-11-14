@@ -555,7 +555,16 @@ module private Ui =
             | Summary.Service (host, model) ->
                 p { text $"The text of {document.FileName} will be sent to {host} (model {model}), which is not on this machine. Send?" }
             | Summary.Plan account ->
-                p { text $"The text of {document.FileName} will be sent to your ChatGPT plan (account {account}), which is not on this machine. Send?" }
+                p { text $"The text of {document.FileName} will be sent to your ChatGPT plan (account {account}), which is not on this machine." }
+                p {
+                    text "It goes to OpenAI under your ChatGPT account. How it is used and kept follows your ChatGPT data controls (Settings, Data controls, in ChatGPT). "
+                    a {
+                        attr.href "https://help.openai.com/en/articles/20001542-using-your-chatgpt-plan-in-other-apps-and-sites"
+                        "target" => "_blank"; "rel" => "noopener noreferrer"
+                        text "Using your ChatGPT plan in other apps and sites"
+                    }
+                    text ". Send?"
+                }
             plainButton "Send" (Some "send-confirm") (fun _ -> dispatch Summary.ConfirmSend)
             " "
             plainButton "Cancel" (Some "send-cancel") (fun _ -> dispatch Summary.CancelSend)
@@ -723,10 +732,25 @@ module private Ui =
                         on.click (fun _ -> dispatch Summary.Summarize)
                         text "Summarize"
                     }
-                | Summary.Failed failure when Summary.offersSignIn failure -> signInButton false dispatchChatGpt
-                | Summary.Failed Summary.UsageLimitReached -> usageLink "Manage usage"
-                | Summary.Failed _ -> plainButton "Try again" (Some "summary-retry") (fun _ -> dispatch Summary.Summarize)
-            cond (usingPlan summary && (match summary.State with Summary.Confirming _ | Summary.Failed Summary.UsageLimitReached -> false | _ -> true)) <| function
+                | Summary.Failed failure ->
+                    // Her other destination stays reachable, so a retry is always offered next to the primary action.
+                    span {
+                        cond (Summary.offersSignIn failure) <| function
+                            | true -> signInButton (chatGpt.Status <> ChatGpt.SignedOut) dispatchChatGpt
+                            | false -> empty ()
+                        cond (failure = Summary.UsageLimitReached) <| function
+                            | true -> usageLink "Manage usage"
+                            | false -> empty ()
+                        " "
+                        button {
+                            attr.``type`` "button"
+                            attr.``class`` "summary-retry"
+                            attr.disabled (needsChoice && summary.Choice.IsNone)
+                            on.click (fun _ -> dispatch Summary.Summarize)
+                            text "Try again"
+                        }
+                    }
+            cond (usingPlan summary && (match summary.State with Summary.Failed Summary.UsageLimitReached -> false | _ -> true)) <| function
                 | true -> span { attr.``class`` "summary-using-plan"; text " Using ChatGPT plan. "; usageLink "Manage usage" }
                 | false -> empty ()
             cond summary.State <| function

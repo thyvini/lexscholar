@@ -127,8 +127,8 @@ let update (message: Message) (model: Model) : Model * Effect option =
     | Dismiss -> abandon model
     | ConfirmSend ->
         match model.Project, model.Document, model.State with
-        | Some project, Some document, Confirming (Service (host, name)) -> start project document (destination |> Option.flatten) (Some (ConfirmedService (host, name)))
-        | Some project, Some document, Confirming (Plan _) -> start project document (destination |> Option.flatten) (Some ConfirmedPlan)
+        | Some project, Some document, Confirming (Service (host, name)) -> start project document (Some UseConfigured) (Some (ConfirmedService (host, name)))
+        | Some project, Some document, Confirming (Plan _) -> start project document (Some UsePlan) (Some ConfirmedPlan)
         | _ -> model, None
     // Cancelling sends nothing: no effect. A late answer is dropped because only `Generating` accepts one.
     | CancelSend ->
@@ -143,7 +143,10 @@ let update (message: Message) (model: Model) : Model * Effect option =
             | Some UseConfigured when not available.Configured -> None
             | choice -> choice
         { model with Available = available; Choice = choice }, None
-    | Choose choice -> { model with Choice = Some choice }, None
+    // A failure belongs to the previous destination; choosing another lets her ask again.
+    | Choose choice ->
+        let state = match model.State with Failed _ -> Idle | state -> state
+        { model with Choice = Some choice; State = state }, None
     | Progressed (request, progress) when model.State = Generating request -> { model with Progress = Some progress }, None
     | Progressed _ -> model, None
     | Responded (request, result) when model.State = Generating request ->

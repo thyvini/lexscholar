@@ -302,3 +302,21 @@ let ``the request body carries the destination and the confirmation`` () =
     assertState """{"destination":"configured","confirmSend":false}""" (body (Some UseConfigured) None)
     assertState """{"destination":"chatgpt","confirmSend":true}""" (body (Some UsePlan) (Some ConfirmedPlan))
     assertState """{"confirmSend":false}""" (body None None)
+
+[<Fact; Trait("Task", "T010")>]
+let ``confirming sends to the destination the dialog named, even if the destinations changed`` () =
+    let generating, _ = update Summarize (withAvailable both |> update (Choose UsePlan) |> fst)
+    let asked = update (Responded (1, Error (ConfirmationRequired (Plan "Ada")))) generating |> fst
+    // She signs out while the dialog is open: only the configured service remains.
+    let changed = update (DestinationsChanged configuredOnly) asked |> fst
+    let _, effect = update ConfirmSend changed
+    assertState (Some (Send (2, project, document, Some UsePlan, Some ConfirmedPlan))) effect
+
+[<Fact; Trait("Task", "T010")>]
+let ``choosing another destination clears a failure so she can ask again`` () =
+    let generating, _ = update Summarize (withAvailable both |> update (Choose UsePlan) |> fst)
+    let failed, _ = update (Responded (1, Error UsageLimitReached)) generating
+    let chosen, _ = update (Choose UseConfigured) failed
+    assertState Idle chosen.State
+    let _, effect = update Summarize chosen
+    assertState (Some (Send (2, project, document, Some UseConfigured, None))) effect
