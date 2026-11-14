@@ -14,7 +14,7 @@ let private now = DateTimeOffset(2026, 11, 13, 12, 0, 0, TimeSpan.Zero)
 let private none = CancellationToken.None
 let private redirect = "http://127.0.0.1:5000/auth/callback"
 
-type private Rig(?scopes: string list, ?exchange: Result<TokenGrant, unit>, ?identity: Result<Identity, unit>, ?saveFails: bool) =
+type private Rig(?scopes: string list, ?exchange: Result<TokenGrant, unit>, ?identity: Result<Identity, unit>, ?saveFails: bool, ?hold: Task) =
     let mutable record : Credentials option = None
     let mutable exchanges = 0
     let mutable revocations = 0
@@ -27,7 +27,15 @@ type private Rig(?scopes: string list, ?exchange: Result<TokenGrant, unit>, ?ide
           Save = fun c -> saves <- saves + 1; (if defaultArg saveFails false then failwith "disk full"); record <- Some c
           Delete = fun () -> record <- None }
     let auth =
-        { Exchange = fun _ _ _ _ _ -> exchanges <- exchanges + 1; Task.FromResult(defaultArg exchange (Ok grant))
+        { Exchange =
+            fun _ _ _ _ _ ->
+                task {
+                    exchanges <- exchanges + 1
+                    match hold with
+                    | Some pause -> do! pause
+                    | None -> ()
+                    return defaultArg exchange (Ok grant)
+                }
           VerifyIdToken = fun _ _ _ _ -> Task.FromResult(defaultArg identity (Ok { Subject = "user-1"; Account = "researcher@example.test" }))
           Refresh = fun _ _ -> Task.FromResult(Error Ended)
           Revoke = fun _ _ -> revocations <- revocations + 1; Task.FromResult true }
@@ -163,3 +171,28 @@ let ``a sign-in that finishes second does not replace the first and is revoked``
     Assert.Equal(Cancelled, rig.Complete(callback url))
     Assert.Equal(1, rig.Revocations)
     Assert.Equal("other", rig.Record.Value.Subject)
+
+[<Fact; Trait("Task", "T004")>]
+let ``a callback in flight is superseded by a newer start and is never saved`` () = task {
+    let release = TaskCompletionSource()
+    let rig = Rig(hold = release.Task)
+    let a = rig.Start()
+    let inFlight = completeSignIn rig.Vault rig.Session rig.Auth (fun () -> now) (callback a) none
+    let b = rig.Start()
+    release.SetResult()
+    let! outcome = inFlight
+    Assert.Equal(Cancelled, outcome)
+    Assert.Equal(None, rig.Record)
+    Assert.Equal(1, rig.Revocations)
+    // the newer attempt still completes
+    Assert.Equal(SignedIn, rig.Complete(callback b)) }
+
+[<Fact; Trait("Task", "T004")>]
+let ``any error with an unknown, reused or missing state is cancelled`` () =
+    let rig = Rig()
+    let url = rig.Start()
+    for error in [ "access_denied"; "server_error"; "invalid_request" ] do
+        Assert.Equal(Cancelled, rig.Complete { Code = None; State = Some "unknown"; Error = Some error; ClientId = None })
+        Assert.Equal(Cancelled, rig.Complete { Code = None; State = None; Error = Some error; ClientId = None })
+    Assert.Equal(Failed, rig.Complete { callback url with Code = None; Error = Some "server_error" })
+    Assert.Equal(Cancelled, rig.Complete { callback url with Code = None; Error = Some "server_error" })
