@@ -823,3 +823,54 @@ let ``ending a sign-in never deletes a newer sign-in and cancels no run of it`` 
     LexScholar.Application.ChatGptAccess.endSignIn vault (credentials "new") |> fun t -> t.GetAwaiter().GetResult()
     Assert.True(record.Value.IsNone)
     Assert.True(run.Token.IsCancellationRequested)
+
+/// A stream that runs `atEnd` once, when the reader reaches the end: the answer was read completely, nothing else happened yet.
+type private EndHookStream(bytes: byte[], atEnd: unit -> unit) =
+    inherit IO.Stream()
+    let inner = new IO.MemoryStream(bytes)
+    let mutable fired = false
+    let fire () = if not fired then (fired <- true; atEnd ())
+    override _.CanRead = true
+    override _.CanSeek = false
+    override _.CanWrite = false
+    override _.Length = raise (NotSupportedException())
+    override _.Position with get () = raise (NotSupportedException()) and set _ = raise (NotSupportedException())
+    override _.Flush() = ()
+    override _.Seek(_, _) = raise (NotSupportedException())
+    override _.SetLength _ = raise (NotSupportedException())
+    override _.Write(_, _, _) = raise (NotSupportedException())
+    override _.Read(buffer: byte[], offset: int, count: int) =
+        let read = inner.Read(buffer, offset, count)
+        if read = 0 then fire ()
+        read
+    override _.ReadAsync(buffer: Memory<byte>, _cancellation: Threading.CancellationToken) =
+        let read = inner.Read(buffer.Span)
+        if read = 0 then fire ()
+        Threading.Tasks.ValueTask<int>(read)
+
+/// Runs `afterResponse` when the host has read a Responses answer to its end, before it maps and reports that answer.
+type AfterResponses(inner: HttpMessageHandler, afterResponse: unit -> unit) =
+    inherit HttpMessageHandler()
+    override _.SendAsync(request, cancellation) = task {
+        let! response = (new HttpMessageInvoker(inner, false)).SendAsync(request, cancellation)
+        if request.RequestUri.AbsolutePath = "/v1/responses" then
+            let! bytes = response.Content.ReadAsByteArrayAsync cancellation
+            let content = new StreamContent(new EndHookStream(bytes, afterResponse))
+            for header in response.Content.Headers do content.Headers.TryAddWithoutValidation(header.Key, header.Value) |> ignore
+            response.Content <- content
+        return response }
+
+[<Theory; Trait("Task", "T008")>]
+[<InlineData(429, "subscription_sharing_usage_limit_exceeded")>]
+[<InlineData(500, "server_error")>]
+let ``signing out after the service answered with an error but before it is reported ends the run with signed_out`` (status: int, code: string) =
+    let fake = new FakeOpenAi(ResponsesScript.Status(status, code))
+    let harnessRef = ref None
+    let signOutNow () = harnessRef.Value |> Option.iter (fun h -> signOut h |> ignore)
+    use harness = TestHarness.Start(summaryHandler = new AfterResponses(fake, signOutNow))
+    harnessRef.Value <- Some harness
+    let path = documentPath harness
+    signInThrough harness fake "" |> ignore
+    let _, text = sendJson harness path confirmed
+    Assert.Equal("signed_out", failedCode text)
+    expectSignedOutEverywhere harness
