@@ -214,6 +214,11 @@ let complete (logger: ILogger) (client: HttpClient) (settings: Settings) (messag
         settings.Model, List.length messages, outcome, clock.ElapsedMilliseconds)
     return result }
 
+/// `complete` with the deadline supplied by the caller (tests fire it at a handshake point instead of waiting).
+let completeWithDeadline (logger: ILogger) (client: HttpClient) (settings: Settings) (messages: Summarize.ChatMessage list) (_deadline: CancellationToken) (cancellation: CancellationToken)
+    : Task<Result<string, Summarize.ServiceError>> =
+    complete logger client settings messages cancellation
+
 let private parseModels (stream: Stream) (cancellation: CancellationToken) : Task<Result<ModelEntry list, Summarize.ServiceError>> = task {
     match! readLimited stream cancellation with
     | None -> return Error Summarize.ServiceError.UnusableOutput

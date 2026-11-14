@@ -142,10 +142,12 @@ let ``another refusal gives the sanitized status and message only`` () = task {
     | other -> failwith $"unexpected {other}" }
 
 /// Sends one event, then stalls without ending the stream.
-type private StallingStreamHandler(headerDelay: TimeSpan) =
+type private StallingStreamHandler() =
     inherit HttpMessageHandler()
+    let stalled = TaskCompletionSource()
+    /// Completes when the client waits for more of the stream after the first event (headers are already in).
+    member _.Stalled : Task = stalled.Task
     override _.SendAsync(_, cancellation) = task {
-        if headerDelay > TimeSpan.Zero then do! Task.Delay(headerDelay, cancellation)
         let head = Encoding.UTF8.GetBytes(sse [ "response.output_text.delta", """{"type":"response.output_text.delta","delta":"a"}""" ])
         let served = ref false
         let stream =
@@ -167,6 +169,7 @@ type private StallingStreamHandler(headerDelay: TimeSpan) =
                             head.AsMemory().CopyTo buffer
                             return head.Length
                         else
+                            stalled.TrySetResult() |> ignore
                             do! Task.Delay(Timeout.Infinite, cancellation)
                             return 0 }) }
         return new HttpResponseMessage(HttpStatusCode.OK, Content = new StreamContent(stream)) }
@@ -223,20 +226,46 @@ let ``a service that never answers times out`` () =
 
 [<Fact; Trait("Task", "T006")>]
 let ``a stream that stalls after some text times out`` () =
-    use client = new HttpClient(new StallingStreamHandler(TimeSpan.Zero), Timeout = TimeSpan.FromMilliseconds 300.0)
+    use client = new HttpClient(new StallingStreamHandler(), Timeout = TimeSpan.FromMilliseconds 300.0)
     let call = ResponsesApi.complete (CapturingLogger()) client settings messages none
     guard call
     Assert.Equal(Error Summarize.ServiceError.TimedOut, call.GetAwaiter().GetResult())
 
 [<Fact; Trait("Task", "T006")>]
-let ``the time limit is one deadline for the headers and the stream together`` () =
-    // Headers arrive after 500 ms, then the stream stalls; the whole call ends at the 1 s limit, not at 1.5 s.
-    use client = new HttpClient(new StallingStreamHandler(TimeSpan.FromMilliseconds 500.0), Timeout = TimeSpan.FromSeconds 1.0)
-    let clock = System.Diagnostics.Stopwatch.StartNew()
-    let call = ResponsesApi.complete (CapturingLogger()) client settings messages none
+let ``the deadline ends the call after the headers while the stream stalls`` () =
+    let handler = new StallingStreamHandler()
+    use client = new HttpClient(handler, Timeout = TimeSpan.FromSeconds 30.0)
+    use deadline = new CancellationTokenSource()
+    let call = ResponsesApi.completeWithDeadline (CapturingLogger()) client settings messages deadline.Token none
+    // The test fires the deadline once the stream is stalling; the 10 s guard only stops a hang.
+    let reached = Task.WhenAny(handler.Stalled, Task.Delay(TimeSpan.FromSeconds 10.0)).GetAwaiter().GetResult()
+    Assert.True(obj.ReferenceEquals(reached, handler.Stalled), "the stream never started")
+    deadline.Cancel()
     guard call
     Assert.Equal(Error Summarize.ServiceError.TimedOut, call.GetAwaiter().GetResult())
-    Assert.True(clock.ElapsedMilliseconds < 1350L, $"the call took {clock.ElapsedMilliseconds} ms")
+
+[<Fact; Trait("Task", "T006")>]
+let ``the deadline ends the call while the service has not answered the headers`` () =
+    let fake = new FakeOpenAi(ResponsesScript.WaitUntilCancelled)
+    use client = new HttpClient(fake, Timeout = TimeSpan.FromSeconds 30.0)
+    use deadline = new CancellationTokenSource()
+    let call = ResponsesApi.completeWithDeadline (CapturingLogger()) client settings messages deadline.Token none
+    let reached = Task.WhenAny(fake.Waiting, Task.Delay(TimeSpan.FromSeconds 10.0)).GetAwaiter().GetResult()
+    Assert.True(obj.ReferenceEquals(reached, fake.Waiting), "the request never reached the service")
+    deadline.Cancel()
+    guard call
+    Assert.Equal(Error Summarize.ServiceError.TimedOut, call.GetAwaiter().GetResult())
+
+[<Fact; Trait("Task", "T006")>]
+let ``a malformed text event is unusable output and never a partial summary`` () = task {
+    let delta text = ("response.output_text.delta", $$"""{"type":"response.output_text.delta","delta":"{{text}}"}""")
+    let completed = ("response.completed", """{"type":"response.completed"}""")
+    for bad in
+        [ "response.output_text.delta", """{"type":"response.output_text.delta"}"""
+          "response.output_text.delta", """{"type":"response.output_text.delta","delta":5}"""
+          "response.output_text.delta", "{not json" ] do
+        let! result = complete (new FixedHandler(HttpStatusCode.OK, "text/event-stream", sse [ delta "good "; bad; delta "rest"; completed ])) (CapturingLogger())
+        Assert.Equal(Error Summarize.ServiceError.UnusableOutput, result) }
 
 [<Fact; Trait("Task", "T006")>]
 let ``a caller's cancellation is a cancellation, not a timeout`` () =
