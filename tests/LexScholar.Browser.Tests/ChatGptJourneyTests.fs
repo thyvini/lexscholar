@@ -68,7 +68,7 @@ let private panel (page: IPage) = page.Locator("section.summary")
 let ``she signs in, summarizes on her plan, meets the usage limit and signs out`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
         let script call =
-            if call <= 1 then ResponsesScript.Completed answer
+            if call <= 2 then ResponsesScript.Completed answer
             else ResponsesScript.Status(429, "subscription_sharing_usage_limit_exceeded")
         use fake = new FakeOpenAi(script)
         use harness = TestHarness.Start(serveClient = true, summaryHandler = fake)
@@ -127,13 +127,12 @@ let ``she signs in, summarizes on her plan, meets the usage limit and signs out`
         do! Assertions.Expect(using).ToContainTextAsync("Using ChatGPT plan")
         do! Assertions.Expect(using.GetByRole(AriaRole.Link, LocatorGetByRoleOptions(Name = "Manage usage"))).ToHaveAttributeAsync("href", usageUrl)
 
-        // Asking again goes straight through, with no confirmation. The finished summary of the document is shown
-        // again and nothing is sent (F004: dismissing deletes the stored summary only from T006).
+        // Asking again after dismissing (which deletes the stored summary, F004) goes straight through, with no confirmation.
         do! click (button (panel page) "Dismiss")
         do! summarize page
         do! Assertions.Expect(panel page).ToContainTextAsync("Generated summary")
         do! Assertions.Expect(dialog).ToHaveCountAsync(0)
-        Assert.Equal(1, (fake.RequestsTo("api.openai.com", "/v1/responses")).Length)
+        Assert.Equal(2, (fake.RequestsTo("api.openai.com", "/v1/responses")).Length)
 
         // The usage limit, on the other document, points at her usage settings and keeps her signed in.
         do! click (button (panel page) "Dismiss")

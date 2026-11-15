@@ -15,6 +15,13 @@ Risky (storage). Covers FR-009, FR-010, SC-007. AR 2, AR 7, AR 8 apply (running 
 
 `scripts/check.sh T001 T002 T003 T004 T005 T006`: `Tests: 319 total, 1 failed` — the T001 placeholder assertion `DELETE` = 501 (now 204 where nothing is kept); updated, then `scripts/check.sh T001 T006`: `Tests: 89 total, 0 failed, 0 skipped`. CI runs the full suite on the PR.
 
+## Existing tests changed (approved by the lead)
+
+CI on the first push failed two F005 tests whose behavior this slice legitimately alters; intent kept, only the setup changed:
+- `ChatGptContractTests.fs` "the confirmation survives a host restart": the second host asks a second document (`article-pt.pdf`), because the first document's summary is now stored and returned instead of asked again.
+- `ChatGptJourneyTests.fs` (T011 journey): Dismiss now sends DELETE, so the second ask really sends a request: the fake answers calls 1-2, and 2 requests are expected.
+- `BackgroundSummaryContractTests.fs` (T001): the `DELETE` placeholder assertion 501 became 204.
+
 ## Sensitivity checks (uncommitted, reverted)
 
 - `Dismiss` without `capabilities.Delete`: `dismissing a finished summary deletes it for good and she can ask again` fails (1 of 56).

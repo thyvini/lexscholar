@@ -529,7 +529,9 @@ let ``the confirmation survives a host restart`` () =
         expectSummary (sendSummary first path confirmed) |> ignore
         path
     use second = TestHarness.Start(workspace = workspace, summaryHandler = fake)
-    expectSummary (sendSummary second path """{"confirmSend":false}""") |> ignore
+    // The first document's summary is stored (F004), so the second host asks for another document.
+    let otherPath = documentPathFor second "article-pt.pdf"
+    expectSummary (sendSummary second otherPath """{"confirmSend":false}""") |> ignore
 
 [<Fact; Trait("Task", "T007")>]
 let ``sign-out, then sign-in asks for the confirmation again`` () =
