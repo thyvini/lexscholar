@@ -70,7 +70,10 @@ let ``no secret reaches a log line, a response or a file in any flow`` () =
         TestHarness.Start(
             summaryHandler = fake,
             configure = fun host -> host.Services.GetRequiredService<ILoggerFactory>().AddProvider lines)
+    // One document per ask: a finished summary answers a second ask of the same pair without calling the service (F004).
     let path = documentPath harness
+    let pathLimit = documentPath harness
+    let pathEnded = documentPath harness
     // Sign in (the access token expires within ten minutes, so the first summary refreshes it).
     fake.ExpiresIn <- 300
     let _, start = call harness "start" HttpMethod.Post "/api/chatgpt/sign-in" "{}"
@@ -82,8 +85,8 @@ let ``no secret reaches a log line, a response or a file in any flow`` () =
     fake.RefreshToken <- "REFRESHSECRET-B"
     // Summary with confirmation and refresh, then the usage limit, then an ended sign-in.
     call harness "summary" HttpMethod.Post path confirmed |> ignore
-    call harness "summary-limit" HttpMethod.Post path confirmed |> ignore
-    call harness "summary-ended" HttpMethod.Post path confirmed |> ignore
+    call harness "summary-limit" HttpMethod.Post pathLimit confirmed |> ignore
+    call harness "summary-ended" HttpMethod.Post pathEnded confirmed |> ignore
     call harness "destinations" HttpMethod.Get "/api/summary/destinations" "" |> ignore
     // A failed sign-in.
     fake.TokenFailure <- Some(400, """{"error":"invalid_grant","error_description":"CODESECRET"}""")

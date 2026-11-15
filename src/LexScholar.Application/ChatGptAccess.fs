@@ -276,8 +276,9 @@ type SendPreparation =
 /// the confirmation (recorded only when the run goes on), the refresh when the access token
 /// expires within ten minutes, and the save of the result. Confirmation is checked before any
 /// network call. A refresh saves only if the record still exists with the same refresh token.
-/// Lock order is vault, then session.
-let prepareSend (vault: Vault) (auth: AuthClient) (clock: unit -> DateTimeOffset) (confirmSend: bool) (cancellation: CancellationToken) : Task<SendPreparation> =
+/// `cancellation` ends only the preparation (the request); the run it registers ends with `runOuter` (the job's token,
+/// F004) and with sign-out. Registering the run stays inside this step. Lock order is vault, then session.
+let prepareSend (vault: Vault) (auth: AuthClient) (clock: unit -> DateTimeOffset) (confirmSend: bool) (cancellation: CancellationToken) (runOuter: CancellationToken) : Task<SendPreparation> =
     vault.Locked(fun store -> task {
         match store.Read() with
         | None -> return NoSignIn
@@ -290,7 +291,7 @@ let prepareSend (vault: Vault) (auth: AuthClient) (clock: unit -> DateTimeOffset
                 if not (ChatGptSignIn.needsRefresh (clock ()) record) then
                     let ready = stamp record
                     if confirming then store.Save ready
-                    return Prepared(ready, vault.BeginRun cancellation)
+                    return Prepared(ready, vault.BeginRun runOuter)
                 else
                     let! refreshed =
                         task {
@@ -308,7 +309,7 @@ let prepareSend (vault: Vault) (auth: AuthClient) (clock: unit -> DateTimeOffset
                         | Some current when current.RefreshToken = record.RefreshToken ->
                             let ready = stamp renewed
                             store.Save ready
-                            return Prepared(ready, vault.BeginRun cancellation)
+                            return Prepared(ready, vault.BeginRun runOuter)
                         | _ -> return NoSignIn })
 
 

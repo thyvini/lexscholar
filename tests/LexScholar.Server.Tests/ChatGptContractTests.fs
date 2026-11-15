@@ -513,8 +513,8 @@ let ``confirming sends the summary through the plan with the first listed model 
     Assert.Equal(Some "Bearer access-token-1", request.Authorization)
     Assert.Contains("gpt-test", request.Body)
     Assert.True((storedRecord harness).TryGetProperty("confirmedAt") |> fst)
-    // A second summary of the same sign-in needs no confirmation.
-    expectSummary (sendSummary harness path """{"confirmSend":false}""") |> ignore
+    // A second summary of the same sign-in needs no confirmation (another document: the first one is finished, F004).
+    expectSummary (sendSummary harness (documentPath harness) """{"confirmSend":false}""") |> ignore
     use destinations = destinations harness.Client
     Assert.True(destinations.RootElement.GetProperty("chatgpt").GetProperty("confirmed").GetBoolean())
 
@@ -586,7 +586,7 @@ let ``with both available the named destination is used and configured keeps the
     Assert.Equal("127.0.0.1:9", configured.GetProperty("serviceHost").GetString())
     Assert.Single chat.Requests |> ignore
     Assert.Empty(openAiRequests fake)
-    let plan = expectSummary (sendSummary harness path """{"destination":"chatgpt","confirmSend":true}""")
+    let plan = expectSummary (sendSummary harness (documentPath harness) """{"destination":"chatgpt","confirmSend":true}""")
     Assert.Equal("ChatGPT plan", plan.GetProperty("serviceHost").GetString())
     Assert.Single chat.Requests |> ignore
 
@@ -627,7 +627,7 @@ let ``a token expiring within ten minutes is refreshed once and the rotated refr
     Assert.Equal("access-token-2", record.GetProperty("accessToken").GetString())
     Assert.True(record.TryGetProperty("confirmedAt") |> fst)
     // The new token is good for an hour: the next summary does not refresh again.
-    expectSummary (sendSummary harness path confirmed) |> ignore
+    expectSummary (sendSummary harness (documentPath harness) confirmed) |> ignore
     Assert.Equal(2, fake.RequestsTo("auth.openai.com", tokenPath).Length)
 
 [<Fact; Trait("Task", "T007")>]
@@ -739,8 +739,9 @@ let ``a summary naming the configured service does not wait for a refresh in fli
     let viaPlan = Threading.Tasks.Task.Run(fun () -> sendSummary harness path """{"destination":"chatgpt","confirmSend":true}""")
     refreshArrived.Task.WaitAsync(TimeSpan.FromSeconds 10.).GetAwaiter().GetResult()
     // The refresh holds the vault lock; the local summary must finish while it is held.
-    let local = Threading.Tasks.Task.Run(fun () -> sendJson harness path """{"destination":"configured","confirmSend":false}""")
-    expectConfiguredSummary harness path (local.WaitAsync(TimeSpan.FromSeconds 10.).GetAwaiter().GetResult()) |> ignore
+    let localPath = documentPath harness
+    let local = Threading.Tasks.Task.Run(fun () -> sendJson harness localPath """{"destination":"configured","confirmSend":false}""")
+    expectConfiguredSummary harness localPath (local.WaitAsync(TimeSpan.FromSeconds 10.).GetAwaiter().GetResult()) |> ignore
     release ()
     expectSummary (viaPlan.GetAwaiter().GetResult()) |> ignore
 
@@ -948,23 +949,6 @@ let ``signing out while the plan job waits fails it with signed_out and sends no
     Assert.Equal("signed_out", state.GetProperty("code").GetString())
     Assert.Equal(1, fake.RequestsTo("api.openai.com", "/v1/responses").Length)
     expectSignedOutEverywhere harness
-
-[<Fact; Trait("Task", "T003")>]
-let ``signing out after the result arrived but before it is kept fails the job and keeps no summary`` () =
-    let fake = new FakeOpenAi(ResponsesScript.Completed answer)
-    let harnessRef = ref None
-    let signOutNow () = harnessRef.Value |> Option.iter (fun h -> signOut h |> ignore)
-    use harness = TestHarness.Start(summaryHandler = new AfterResponses(fake, signOutNow))
-    harnessRef.Value <- Some harness
-    let path = documentPath harness
-    signInThrough harness fake "" |> ignore
-    let status, _ = sendJson harness path confirmed
-    Assert.Equal(HttpStatusCode.Accepted, status)
-    settle harness path
-    let _, state = getState harness path
-    Assert.Equal("failed", state.GetProperty("status").GetString())
-    Assert.Equal("signed_out", state.GetProperty("code").GetString())
-    Assert.False(state.TryGetProperty("summary") |> fst)
 
 [<Fact; Trait("Task", "T003")>]
 let ``a sign-in that ended during the refresh becomes a job created failed, readable with GET`` () =

@@ -28,6 +28,8 @@ type JobHandle = { Id: Guid; Token: CancellationToken }
 type private Job =
     { Id: Guid
       Source: CancellationTokenSource
+      /// The token the job's service calls receive and `Complete` checks: the source's own, or a plan run's (cancelled by sign-out).
+      Effective: CancellationToken
       mutable State: JobState
       mutable Run: Task }
 
@@ -51,10 +53,12 @@ type SummaryJobs(capabilities: SummaryJobCapabilities) =
     /// Runs `work` under the registry lock.
     member _.Locked(work: unit -> 'a) : 'a = lock gate work
 
-    /// Starts `run` as the job for `key` (research §1, §3). Under the lock, in order: the pair is no longer in the
-    /// project -> `NotAssociated`; a job is running -> `AlreadyRunning`; a failed job is replaced; a finished or stored
-    /// summary -> `AlreadyFinished`; otherwise the job starts. Its token is its own, linked to `stopping`, never to a request.
-    member _.Start(key: SummaryKey, stopping: CancellationToken, run: JobHandle -> Task<unit>) : StartOutcome =
+    /// Starts `run` as the job for `key` (research §1, §3) with a token source the caller made (a plan job needs it before
+    /// `prepareSend`) and the token its calls receive (`effective`: the source's own, or the plan run's, which sign-out
+    /// cancels). Under the lock, in order: the pair is no longer in the project -> `NotAssociated`; a job is running ->
+    /// `AlreadyRunning`; a failed job is replaced; a finished or stored summary -> `AlreadyFinished`; otherwise the job
+    /// starts and owns `source`. For any other outcome the caller still owns it.
+    member _.StartWith(key: SummaryKey, source: CancellationTokenSource, effective: CancellationToken, run: JobHandle -> Task<unit>) : StartOutcome =
         lock gate (fun () ->
             if not (capabilities.AssociationExists key) then NotAssociated
             else
@@ -64,28 +68,52 @@ type SummaryJobs(capabilities: SummaryJobCapabilities) =
                 // A failed job is replaced; a stored summary is as good as a finished job.
                 | _ when (capabilities.Find key).IsSome -> AlreadyFinished
                 | _ ->
-                    let source = CancellationTokenSource.CreateLinkedTokenSource stopping
-                    let job = { Id = Guid.NewGuid(); Source = source; State = JobState.Running None; Run = Task.CompletedTask }
+                    let job = { Id = Guid.NewGuid(); Source = source; Effective = effective; State = JobState.Running None; Run = Task.CompletedTask }
                     jobs[key] <- job
-                    let handle = { Id = job.Id; Token = source.Token }
+                    let handle = { Id = job.Id; Token = effective }
                     // The task runs on the pool; whatever it needs from the registry waits for this lock.
                     job.Run <- Task.Run(fun () -> run handle :> Task)
                     Started)
 
-    /// STUB (RED): see T003.
-    member this.StartWith(key: SummaryKey, source: CancellationTokenSource, effective: CancellationToken, run: JobHandle -> Task<unit>) : StartOutcome =
-        this.Start(key, source.Token, run)
+    /// `StartWith` for a job with its own token, linked to `stopping`, never to a request.
+    member this.Start(key: SummaryKey, stopping: CancellationToken, run: JobHandle -> Task<unit>) : StartOutcome =
+        let source = CancellationTokenSource.CreateLinkedTokenSource stopping
+        match this.StartWith(key, source, source.Token, run) with
+        | Started -> Started
+        | refused ->
+            source.Dispose()
+            refused
 
-    /// STUB (RED): see T003.
-    member _.StartFailed(key: SummaryKey, code: string, detail: string) : StartOutcome = NotAssociated
+    /// Creates the job for `key` already failed (a plan outcome decided before anything was sent). The same refusals as
+    /// `StartWith`: only a failed job is replaced.
+    member _.StartFailed(key: SummaryKey, code: string, detail: string) : StartOutcome =
+        lock gate (fun () ->
+            if not (capabilities.AssociationExists key) then NotAssociated
+            else
+                match jobs.TryGetValue key with
+                | true, { State = JobState.Running _ } -> AlreadyRunning
+                | true, { State = JobState.Finished _ } -> AlreadyFinished
+                | _ when (capabilities.Find key).IsSome -> AlreadyFinished
+                | _ ->
+                    let source = new CancellationTokenSource()
+                    source.Dispose()
+                    jobs[key] <- { Id = Guid.NewGuid(); Source = source; Effective = CancellationToken.None
+                                   State = JobState.Failed (code, detail, None); Run = Task.CompletedTask }
+                    Started)
 
-    /// Finishes the job `id` of `key` with its summary; false when the registry no longer holds that job.
+    /// Finishes the job `id` of `key` with its summary; false when the registry no longer holds that job, or when its
+    /// effective token is already cancelled (a plan job after sign-out): then the job ends `Failed signed_out` and
+    /// nothing is kept (research §3, AR 9). No sign-in lock is taken: a sign-out landing after this check is allowed to lose.
     member _.Complete(key: SummaryKey, id: Guid, summary: StoredSummary) : bool =
         lock gate (fun () ->
             match current key id with
             | Some job when (match job.State with JobState.Running _ -> true | _ -> false) ->
-                end' job (JobState.Finished summary)
-                true
+                if job.Effective.IsCancellationRequested then
+                    end' job (JobState.Failed ("signed_out", Summarize.failureDetail Summarize.ServiceError.SignedOut, None))
+                    false
+                else
+                    end' job (JobState.Finished summary)
+                    true
             | _ -> false)
 
     /// Ends the job `id` of `key` as failed; false when the registry no longer holds that job.

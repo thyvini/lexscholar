@@ -163,13 +163,8 @@ module Api =
             | Library.InvalidRole -> Reader.InvalidRole
             | _ -> Reader.RequestFailed) }
 
-    /// What a summary request answered: the plan's streamed summary (until T003) or the server's background job.
-    type SummaryAnswer =
-        | Streamed of Summary.Generated
-        | Job of Summary.Remote
-
-    /// Requests a summary. The configured service answers with its job's state (202, or 200 when one exists); the plan
-    /// path still streams NDJSON until its one `summary` or `failed` event. Failures never show response details.
+    /// Requests a summary. The server answers with the job's state (202, or 200 when one exists); nothing is streamed and
+    /// leaving the document does not abort the request. Failures never show response details.
     /// The state of the pair's summary job: None when the server has nothing (404); Error when it could not be asked.
     let summaryState (http: HttpClient) (projectId: Guid) (documentId: Guid) : Async<Result<Summary.Remote option, unit>> = async {
         try
@@ -183,7 +178,7 @@ module Api =
                 | None -> return Error ()
         with _ -> return Error () }
 
-    let summarize (http: HttpClient) (projectId: Guid) (documentId: Guid) (destination: Summary.Destination option) (confirmed: Summary.Confirmed option) (onProgress: Summary.Progress -> unit) (cancellation: Threading.CancellationToken) : Async<Result<SummaryAnswer, Summary.Failure>> = async {
+    let summarize (http: HttpClient) (projectId: Guid) (documentId: Guid) (destination: Summary.Destination option) (confirmed: Summary.Confirmed option) (cancellation: Threading.CancellationToken) : Async<Result<Summary.Remote, Summary.Failure>> = async {
         try
             use! tokenResponse = http.GetAsync("api/antiforgery", cancellation) |> Async.AwaitTask
             if not tokenResponse.IsSuccessStatusCode then return Error Summary.RequestFailed
@@ -192,32 +187,15 @@ module Api =
                 use tokenJson = JsonDocument.Parse(tokenBody)
                 use request = new HttpRequestMessage(HttpMethod.Post, $"api/projects/{projectId:D}/documents/{documentId:D}/summary")
                 request.Headers.Add("X-CSRF-TOKEN", tokenJson.RootElement.GetProperty("requestToken").GetString())
-                request.Content <- new StringContent(SummaryStream.requestBody destination confirmed, Encoding.UTF8, "application/json")
-                request.SetBrowserResponseStreamingEnabled(true) |> ignore
-                use! response = http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellation) |> Async.AwaitTask
-                if not response.IsSuccessStatusCode then
-                    let! body = response.Content.ReadAsStringAsync() |> Async.AwaitTask
-                    return Error (SummaryStream.failureOfBody body)
-                elif response.StatusCode = HttpStatusCode.Accepted || response.StatusCode = HttpStatusCode.OK && response.Content.Headers.ContentType.MediaType = "application/json" then
-                    let! body = response.Content.ReadAsStringAsync() |> Async.AwaitTask
-                    match SummaryStatus.parseRemote body with
-                    | Some remote -> return Ok (Job remote)
-                    | None -> return Error Summary.RequestFailed
+                request.Content <- new StringContent(SummaryStatus.requestBody destination confirmed, Encoding.UTF8, "application/json")
+                use! response = http.SendAsync(request, cancellation) |> Async.AwaitTask
+                let! body = response.Content.ReadAsStringAsync() |> Async.AwaitTask
+                if not response.IsSuccessStatusCode then return Error (SummaryStatus.failureOfBody body)
                 else
-                    use! stream = response.Content.ReadAsStreamAsync() |> Async.AwaitTask
-                    use reader = new IO.StreamReader(stream)
-                    let rec next () = async {
-                        match! reader.ReadLineAsync(cancellation).AsTask() |> Async.AwaitTask with
-                        | null -> return Error Summary.RequestFailed
-                        | line when String.IsNullOrWhiteSpace line -> return! next ()
-                        | line ->
-                            use json = JsonDocument.Parse(line)
-                            match SummaryStream.outcome json.RootElement with
-                            | Some outcome -> return outcome |> Result.map Streamed
-                            | None ->
-                                SummaryStream.progress json.RootElement |> Option.iter onProgress
-                                return! next () }
-                    return! next ()
+                    // 202, or 200 when the pair already has a summary: the job's state.
+                    match SummaryStatus.parseRemote body with
+                    | Some remote -> return Ok remote
+                    | None -> return Error Summary.RequestFailed
         with _ -> return Error Summary.RequestFailed }
 
 module ChatGptApi =
@@ -343,28 +321,14 @@ module private Ui =
     /// How often the open document's running summary is asked for (research §4).
     let private summaryPollMilliseconds = 2000
 
-    /// The requests in flight, by request number, so a `Cancel` effect can abort the fetch (FR-009).
-    let private running = Collections.Generic.Dictionary<int, Threading.CancellationTokenSource>()
-
     let private summaryCommand http (effect: Summary.Effect option) : Cmd<Msg> =
         match effect with
         | Some (Summary.Send (request, projectId, documentId, destination, confirmed)) ->
-            let source = new Threading.CancellationTokenSource()
-            running[request] <- source
             Cmd.ofEffect (fun dispatch ->
                 Async.StartImmediate(async {
-                    let! result = Api.summarize http projectId documentId destination confirmed (fun progress -> dispatch (SummaryMsg (Summary.Progressed (request, progress)))) source.Token
-                    running.Remove request |> ignore
-                    source.Dispose()
-                    match result with
-                    | Ok (Api.Job remote) -> dispatch (SummaryMsg (Summary.Accepted (request, projectId, documentId, remote)))
-                    | Ok (Api.Streamed generated) -> dispatch (SummaryMsg (Summary.Responded (request, Ok generated)))
+                    match! Api.summarize http projectId documentId destination confirmed Threading.CancellationToken.None with
+                    | Ok remote -> dispatch (SummaryMsg (Summary.Accepted (request, projectId, documentId, remote)))
                     | Error failure -> dispatch (SummaryMsg (Summary.Responded (request, Error failure))) }))
-        | Some (Summary.Cancel request) ->
-            match running.TryGetValue request with
-            | true, source -> source.Cancel()
-            | _ -> ()
-            Cmd.none
         | Some (Summary.Fetch (watch, projectId, documentId, delay)) ->
             Cmd.ofEffect (fun dispatch ->
                 Async.StartImmediate(async {
