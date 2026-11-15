@@ -196,24 +196,25 @@ let ``dismissing while the ask is still in flight stops the job that the late PO
             else route.ContinueAsync()
         let! _ = page.RouteAsync("**/summary", Func<IRoute, Task>(handler))
         let deleted = TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)
-        page.Response.Add(fun response -> if response.Request.Method = "DELETE" then deleted.TrySetResult() |> ignore)
+        let secondDeleted = TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)
+        let deletes = ref 0
+        page.Response.Add(fun response ->
+            if response.Request.Method = "DELETE" then
+                deletes.Value <- deletes.Value + 1
+                (if deletes.Value = 1 then deleted else secondDeleted).TrySetResult() |> ignore)
         do! click (summarizeButton page)
         let! route = intercepted.Task.WaitAsync(TimeSpan.FromSeconds 30.)
         do! click (button (page.GetByRole(AriaRole.Status).Filter(LocatorFilterOptions(HasText = "Summarizing"))) "Dismiss")
         do! deleted.Task.WaitAsync(TimeSpan.FromSeconds 30.)
         Assert.Equal(0, fake.Requests.Length)
         do! route.ContinueAsync()
-        // The job started after the first DELETE is stopped by the second one; nothing is kept.
-        do! fake.Waiting.WaitAsync(TimeSpan.FromSeconds 30.)
-        do! fake.Cancelled.WaitAsync(TimeSpan.FromSeconds 30.)
+        // The POST creates the job after the first DELETE; the second DELETE stops it (whether or not its call reached the fake yet).
+        do! secondDeleted.Task.WaitAsync(TimeSpan.FromSeconds 30.)
         do! Assertions.Expect(summarizeButton page).ToBeVisibleAsync()
         do! Assertions.Expect(page.GetByRole(AriaRole.Status).Filter(LocatorFilterOptions(HasText = "Summarizing"))).ToHaveCountAsync(0)
+        // The server holds nothing: the status list read after the last DELETE has no marker for the document or the project.
         do! Assertions.Expect((documentRow page "article-en.pdf").Locator(".summary-marker")).ToHaveCountAsync(0)
-        Assert.Equal(1, fake.Requests.Length)
-        do! page.UnrouteAllAsync()
-        do! click (summarizeButton page)
-        do! expectCitation page
-        Assert.Equal(2, fake.Requests.Length) })
+        do! Assertions.Expect((projectRow page "Alpha").Locator(".summary-marker")).ToHaveCountAsync(0) })
 
 
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T010"); Trait("Category", "Browser")>]

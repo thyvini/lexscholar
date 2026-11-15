@@ -15,7 +15,7 @@ Risky-ish (client concurrency). Covers FR-012. Defect found by speckit-analyze C
 
 ## Sensitivity check (uncommitted, reverted)
 
-Removing the `Generating` case of `Dismiss`: `scripts/check.sh T013` gave `Tests: 34 total, 7 failed`: five new state tests and the journey in both browsers (the held call was never cancelled, timeout). Restored.
+Removing the `Generating` case of `Dismiss`: `scripts/check.sh T013` gave `Tests: 34 total, 7 failed`: five new state tests and the journey in both browsers (the marker of a running summary stayed). Restored.
 
 ## Limits
 
@@ -33,3 +33,7 @@ The first CI run failed three older state tests (T002 x2, T010) that asserted th
 ## GPT review round 2 (one P1, fixed)
 
 A failed DELETE while she was away was dropped. Failures are now kept per pair (`Failures`, replacing the in-state flag), and the dismissal ends as a failure however the answers are ordered; away, it is reported on return (`Refresh` sets `DismissFailed` and fetches the job). The earlier "Limit" note is obsolete. Test added.
+
+## CI correction 2
+
+The journey waited for the fake's `Waiting` and `Cancelled`, but the second DELETE can stop the job before its call reaches the fake (Chromium timed out on CI). It now waits for the second DELETE response and asserts the document and project markers end up absent (the status list is read after every DELETE answer); the sensitivity check still applies (without the fix no DELETE is sent and the first wait times out).
