@@ -541,3 +541,23 @@ let ``while the delete is in flight nothing can be asked; its answer ends or res
     // An answer for another document, or when not dismissing, is ignored.
     assertState (dismissing, None) (update (Dismissed (project, Guid.NewGuid(), true)) dismissing)
     assertState (shown, None) (update (Dismissed (project, document, true)) shown)
+
+[<Fact; Trait("Task", "T006")>]
+let ``coming back while the delete is in flight waits for its answer`` () =
+    let asked, _ = update Summarize reading
+    let shown, _ = update (Responded (1, Ok generated)) asked
+    let dismissing, _ = update Dismiss shown
+    let away, _ = update (ReaderChanged (Some project, Some other)) dismissing
+    let returned, _ = update (ReaderChanged (Some project, Some document)) away
+    let back, fetch = update Refresh returned
+    // No fetch of the summary being deleted.
+    assertState (Dismissing Idle) back.State
+    assertState None fetch
+    let ended, endEffect = update (Dismissed (project, document, true)) back
+    assertState Idle ended.State
+    assertState None endEffect
+    // A refused delete after coming back fetches the summary that is still stored.
+    let refused, refusedEffect = update (Dismissed (project, document, false)) back
+    assertState true refused.DismissFailed
+    assertState Idle refused.State
+    assertState true (match refusedEffect with Some (Fetch (_, p, d, false)) -> (p, d) = (project, document) | _ -> false)

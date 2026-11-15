@@ -24,7 +24,7 @@ CI on the first push failed two F005 tests whose behavior this slice legitimatel
 
 ## Review follow-up (gpt-review P1 x2)
 
-Dismiss is now a state, not a fire-and-forget: `Dismissing previous` until the DELETE answers (nothing can be asked meanwhile, so the old summary cannot return and a delayed DELETE cannot remove a newer one); a failed or refused DELETE restores the summary and shows "The summary could not be dismissed". Tests: `SummaryStateTests` (in-flight guards, answer ends or restores); the T004 dismiss test now sends the `Dismissed` answer. Residual: leaving the document while its DELETE is still in flight and coming back before it lands can still fetch the old summary once (localhost, milliseconds); accepted, she can dismiss again.
+Dismiss is now a state, not a fire-and-forget: `Dismissing previous` until the DELETE answers (nothing can be asked meanwhile, so the old summary cannot return and a delayed DELETE cannot remove a newer one); a failed or refused DELETE restores the summary and shows "The summary could not be dismissed". Tests: `SummaryStateTests` (in-flight guards, answer ends or restores); the T004 dismiss test now sends the `Dismissed` answer. A second review round (P1: leaving mid-DELETE and returning could show the old summary) is handled by `Pending` pairs: coming back to a pair whose DELETE has not answered waits (`Dismissing Idle`, no fetch); a refused DELETE then fetches the stored summary again. Test: `coming back while the delete is in flight waits for its answer`.
 
 ## Sensitivity checks (uncommitted, reverted)
 
