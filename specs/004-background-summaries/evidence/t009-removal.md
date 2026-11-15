@@ -9,7 +9,7 @@ Risky (storage, concurrency). Covers FR-013. AR 1 and AR 3 apply.
 
 ## Change
 
-- `SummaryJobs.RemoveAssociation(key, delete)`: under the registry lock, `Stop key` (job removed, source cancelled, stored row deleted) and then `delete ()` (the association delete), returning its result.
+- `SummaryJobs.RemoveAssociation(key, delete)`: under the registry lock, the job is removed and its source cancelled, then `delete ()` (the association delete) runs and its result is returned. The stored row is not deleted separately: it goes with the association through the FK cascade, in one database operation, so a failed or interrupted removal never loses the summary of a document that stays in the project (gpt-review P0). `Stop` (dismiss) still deletes the row itself.
 - `Start` and `StartFailed` already check the association inside the same lock, so a POST that passed its early checks and reaches `Start` after the removal gets `NotAssociated` (`not_found`), and starts no job.
 - `LibraryEndpoints.map` takes the registry; `DELETE /api/projects/{p}/documents/{d}` goes through `RemoveAssociation`; the FK cascade also deletes the row. `Endpoints.fs` now creates the registry before `LibraryEndpoints.map` (it only needs the data directory).
 
@@ -23,7 +23,7 @@ Risky (storage, concurrency). Covers FR-013. AR 1 and AR 3 apply.
 
 ## Sensitivity check (uncommitted, reverted)
 
-`RemoveAssociation` without the lock (`this.Stop key; delete ()`): `a Start launched while the association is being deleted gets NotAssociated` failed 20 of 20 runs. With the lock: 0 of 15 failures. The test starts `Start` on another thread inside the `delete` callback and continues once that thread has either finished or blocked on the lock (thread-state handshake, bounded to 30 s), so the lock is what decides the outcome. Without that handshake the same test failed 0 of 20 against the broken code, so the handshake is what makes it sensitive. The test never fails with the correct code.
+`RemoveAssociation` without the lock (`dropJob key; delete ()`): `a Start launched while the association is being deleted gets NotAssociated` failed 10 of 10 runs; with the lock it never fails. The test starts `Start` on another thread inside the `delete` callback and waits up to 200 ms for an early answer: only a `Start` that did not wait for the lock can answer in that time, so with the lock the wait just times out and the test goes on. This is a bounded timed wait (no polling of thread state); it cannot make the correct code fail, and a broken lock is detected whenever the racing `Start` is scheduled within 200 ms, which it was in every run. (A version without any wait detected the broken lock 0 of 20 times.) `a failed association delete leaves the stored summary alone` covers the P0 ordering.
 
 ## Limits
 
