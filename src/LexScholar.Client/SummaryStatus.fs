@@ -107,7 +107,7 @@ let parseRemote (body: string) : Summary.Remote option =
         use json = System.Text.Json.JsonDocument.Parse body
         let root = json.RootElement
         match root.GetProperty("status").GetString() with
-        | "running" -> Some Summary.RemoteRunning
+        | "running" -> Some (Summary.RemoteRunning None)
         | "finished" -> Some (Summary.RemoteFinished (generated (root.GetProperty "summary")))
         | "failed" ->
             match failureOfCode (root.GetProperty("code").GetString()) with

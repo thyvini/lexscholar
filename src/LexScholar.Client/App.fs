@@ -335,7 +335,7 @@ module private Ui =
                     // While polling, a failed fetch keeps waiting; the first fetch on return shows nothing then.
                     if delay then do! Async.Sleep summaryPollMilliseconds
                     let! remote = Api.summaryState http projectId documentId
-                    let remote = match remote with Ok state -> state | Error () -> (if delay then Some Summary.RemoteRunning else None)
+                    let remote = match remote with Ok state -> state | Error () -> (if delay then Some (Summary.RemoteRunning None) else None)
                     dispatch (SummaryMsg (Summary.Polled (watch, remote))) }))
         | None -> Cmd.none
 

@@ -330,13 +330,13 @@ let private asked = update Summarize reading |> fst
 
 [<Fact; Trait("Task", "T002")>]
 let ``a 202 with a running job keeps waiting and polls after the interval`` () =
-    let model, effect = update (Accepted (1, project, document, RemoteRunning)) asked
+    let model, effect = update (Accepted (1, project, document, (RemoteRunning None))) asked
     assertState Running model.State
     match effect with
     | Some (Fetch (watch, p, d, true)) ->
         assertState project p
         assertState document d
-        let again, next = update (Polled (watch, Some RemoteRunning)) model
+        let again, next = update (Polled (watch, Some (RemoteRunning None))) model
         assertState Running again.State
         assertState (Some (Fetch (watch, project, document, true))) next
     | other -> failwithf "Expected a delayed Fetch, got %A" other
@@ -353,7 +353,7 @@ let ``a job answered while the POST was open is shown, or its failure`` () =
 
 [<Fact; Trait("Task", "T002")>]
 let ``leaving a document with a running job cancels nothing and returning asks the server`` () =
-    let running, _ = update (Accepted (1, project, document, RemoteRunning)) asked
+    let running, _ = update (Accepted (1, project, document, (RemoteRunning None))) asked
     let away, cancel = update (ReaderChanged (Some project, Some (Guid.NewGuid()))) running
     assertState Idle away.State
     assertState None cancel
@@ -377,9 +377,9 @@ let ``a fetched state for a document she has left is dropped`` () =
     let late, lateEffect = update (Polled (watch, Some (RemoteFinished generated))) moved
     assertState Idle late.State
     assertState None lateEffect
-    let dismissed, _ = update (Accepted (1, project, document, RemoteRunning)) asked
+    let dismissed, _ = update (Accepted (1, project, document, (RemoteRunning None))) asked
     let hidden, _ = update Dismiss dismissed
-    let stale, staleEffect = update (Polled (dismissed.Watch, Some RemoteRunning)) hidden
+    let stale, staleEffect = update (Polled (dismissed.Watch, Some (RemoteRunning None))) hidden
     assertState Idle stale.State
     assertState None staleEffect
 
@@ -404,7 +404,7 @@ let ``a POST answered after she left and came back still shows the job`` () =
     let watch = match effect with Some (Fetch (w, _, _, _)) -> w | other -> failwithf "Expected Fetch, got %A" other
     let none, _ = update (Polled (watch, None)) refreshed
     assertState Idle none.State
-    let running, next = update (Accepted (1, project, document, RemoteRunning)) none
+    let running, next = update (Accepted (1, project, document, (RemoteRunning None))) none
     assertState Running running.State
     assertState true (match next with Some (Fetch (_, _, _, true)) -> true | _ -> false)
     // The answer for another document is not shown here.
@@ -421,3 +421,50 @@ let ``a POST answered after she dismissed is not shown`` () =
     let again, _ = update Summarize dismissed
     let old, _ = update (Accepted (1, project, document, RemoteFinished generated)) again
     assertState again.State old.State
+
+// F004 T004: progress comes from the job's state; polling stops when it ends.
+
+[<Fact; Trait("Task", "T004")>]
+let ``a running job's progress is shown, updates on each poll and polling continues`` () =
+    let running, effect = update (Accepted (1, project, document, RemoteRunning (Some (PagesProcessed (5, 40))))) asked
+    assertState (Some (PagesProcessed (5, 40))) running.Progress
+    let watch = match effect with Some (Fetch (w, _, _, true)) -> w | other -> failwithf "Expected a delayed Fetch, got %A" other
+    let later, next = update (Polled (watch, Some (RemoteRunning (Some Combining)))) running
+    assertState (Some Combining) later.Progress
+    assertState (Some (Fetch (watch, project, document, true))) next
+
+[<Fact; Trait("Task", "T004")>]
+let ``returning to a running document shows its progress and keeps polling until it finishes`` () =
+    let away, _ = update (ReaderChanged (Some project, Some (Guid.NewGuid()))) asked
+    let back, _ = update (ReaderChanged (Some project, Some document)) away
+    let refreshed, effect = update Refresh back
+    let watch = match effect with Some (Fetch (w, _, _, false)) -> w | other -> failwithf "Expected an immediate Fetch, got %A" other
+    let running, next = update (Polled (watch, Some (RemoteRunning (Some (PagesProcessed (12, 40)))))) refreshed
+    assertState Running running.State
+    assertState (Some (PagesProcessed (12, 40))) running.Progress
+    assertState (Some (Fetch (watch, project, document, true))) next
+    let finished, stop = update (Polled (watch, Some (RemoteFinished generated))) running
+    assertState (Shown generated) finished.State
+    assertState None finished.Progress
+    assertState None stop
+
+[<Fact; Trait("Task", "T004")>]
+let ``a failed job clears progress and stops polling, and a response for another document is dropped`` () =
+    let running, _ = update (Accepted (1, project, document, RemoteRunning (Some (PagesProcessed (5, 40))))) asked
+    let failed, stop = update (Polled (running.Watch, Some (RemoteFailed UsageLimitReached))) running
+    assertState (Failed UsageLimitReached) failed.State
+    assertState None failed.Progress
+    assertState None stop
+    let moved, _ = update (ReaderChanged (Some project, Some (Guid.NewGuid()))) running
+    assertState None moved.Progress
+    let late, lateEffect = update (Polled (running.Watch, Some (RemoteRunning (Some (PagesProcessed (30, 40)))))) moved
+    assertState Idle late.State
+    assertState None late.Progress
+    assertState None lateEffect
+
+[<Fact; Trait("Task", "T004")>]
+let ``a running state is read with its pages processed or combining`` () =
+    let read body = LexScholar.Client.SummaryStatus.parseRemote body
+    assertState (Some (RemoteRunning None)) (read """{"status":"running"}""")
+    assertState (Some (RemoteRunning (Some (PagesProcessed (5, 40))))) (read """{"status":"running","pagesProcessed":5,"totalPages":40}""")
+    assertState (Some (RemoteRunning (Some Combining))) (read """{"status":"running","combining":true}""")

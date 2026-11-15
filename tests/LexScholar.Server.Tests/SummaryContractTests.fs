@@ -271,11 +271,27 @@ let ``a response that breaks while its body is read is a service_failed event`` 
 [<Fact; Trait("Task", "T006")>]
 let ``a 40-page document is summarized in several calls, then combined, into one summary`` () =
     // Later map calls cite page 1, which is not in their chunk, so only the first chunk yields a point;
-    // the combine call may cite page 1. Progress events are no longer streamed (F004 T004 reports progress from the job).
-    let script n = Reply """{"points":[{"text":"Main idea","pages":[1]}]}"""
-    let status, events, fake, _ = summarizeWith "long-40.pdf" (script 0) []
+    // the combine call may cite page 1. The first call answers and the second is held, so the job's progress is visible.
+    let reply = """{"points":[{"text":"Main idea","pages":[1]}]}"""
+    let fake = new FakeChatService(fun n -> if n = 2 then Hold reply else Reply reply)
+    use harness = TestHarness.Start(settings = settings, summaryHandler = fake)
+    let project = seedProject harness.Root
+    let document = import harness.Client "long-40.pdf"
+    associate harness.Client project document
+    let status, text = summarize harness.Client project document
     Assert.Equal(HttpStatusCode.Accepted, status)
-    Assert.Equal("summary", (Assert.Single events).GetProperty("type").GetString())
+    fake.Waiting.WaitAsync(TimeSpan.FromSeconds 30.).GetAwaiter().GetResult()
+    let path = $"/api/projects/{project}/documents/{document}/summary"
+    let progress () =
+        let _, state = send harness.Client HttpMethod.Get path None
+        use json = JsonDocument.Parse state
+        match json.RootElement.TryGetProperty "pagesProcessed" with
+        | true, value -> value.GetInt32()
+        | _ -> -1
+    Assert.True(progress () >= 1, "the first chunk's pages are reported while the second call is held")
+    fake.Release()
+    let status, state = (status, text) |> settledState harness project document
+    Assert.Equal("summary", (asEvent state).GetProperty("type").GetString())
     Assert.True(fake.Requests.Length >= 3, "several chunks mean several map calls, then a combine call")
 
 let private elsewhere = [ "LexScholar:Summary:Endpoint", "http://summary.example.test:8080/v1"; "LexScholar:Summary:Model", "gpt" ]

@@ -125,6 +125,10 @@ type SummaryJobs(capabilities: SummaryJobCapabilities) =
                 true
             | _ -> false)
 
+    /// Records the progress of the running job `id` of `key`; false when the registry no longer holds that job running.
+    member _.Progress(key: SummaryKey, id: Guid, progress: Progress) : bool =
+        false
+
     member _.State(key: SummaryKey) : JobState option =
         lock gate (fun () ->
             match jobs.TryGetValue key with
