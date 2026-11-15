@@ -561,3 +561,38 @@ let ``coming back while the delete is in flight waits for its answer`` () =
     assertState true refused.DismissFailed
     assertState Idle refused.State
     assertState true (match refusedEffect with Some (Fetch (_, p, d, false)) -> (p, d) = (project, document) | _ -> false)
+
+// F004 T008: Stop.
+
+[<Fact; Trait("Task", "T008")>]
+let ``stopping a running summary sends the delete and waits for it, then she can ask again`` () =
+    let asked, _ = update Summarize reading
+    let running, _ = update (Accepted (1, project, document, RemoteRunning None)) asked
+    assertState Running running.State
+    let stopping, effect = update Stop running
+    assertState (Dismissing Running) stopping.State
+    assertState (Some (DeleteSummary (project, document))) effect
+    // Nothing can be asked, or stopped again, until the server answers.
+    assertState (stopping, None) (update Summarize stopping)
+    assertState (stopping, None) (update Stop stopping)
+    let stopped, stoppedEffect = update (Dismissed (project, document, true)) stopping
+    assertState Idle stopped.State
+    assertState None stoppedEffect
+    // A poll answered after the stop is dropped.
+    assertState Idle (fst (update (Polled (running.Watch, Some (RemoteRunning None))) stopped)).State
+    let again, send = update Summarize stopped
+    assertState true (match again.State, send with Generating _, Some (Send _) -> true | _ -> false)
+
+[<Fact; Trait("Task", "T008")>]
+let ``a failed stop asks the server what is there so polling resumes, and Stop does nothing unless running`` () =
+    let asked, _ = update Summarize reading
+    let running, _ = update (Accepted (1, project, document, RemoteRunning None)) asked
+    let stopping, _ = update Stop running
+    let refused, effect = update (Dismissed (project, document, false)) stopping
+    assertState true refused.DismissFailed
+    assertState Idle refused.State
+    assertState true (match effect with Some (Fetch (_, p, d, false)) -> (p, d) = (project, document) | _ -> false)
+    assertState None (snd (update Stop reading))
+    assertState None (snd (update Stop asked))
+    let shown, _ = update (Responded (1, Ok generated)) asked
+    assertState None (snd (update Stop shown))

@@ -453,3 +453,61 @@ let ``the same document in two projects has two independent summaries`` () =
     Assert.Equal(HttpStatusCode.NoContent, fst (delete harness first document))
     Assert.Equal(HttpStatusCode.NotFound, fst (sendWith harness.Client HttpMethod.Get (path first document) None))
     Assert.Equal("finished", (getJson harness second document).GetProperty("status").GetString())
+
+// F004 T008: Stop. After DELETE returns on a running summary nothing more is sent and nothing is kept (AR 3).
+
+[<Fact; Trait("Task", "T008")>]
+let ``stopping a running multi-chunk summary cancels the held call, sends nothing later and keeps nothing`` () =
+    let fake = new FakeChatService(heldAfterFirst)
+    use harness = TestHarness.Start(settings = settings, summaryHandler = fake)
+    let project = seedProject harness.Root
+    let document = addDocument harness.Client project "long-40.pdf"
+    Assert.Equal(HttpStatusCode.Accepted, fst (ask harness.Client project document))
+    waitFor fake.Waiting
+    let sent = fake.Requests.Length
+    Assert.Equal(HttpStatusCode.NoContent, fst (delete harness project document))
+    waitFor fake.Cancelled
+    settleJob harness project document
+    // Releasing what was held changes nothing: the job is gone.
+    fake.Release()
+    Assert.Equal(sent, fake.Requests.Length)
+    Assert.Equal(HttpStatusCode.NotFound, fst (sendWith harness.Client HttpMethod.Get (path project document) None))
+    Assert.Equal(0L, storedRows harness)
+    // She can ask again.
+    Assert.Equal(HttpStatusCode.Accepted, fst (ask harness.Client project document))
+    settleJob harness project document
+
+[<Fact; Trait("Task", "T008")>]
+let ``stopping while the last call is released leaves no summary and no row either way`` () =
+    let fake = new FakeChatService(Hold answer)
+    use harness = TestHarness.Start(settings = settings, summaryHandler = fake)
+    let project = seedProject harness.Root
+    let document = addDocument harness.Client project "article-en.pdf"
+    Assert.Equal(HttpStatusCode.Accepted, fst (ask harness.Client project document))
+    waitFor fake.Waiting
+    // The service answers and Stop arrives together: whichever the registry takes first, the outcome is the same.
+    fake.Release()
+    Assert.Equal(HttpStatusCode.NoContent, fst (delete harness project document))
+    settleJob harness project document
+    Assert.Equal(HttpStatusCode.NotFound, fst (sendWith harness.Client HttpMethod.Get (path project document) None))
+    Assert.Equal(0L, storedRows harness)
+    Assert.Equal(1, fake.Requests.Length)
+
+[<Fact; Trait("Task", "T008")>]
+let ``stopping the same document's summary in one project leaves the other running`` () =
+    let fake = new FakeChatService(Hold answer)
+    use harness = TestHarness.Start(settings = settings, summaryHandler = fake)
+    let first = seedProject harness.Root
+    let second = seedProject harness.Root
+    let document = addDocument harness.Client first "article-en.pdf"
+    let body = JsonSerializer.Serialize({| documentId = string document; role = "FocusedSource" |})
+    Assert.Equal(HttpStatusCode.Created, fst (sendWith harness.Client HttpMethod.Post $"/api/projects/{second}/documents" (Some (new StringContent(body, Encoding.UTF8, "application/json")))))
+    Assert.Equal(HttpStatusCode.Accepted, fst (ask harness.Client first document))
+    Assert.Equal(HttpStatusCode.Accepted, fst (ask harness.Client second document))
+    Assert.Equal(HttpStatusCode.NoContent, fst (delete harness first document))
+    Assert.Equal(HttpStatusCode.NotFound, fst (sendWith harness.Client HttpMethod.Get (path first document) None))
+    Assert.Equal("running", (getJson harness second document).GetProperty("status").GetString())
+    fake.Release()
+    settleJob harness second document
+    Assert.Equal("finished", (getJson harness second document).GetProperty("status").GetString())
+    Assert.Equal(HttpStatusCode.NotFound, fst (sendWith harness.Client HttpMethod.Get (path first document) None))
