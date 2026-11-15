@@ -269,6 +269,8 @@ let private summarizeViaPlan (context: HttpContext) (vault: ChatGptAccess.Vault)
                             jobs.Fail(key, job.Id, failureCode error, Summarize.failureDetail error, None) |> ignore
                     | Ok models ->
                         match ChatGptSignIn.pickModel models with
+                        // A sign-out that came while the list was being read wins over an unusable list.
+                        | None when job.Token.IsCancellationRequested -> jobs.Fail(key, job.Id, "signed_out", signedOutDetail, None) |> ignore
                         | None -> jobs.Fail(key, job.Id, "service_failed", Summarize.failureDetail Summarize.ServiceError.UnusableOutput, None) |> ignore
                         | Some model ->
                             let settings : ResponsesApi.Settings = { Model = model; AccessToken = credentials.AccessToken }
