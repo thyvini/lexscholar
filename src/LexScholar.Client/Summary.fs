@@ -147,7 +147,12 @@ let update (message: Message) (model: Model) : Model * Effect option =
         | _ -> model, None
     | Dismiss ->
         let abandoned, effect = abandon model
-        { abandoned with Claim = 0 }, effect
+        // A finished or failed summary is the server's too: dismissing deletes it there, or asking again returns the old one.
+        let delete =
+            match model.Project, model.Document, model.State with
+            | Some project, Some document, (Shown _ | Failed _) -> Some (DeleteSummary (project, document))
+            | _ -> effect
+        { abandoned with Claim = 0 }, delete
     | ConfirmSend ->
         match model.Project, model.Document, model.State with
         | Some project, Some document, Confirming (Service (host, name)) -> start project document (Some UseConfigured) (Some (ConfirmedService (host, name)))

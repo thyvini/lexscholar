@@ -40,7 +40,8 @@ let ``deleting a summary exists and needs the antiforgery token`` () =
     use refused = send harness.Client HttpMethod.Delete path None
     Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode)
     use answered = send harness.Client HttpMethod.Delete path (Some (token harness.Client))
-    Assert.Equal(HttpStatusCode.NotImplemented, answered.StatusCode)
+    // Live since T006: dismissing where nothing is kept is idempotent.
+    Assert.Equal(HttpStatusCode.NoContent, answered.StatusCode)
 
 let private settings = [ "LexScholar:Summary:Endpoint", "http://127.0.0.1:9/v1"; "LexScholar:Summary:Model", "m" ]
 

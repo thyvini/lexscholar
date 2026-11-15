@@ -11,12 +11,12 @@ module Endpoints =
         ReaderEndpoints.map app configuration
         let vault = ChatGptEndpoints.map app configuration
         let directory = configuration.DataDirectory
-        // One registry for the process; the repository functions replace the stubs in T006.
+        // One registry for the process, over the stored summaries.
         let jobs =
             SummaryJobs(
-                { Find = fun _ -> None
-                  Save = fun _ _ -> ()
-                  Delete = ignore
+                { Find = SummaryRepository.find directory
+                  Save = SummaryRepository.save directory
+                  Delete = SummaryRepository.delete directory
                   AssociationExists =
                     fun key ->
                         match LibraryRepository.listForProject directory key.Project with

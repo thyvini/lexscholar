@@ -178,6 +178,20 @@ module Api =
                 | None -> return Error ()
         with _ -> return Error () }
 
+    /// Deletes the pair's finished or failed summary on the server (idempotent). A failure is ignored: the summary
+    /// then shows again the next time the document is opened, and she can dismiss it again.
+    let dismissSummary (http: HttpClient) (projectId: Guid) (documentId: Guid) : Async<unit> = async {
+        try
+            use! tokenResponse = http.GetAsync("api/antiforgery") |> Async.AwaitTask
+            if tokenResponse.IsSuccessStatusCode then
+                let! tokenBody = tokenResponse.Content.ReadAsStringAsync() |> Async.AwaitTask
+                use tokenJson = JsonDocument.Parse(tokenBody)
+                use request = new HttpRequestMessage(HttpMethod.Delete, $"api/projects/{projectId:D}/documents/{documentId:D}/summary")
+                request.Headers.Add("X-CSRF-TOKEN", tokenJson.RootElement.GetProperty("requestToken").GetString())
+                use! _ = http.SendAsync request |> Async.AwaitTask
+                ()
+        with _ -> () }
+
     let summarize (http: HttpClient) (projectId: Guid) (documentId: Guid) (destination: Summary.Destination option) (confirmed: Summary.Confirmed option) (cancellation: Threading.CancellationToken) : Async<Result<Summary.Remote, Summary.Failure>> = async {
         try
             use! tokenResponse = http.GetAsync("api/antiforgery", cancellation) |> Async.AwaitTask
@@ -337,7 +351,8 @@ module private Ui =
                     let! remote = Api.summaryState http projectId documentId
                     let remote = match remote with Ok state -> state | Error () -> (if delay then Some (Summary.RemoteRunning None) else None)
                     dispatch (SummaryMsg (Summary.Polled (watch, remote))) }))
-        | Some (Summary.DeleteSummary _) -> Cmd.none
+        | Some (Summary.DeleteSummary (projectId, documentId)) ->
+            Cmd.ofEffect (fun _ -> Api.dismissSummary http projectId documentId |> Async.StartImmediate)
         | None -> Cmd.none
 
     let chatGptCommand http (navigation: NavigationManager) (effect: ChatGpt.Effect option) : Cmd<Msg> =
