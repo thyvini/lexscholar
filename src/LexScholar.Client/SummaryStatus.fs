@@ -21,13 +21,26 @@ type SummaryState =
     | Finished of Finished
     | Failed of code: string * detail: string option * omittedPoints: int option
 
-type Status =
-    | Running
-    | Finished
-    | Failed
+type Status = LexScholar.Domain.SummaryStatus
 
 /// One entry of `GET /api/summaries`.
 type StatusEntry = { ProjectId: System.Guid; DocumentId: System.Guid; Status: Status }
+
+/// The list markers' state: the last statuses read, and the number of the polling loop that may continue (T010 stub).
+type Statuses = { Entries: StatusEntry list; Watch: int }
+
+type StatusMessage =
+    | Refresh
+    | StatusesLoaded of watch: int * Result<StatusEntry list, unit>
+
+type StatusEffect = FetchStatuses of watch: int * delay: bool
+
+let initialStatuses = { Entries = []; Watch = 0 }
+let updateStatuses (message: StatusMessage) (model: Statuses) : Statuses * StatusEffect option = model, None
+let followView (before: System.Guid option * System.Guid option) (after: System.Guid option * System.Guid option) (model: Statuses) : Statuses * StatusEffect option = model, None
+let parseStatuses (body: string) : StatusEntry list option = None
+let documentStatus (entries: StatusEntry list) (project: System.Guid) (document: System.Guid) : Status option = None
+let projectStatus (entries: StatusEntry list) (project: System.Guid) : Status option = None
 
 // Reading the summary endpoint's JSON (error bodies, job states) and writing its request, moved here from the
 // NDJSON reader (F004 T003). Pure parsing, no HTTP.

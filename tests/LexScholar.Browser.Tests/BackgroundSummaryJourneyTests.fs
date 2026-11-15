@@ -175,3 +175,42 @@ let ``Stop clears a running summary, the held call is cancelled and she can ask 
         do! click (summarizeButton page)
         do! expectCitation page
         Assert.Equal(2, fake.Requests.Length) })
+
+let private documentRow (page: IPage) (fileName: string) = page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = fileName))
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T010"); Trait("Category", "Browser")>]
+let ``while viewing another document the marker of a running summary turns to finished without a reload`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use fake = new FakeChatService(Hold answer)
+        use harness = TestHarness.Start(serveClient = true, settings = settings, summaryHandler = fake)
+        let! page = openApp browser harness
+        do! createProject page "Alpha"
+        do! importAndAdd page "article-en.pdf"
+        do! importAndAdd page "article-pt.pdf"
+        do! openDocument page "article-en.pdf"
+        do! click (summarizeButton page)
+        do! fake.Waiting.WaitAsync(TimeSpan.FromSeconds 30.)
+        do! openDocument page "article-pt.pdf"
+        // Viewing B: A's marker and the project's marker say running; B has none.
+        do! Assertions.Expect((documentRow page "article-en.pdf").Locator(".summary-marker")).ToHaveTextAsync("Summary running")
+        do! Assertions.Expect((documentRow page "article-pt.pdf").Locator(".summary-marker")).ToHaveCountAsync(0)
+        do! Assertions.Expect((projectRow page "Alpha").Locator(".summary-marker")).ToHaveTextAsync("Summary running")
+        fake.Release()
+        // No reload, no click: polling updates both.
+        do! Assertions.Expect((documentRow page "article-en.pdf").Locator(".summary-marker")).ToHaveTextAsync("Summary finished")
+        do! Assertions.Expect((projectRow page "Alpha").Locator(".summary-marker")).ToHaveTextAsync("Summary finished") })
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T010"); Trait("Category", "Browser")>]
+let ``a failed summary is marked failed in the list`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use fake = new FakeChatService(fun _ -> Status 400)
+        use harness = TestHarness.Start(serveClient = true, settings = settings, summaryHandler = fake)
+        let! page = openApp browser harness
+        do! createProject page "Alpha"
+        do! importAndAdd page "article-en.pdf"
+        do! importAndAdd page "article-pt.pdf"
+        do! openDocument page "article-en.pdf"
+        do! click (summarizeButton page)
+        do! openDocument page "article-pt.pdf"
+        do! Assertions.Expect((documentRow page "article-en.pdf").Locator(".summary-marker")).ToHaveTextAsync("Summary failed")
+        do! Assertions.Expect((projectRow page "Alpha").Locator(".summary-marker")).ToHaveTextAsync("Summary failed") })

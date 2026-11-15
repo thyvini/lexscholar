@@ -84,6 +84,12 @@ type SummaryStatus =
     | Failed
 
 module Summaries =
+    /// The marker a job state shows (T010 stub).
+    let statusOf (state: JobState) : SummaryStatus = SummaryStatus.Failed
+
+    /// A project's marker from its summaries' statuses (T010 stub).
+    let rollUp (statuses: SummaryStatus list) : SummaryStatus option = None
+
     /// Fewer readable characters than this in total is not enough to summarize.
     let minimumReadableCharacters = 200
 
