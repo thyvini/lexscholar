@@ -68,6 +68,13 @@ type ProjectDocumentRow() =
     member val Role = "" with get, set
     member val AddedUtc = DateTimeOffset.MinValue with get, set
 
+type DocumentSummaryRow() =
+    member val ProjectId = Guid.Empty with get, set
+    member val DocumentId = Guid.Empty with get, set
+    /// JSON of the summary, `version: 1`.
+    member val Content = "" with get, set
+    member val GeneratedAt = DateTimeOffset.MinValue with get, set
+
 type WorkspaceDb(options: DbContextOptions) =
     inherit DbContext(options)
     override _.ConfigureConventions(builder: ModelConfigurationBuilder) =
@@ -107,6 +114,11 @@ type WorkspaceDb(options: DbContextOptions) =
         association.Property<string>("Role").IsRequired() |> ignore
         association.HasOne<ResearchProjectRow>().WithMany().HasForeignKey("ProjectId").OnDelete(DeleteBehavior.Restrict) |> ignore
         association.HasOne<LibraryDocumentRow>().WithMany().HasForeignKey("DocumentId").OnDelete(DeleteBehavior.Restrict) |> ignore
+        let summary = model.Entity<DocumentSummaryRow>()
+        summary.ToTable("DocumentSummaries") |> ignore
+        summary.HasKey("ProjectId", "DocumentId") |> ignore
+        summary.Property<string>("Content").IsRequired() |> ignore
+        summary.HasOne<ProjectDocumentRow>().WithMany().HasForeignKey("ProjectId", "DocumentId").OnDelete(DeleteBehavior.Cascade) |> ignore
 
 module WorkspaceDb =
     let databasePath dataDirectory = Path.Combine(dataDirectory, "workspace.sqlite")
