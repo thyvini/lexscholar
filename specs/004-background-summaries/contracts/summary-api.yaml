@@ -37,6 +37,7 @@ paths:
       summary: State of the pair's summary
       responses:
         "200":
+          description: The pair's summary is running, finished or failed.
           content: { application/json: { schema: { $ref: "#/components/schemas/SummaryState" } } }
         "404":
           description: "`no_summary`: nothing running, finished or failed for the pair; `not_found` / `document_not_found` as F003."
@@ -50,6 +51,7 @@ paths:
       summary: Status of every summary, for the list markers
       responses:
         "200":
+          description: One entry per pair with a running, finished or failed summary.
           content:
             application/json:
               schema:
