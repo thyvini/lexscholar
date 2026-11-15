@@ -26,3 +26,24 @@ type Status =
 
 /// One entry of `GET /api/summaries`.
 type StatusEntry = { ProjectId: System.Guid; DocumentId: System.Guid; Status: Status }
+
+/// The job state of `GET .../summary` or of an answered POST (`SummaryState` of the contract), as the open
+/// document's summary reads it; None for a body that is not one.
+let parseRemote (body: string) : Summary.Remote option =
+    try
+        use json = System.Text.Json.JsonDocument.Parse body
+        let root = json.RootElement
+        match root.GetProperty("status").GetString() with
+        | "running" -> Some Summary.RemoteRunning
+        | "finished" -> Some (Summary.RemoteFinished (SummaryStream.generated (root.GetProperty "summary")))
+        | "failed" ->
+            match SummaryStream.failureOfCode (root.GetProperty("code").GetString()) with
+            | Summary.ServiceFailed _ ->
+                let detail =
+                    match root.TryGetProperty "detail" with
+                    | true, value when value.ValueKind = System.Text.Json.JsonValueKind.String -> Some (value.GetString())
+                    | _ -> None
+                Some (Summary.RemoteFailed (Summary.ServiceFailed detail))
+            | failure -> Some (Summary.RemoteFailed failure)
+        | _ -> None
+    with _ -> None

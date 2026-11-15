@@ -120,7 +120,8 @@ let initial = { Project = None; Document = None; State = Idle; Available = { Pla
 let update (message: Message) (model: Model) : Model * Effect option =
     // A late result is dropped because only `Generating request` accepts its own number,
     // and every new request takes a fresh one.
-    let reset model = { model with State = Idle; Progress = None }
+    // Any change of view or dismissal also ends the watch of the server's job: its late fetches are dropped.
+    let reset model = { model with State = Idle; Progress = None; Watch = model.Watch + 1 }
     // Leaving a running request aborts it (FR-009); other states have nothing in flight.
     let abandon model =
         reset model, (match model.State with Generating request -> Some (Cancel request) | _ -> None)
@@ -168,6 +169,32 @@ let update (message: Message) (model: Model) : Model * Effect option =
         { model with Choice = Some choice; State = state }, None
     | Progressed (request, progress) when model.State = Generating request -> { model with Progress = Some progress }, None
     | Progressed _ -> model, None
+    // The POST was answered with the job's state: show it, or wait for it by polling (the job is the server's).
+    | Accepted (request, remote) when model.State = Generating request ->
+        match remote with
+        | RemoteFinished generated -> { model with State = Shown generated; Progress = None }, None
+        | RemoteFailed failure -> { model with State = Failed failure; Progress = None }, None
+        | RemoteRunning ->
+            let watch = model.Watch + 1
+            match model.Project, model.Document with
+            | Some project, Some document ->
+                { model with State = Running; Progress = None; Watch = watch }, Some (Fetch (watch, project, document, true))
+            | _ -> { model with State = Running; Progress = None; Watch = watch }, None
+    // Back on a document (or asked after a view change): the state of its job, if the server has one.
+    | Refresh ->
+        match model.Project, model.Document, model.State with
+        | Some project, Some document, Idle ->
+            let watch = model.Watch + 1
+            { model with Watch = watch }, Some (Fetch (watch, project, document, false))
+        | _ -> model, None
+    | Polled (watch, remote) when watch = model.Watch && (model.State = Idle || model.State = Running) ->
+        match remote, model.Project, model.Document with
+        | Some RemoteRunning, Some project, Some document -> { model with State = Running }, Some (Fetch (watch, project, document, true))
+        | Some (RemoteFinished generated), _, _ -> { model with State = Shown generated; Progress = None }, None
+        | Some (RemoteFailed failure), _, _ -> { model with State = Failed failure; Progress = None }, None
+        | _ -> { model with State = Idle; Progress = None }, None
+    | Polled _ -> model, None
+    | Accepted _ -> model, None
     | Responded (request, result) when model.State = Generating request ->
         match result with
         | Ok generated -> { model with State = Shown generated; Progress = None }, None
@@ -178,9 +205,12 @@ let update (message: Message) (model: Model) : Model * Effect option =
         { abandoned with Project = project; Document = document }, effect
     | _ -> model, None
 
-/// Follows the reader's project and open document; leaving a running request's document cancels it.
-let followReader (reader: Reader.Model) (model: Model) : Model * Effect option =
-    update (ReaderChanged (reader.Project, reader.Open |> Option.map (fun document -> document.Id))) model
+/// Follows the reader's project and open document; leaving a running stream request cancels it, and a newly
+/// opened document asks the server for the state of its summary job.
+let followReader (reader: Reader.Model) (model: Model) : Model * Effect list =
+    let moved, cancel = update (ReaderChanged (reader.Project, reader.Open |> Option.map (fun document -> document.Id))) model
+    let refreshed, fetch = if moved = model then moved, None else update Refresh moved
+    refreshed, List.choose id [ cancel; fetch ]
 
 /// Page numbers as ranges for the context line: "pages 1–3, 5" (a single page is "page 5").
 let pageRanges (pages: int list) : string =

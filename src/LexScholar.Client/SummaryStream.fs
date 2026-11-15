@@ -7,7 +7,7 @@ open System.Text.Json
 let private intList (element: JsonElement) =
     element.EnumerateArray() |> Seq.map (fun value -> value.GetInt32()) |> Seq.toList
 
-let private failureOfCode (code: string) : Summary.Failure =
+let failureOfCode (code: string) : Summary.Failure =
     match code with
     | "summary_service_not_configured" -> Summary.NotConfigured
     | "document_unavailable" -> Summary.Unavailable
@@ -41,7 +41,7 @@ let failureOfBody (body: string) : Summary.Failure =
         | code -> failureOfCode code
     with _ -> Summary.RequestFailed
 
-let private generated (element: JsonElement) : Summary.Generated =
+let generated (element: JsonElement) : Summary.Generated =
     { DocumentId = element.GetProperty("documentId").GetGuid()
       Points =
           element.GetProperty("points").EnumerateArray()
