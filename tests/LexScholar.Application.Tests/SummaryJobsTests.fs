@@ -173,3 +173,48 @@ let ``StartFailed creates a failed job, replaces a failed one, and refuses a run
     handle.Wait()
     Assert.Equal(AlreadyRunning, jobs.StartFailed(other, "signed_out", "d"))
     finish.SetResult()
+
+// F004 T008: Stop.
+
+[<Fact; Trait("Task", "T008")>]
+let ``after Stop the job's token is cancelled so a call made with it never reaches the service`` () =
+    let jobs = registry (ref true) (ref None)
+    let run, handle, finish = held ()
+    jobs.Start(key, CancellationToken.None, run) |> ignore
+    let given = handle.Result
+    jobs.Stop key
+    Assert.True given.Token.IsCancellationRequested
+    let mutable reached = false
+    let call (token: CancellationToken) = token.ThrowIfCancellationRequested(); reached <- true
+    Assert.Throws<OperationCanceledException>(fun () -> call given.Token) |> ignore
+    Assert.False reached
+    Assert.Equal(None, jobs.State key)
+    finish.SetResult()
+
+[<Fact; Trait("Task", "T008")>]
+let ``Complete, Fail and Progress after Stop change and save nothing`` () =
+    let stored = ref None
+    let jobs = registry (ref true) stored
+    let run, handle, finish = held ()
+    jobs.Start(key, CancellationToken.None, run) |> ignore
+    let given = handle.Result
+    jobs.Stop key
+    Assert.False(jobs.Complete(key, given.Id, summary))
+    Assert.False(jobs.Fail(key, given.Id, "service_failed", "detail", None))
+    Assert.False(jobs.Progress(key, given.Id, Progress.Combining))
+    Assert.Equal(None, stored.Value)
+    Assert.Equal(None, jobs.State key)
+    finish.SetResult()
+
+[<Fact; Trait("Task", "T008")>]
+let ``Stop removes a stored summary and a stopped key can be started again`` () =
+    let stored = ref (Some summary)
+    let jobs = registry (ref true) stored
+    Assert.Equal(Some (JobState.Finished summary), jobs.State key)
+    jobs.Stop key
+    Assert.Equal(None, stored.Value)
+    Assert.Equal(None, jobs.State key)
+    let run, handle, finish = held ()
+    Assert.Equal(Started, jobs.Start(key, CancellationToken.None, run))
+    handle.Wait()
+    finish.SetResult()

@@ -353,9 +353,10 @@ let private mapBackground (app: WebApplication) (jobs: SummaryJobs) =
         match jobs.State { Project = projectId; Document = documentId } with
         | Some state -> stateResult 200 state
         | None -> problem 404 "no_summary" "No summary" "Nothing is running, finished or failed for this document in this project.")) |> ignore
-    // Dismisses a finished or failed summary (and deletes the stored one); idempotent. Stopping a running one is T008.
+    // Stops a running summary, or dismisses a finished or failed one (and deletes the stored one); idempotent.
     app.MapDelete(path, Func<Guid, Guid, IResult>(fun projectId documentId ->
-        if jobs.Dismiss { Project = projectId; Document = documentId } then Results.NoContent() else notImplemented ())) |> ignore
+        jobs.Stop { Project = projectId; Document = documentId }
+        Results.NoContent())) |> ignore
     app.MapGet("/api/summaries", Func<IResult>(fun () -> notImplemented ())) |> ignore
 
 let map (app: WebApplication) (configuration: WorkspaceConfiguration) (vault: ChatGptAccess.Vault) (jobs: SummaryJobs) =

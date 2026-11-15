@@ -145,16 +145,14 @@ type SummaryJobs(capabilities: SummaryJobCapabilities) =
             | true, job -> Some job.State
             | _ -> capabilities.Find key |> Option.map JobState.Finished)
 
-    /// Dismisses a finished or failed summary: the job is dropped and the stored row deleted. A running job is left
-    /// alone (Stop is T008); returns false then.
-    member _.Dismiss(key: SummaryKey) : bool =
+    /// Stops and dismisses (RED stub): removes the job and, for a job that is not running, deletes the stored row.
+    member _.Stop(key: SummaryKey) : unit =
         lock gate (fun () ->
             match jobs.TryGetValue key with
-            | true, { State = JobState.Running _ } -> false
+            | true, { State = JobState.Running _ } -> jobs.Remove key |> ignore
             | _ ->
                 jobs.Remove key |> ignore
-                capabilities.Delete key
-                true)
+                capabilities.Delete key)
 
     /// Completes when the key's current job has ended (tests wait on this instead of polling).
     member _.Settled(key: SummaryKey) : Task =

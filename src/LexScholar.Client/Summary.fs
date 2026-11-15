@@ -96,6 +96,8 @@ type Model =
 type Message =
     | Summarize
     | Dismiss
+    /// Stops the running summary on the server.
+    | Stop
     /// The answer to the DELETE of the pair's summary (`DeleteSummary`).
     | Dismissed of project: Guid * document: Guid * succeeded: bool
     | ConfirmSend
@@ -153,6 +155,7 @@ let update (message: Message) (model: Model) : Model * Effect option =
             | Some destination -> start project document destination None
             | None -> model, None
         | _ -> model, None
+    | Stop -> model, None
     | Dismiss when (match model.State with Dismissing _ -> true | _ -> false) -> model, None
     | Dismiss ->
         let abandoned, effect = abandon model

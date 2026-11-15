@@ -155,3 +155,23 @@ let ``a summary that fails while she is on another document shows its message on
         do! click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = "Try again", Exact = true)))
         do! expectCitation page
         Assert.Equal(2, fake.Requests.Length) })
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T008"); Trait("Category", "Browser")>]
+let ``Stop clears a running summary, the held call is cancelled and she can ask again`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use fake = new FakeChatService(fun call -> if call = 1 then Hold answer else Reply answer)
+        use harness = TestHarness.Start(serveClient = true, settings = settings, summaryHandler = fake)
+        let! page = openApp browser harness
+        do! createProject page "Alpha"
+        do! importAndAdd page "article-en.pdf"
+        do! openDocument page "article-en.pdf"
+        do! click (summarizeButton page)
+        do! fake.Waiting.WaitAsync(TimeSpan.FromSeconds 30.)
+        do! click (button (panel page) "Stop")
+        do! fake.Cancelled.WaitAsync(TimeSpan.FromSeconds 30.)
+        do! Assertions.Expect(summarizeButton page).ToBeVisibleAsync()
+        do! Assertions.Expect(page.GetByRole(AriaRole.Status).Filter(LocatorFilterOptions(HasText = "Summarizing"))).ToHaveCountAsync(0)
+        Assert.Equal(1, fake.Requests.Length)
+        do! click (summarizeButton page)
+        do! expectCitation page
+        Assert.Equal(2, fake.Requests.Length) })
