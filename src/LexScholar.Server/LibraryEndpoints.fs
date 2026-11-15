@@ -88,7 +88,7 @@ let associationRequest (request: HttpRequest) = task {
         return role, documentId
     with :? JsonException -> return None, None }
 
-let map (app: WebApplication) (configuration: WorkspaceConfiguration) =
+let map (app: WebApplication) (configuration: WorkspaceConfiguration) (jobs: SummaryJobs) =
     let directory = configuration.DataDirectory
     let store : Library.Store =
         { ListDocuments = fun () -> LibraryRepository.list directory
@@ -151,6 +151,8 @@ let map (app: WebApplication) (configuration: WorkspaceConfiguration) =
                 return problem 409 "duplicate_association" "This document is already associated with the project." })) |> ignore
 
     app.MapDelete("/api/projects/{projectId:guid}/documents/{documentId:guid}", Func<Guid, Guid, IResult>(fun projectId documentId ->
-        match Library.remove store projectId documentId with
+        // Stops the pair's summary job, deletes its stored row and removes the association in one locked step (T009).
+        let key = { Project = projectId; Document = documentId }
+        match jobs.RemoveAssociation(key, fun () -> Library.remove store projectId documentId) with
         | Ok () -> Results.NoContent()
         | Error Library.RemovalError.AssociationNotFound -> problem 404 "not_found" "Association not found")) |> ignore
