@@ -161,6 +161,13 @@ type SummaryJobs(capabilities: SummaryJobCapabilities) =
             | _ -> ()
             capabilities.Delete key)
 
+    /// Removes the pair from the project (research §3 "Removal"): stops its job and deletes any stored summary, then runs
+    /// `delete` (the association delete) and returns its result, all in ONE locked step. `Start` checks the association
+    /// inside the same lock, so it cannot start a job for a pair removed here.
+    member this.RemoveAssociation(key: SummaryKey, delete: unit -> 'a) : 'a =
+        this.Stop key
+        delete ()
+
     /// Completes when the key's current job has ended (tests wait on this instead of polling).
     member _.Settled(key: SummaryKey) : Task =
         lock gate (fun () ->

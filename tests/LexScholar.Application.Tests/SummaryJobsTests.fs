@@ -218,3 +218,35 @@ let ``Stop removes a stored summary and a stopped key can be started again`` () 
     Assert.Equal(Started, jobs.Start(key, CancellationToken.None, run))
     handle.Wait()
     finish.SetResult()
+
+// F004 T009: removal from the project.
+
+[<Fact; Trait("Task", "T009")>]
+let ``RemoveAssociation stops a running job, deletes the stored row and then the association`` () =
+    let associated = ref true
+    let stored = ref None
+    let jobs = registry associated stored
+    let run, handle, finish = held ()
+    jobs.Start(key, CancellationToken.None, run) |> ignore
+    let given = handle.Result
+    // A row is stored as well (finishing may have won the race): removal deletes it too.
+    stored.Value <- Some summary
+    let result = jobs.RemoveAssociation(key, fun () -> associated.Value <- false; "removed")
+    Assert.Equal("removed", result)
+    Assert.True given.Token.IsCancellationRequested
+    Assert.Equal(None, stored.Value)
+    Assert.Equal(None, jobs.State key)
+    Assert.Equal(NotAssociated, jobs.Start(key, CancellationToken.None, noJob))
+    finish.SetResult()
+
+[<Fact; Trait("Task", "T009")>]
+let ``a Start launched while the association is being deleted gets NotAssociated`` () =
+    let associated = ref true
+    let jobs = registry associated (ref None)
+    let mutable racing : Task<StartOutcome> = Unchecked.defaultof<_>
+    jobs.RemoveAssociation(key, fun () ->
+        // Another request's Start begins now; it must wait for the lock, so it sees the association gone.
+        racing <- Task.Run(fun () -> jobs.Start(key, CancellationToken.None, noJob))
+        associated.Value <- false)
+    Assert.Equal(NotAssociated, racing.WaitAsync(TimeSpan.FromSeconds 30.).GetAwaiter().GetResult())
+    Assert.Equal(None, jobs.State key)

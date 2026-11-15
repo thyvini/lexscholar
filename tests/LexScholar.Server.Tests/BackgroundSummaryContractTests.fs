@@ -511,3 +511,69 @@ let ``stopping the same document's summary in one project leaves the other runni
     settleJob harness second document
     Assert.Equal("finished", (getJson harness second document).GetProperty("status").GetString())
     Assert.Equal(HttpStatusCode.NotFound, fst (sendWith harness.Client HttpMethod.Get (path first document) None))
+
+// F004 T009: removing a document from the project stops its summary and deletes the stored one (FR-013).
+
+let private removeFromProject (harness: TestHarness) (project: Guid) (document: Guid) =
+    sendWith harness.Client HttpMethod.Delete $"/api/projects/{project}/documents/{document}" None
+
+[<Fact; Trait("Task", "T009")>]
+let ``removing a document while its summary runs cancels the held call, sends nothing more and keeps nothing`` () =
+    let fake = new FakeChatService(heldAfterFirst)
+    use harness = TestHarness.Start(settings = settings, summaryHandler = fake)
+    let project = seedProject harness.Root
+    let document = addDocument harness.Client project "long-40.pdf"
+    Assert.Equal(HttpStatusCode.Accepted, fst (ask harness.Client project document))
+    waitFor fake.Waiting
+    let sent = fake.Requests.Length
+    Assert.Equal(HttpStatusCode.NoContent, fst (removeFromProject harness project document))
+    waitFor fake.Cancelled
+    settleJob harness project document
+    fake.Release()
+    Assert.Equal(sent, fake.Requests.Length)
+    Assert.Equal(HttpStatusCode.NotFound, fst (sendWith harness.Client HttpMethod.Get (path project document) None))
+    Assert.Equal(0L, storedRows harness)
+    // The pair is no longer in the project: asking is refused and starts no job.
+    Assert.Equal(HttpStatusCode.NotFound, fst (ask harness.Client project document))
+    Assert.Equal(sent, fake.Requests.Length)
+
+[<Fact; Trait("Task", "T009")>]
+let ``removing a document after its summary finished deletes the stored row`` () =
+    let fake = new FakeChatService(Reply answer)
+    use harness = TestHarness.Start(settings = settings, summaryHandler = fake)
+    let project = seedProject harness.Root
+    let document = addDocument harness.Client project "article-en.pdf"
+    Assert.Equal(HttpStatusCode.Accepted, fst (ask harness.Client project document))
+    settleJob harness project document
+    Assert.Equal(1L, storedRows harness)
+    Assert.Equal(HttpStatusCode.NoContent, fst (removeFromProject harness project document))
+    Assert.Equal(0L, storedRows harness)
+    Assert.Equal(HttpStatusCode.NotFound, fst (sendWith harness.Client HttpMethod.Get (path project document) None))
+
+[<Fact; Trait("Task", "T009")>]
+let ``removing the document from one project leaves the same document's summary in another project`` () =
+    let fake = new FakeChatService(Reply answer)
+    use harness = TestHarness.Start(settings = settings, summaryHandler = fake)
+    let first = seedProject harness.Root
+    let second = seedProject harness.Root
+    let document = addDocument harness.Client first "article-en.pdf"
+    let body = JsonSerializer.Serialize({| documentId = string document; role = "FocusedSource" |})
+    Assert.Equal(HttpStatusCode.Created, fst (sendWith harness.Client HttpMethod.Post $"/api/projects/{second}/documents" (Some (new StringContent(body, Encoding.UTF8, "application/json")))))
+    for project in [ first; second ] do
+        Assert.Equal(HttpStatusCode.Accepted, fst (ask harness.Client project document))
+        settleJob harness project document
+    Assert.Equal(2L, storedRows harness)
+    Assert.Equal(HttpStatusCode.NoContent, fst (removeFromProject harness first document))
+    Assert.Equal(1L, storedRows harness)
+    Assert.Equal(HttpStatusCode.NotFound, fst (sendWith harness.Client HttpMethod.Get (path first document) None))
+    Assert.Equal("finished", (getJson harness second document).GetProperty("status").GetString())
+
+[<Fact; Trait("Task", "T009")>]
+let ``removing a document that is not in the project is still not_found and touches nothing`` () =
+    let fake = new FakeChatService(Reply answer)
+    use harness = TestHarness.Start(settings = settings, summaryHandler = fake)
+    let project = seedProject harness.Root
+    let document = addDocument harness.Client project "article-en.pdf"
+    Assert.Equal(HttpStatusCode.NotFound, fst (removeFromProject harness project (Guid.NewGuid())))
+    Assert.Equal(HttpStatusCode.Accepted, fst (ask harness.Client project document))
+    settleJob harness project document
