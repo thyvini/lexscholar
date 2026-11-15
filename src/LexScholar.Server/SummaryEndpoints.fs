@@ -273,9 +273,15 @@ let private summarizeViaPlan (context: HttpContext) (vault: ChatGptAccess.Vault)
                         | Some model ->
                             let settings : ResponsesApi.Settings = { Model = model; AccessToken = credentials.AccessToken }
                             do! runJob logger jobs key job ended chatgptChunkCharacters (ResponsesApi.complete logger client settings) "ChatGPT plan" model pages
-                with :? OperationCanceledException when job.Token.IsCancellationRequested ->
+                with
+                | :? OperationCanceledException when job.Token.IsCancellationRequested ->
                     // Signed out (or stopped) while the model list was requested: nothing was sent.
-                    jobs.Fail(key, job.Id, "signed_out", signedOutDetail, None) |> ignore }
+                    jobs.Fail(key, job.Id, "signed_out", signedOutDetail, None) |> ignore
+                | error ->
+                    // Anything else (a credential file that cannot be deleted, say) must not leave the job running for good.
+                    // Only the error type is logged, never text or the service's answer (FR-009, FR-014).
+                    logger.LogError("Summary of document {DocumentId} failed unexpectedly: {Error}", box key.Document, error.GetType().Name)
+                    jobs.Fail(key, job.Id, "service_failed", Summarize.failureDetail Summarize.ServiceError.UnusableOutput, None) |> ignore }
             match jobs.StartWith(key, source, run.Token, work) with
             | Started ->
                 handedOver <- true

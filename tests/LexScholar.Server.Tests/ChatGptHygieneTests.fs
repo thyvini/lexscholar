@@ -45,6 +45,15 @@ let private call (harness: TestHarness) (what: string) (method': HttpMethod) (pa
     observe what response text
     response.StatusCode, text
 
+/// A summary POST, then (the job runs in the background, F004) its settled state, both observed for secrets.
+let private summaryCall (harness: TestHarness) (what: string) (path: string) (body: string) =
+    let status, _ = call harness what HttpMethod.Post path body
+    if status = HttpStatusCode.Accepted then
+        let parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries)
+        SummaryJobsAccess.settled harness.App (Guid.Parse parts.[2]) (Guid.Parse parts.[4])
+        |> fun task -> task.WaitAsync(TimeSpan.FromSeconds 30.).GetAwaiter().GetResult()
+        call harness $"{what}-state" HttpMethod.Get path "" |> ignore
+
 let private callbackObserved (harness: TestHarness) (path: string) =
     use client = plainClient harness
     use response = client.GetAsync(path).GetAwaiter().GetResult()
@@ -84,9 +93,9 @@ let ``no secret reaches a log line, a response or a file in any flow`` () =
     fake.AccessToken <- "ACCESSSECRET-B"
     fake.RefreshToken <- "REFRESHSECRET-B"
     // Summary with confirmation and refresh, then the usage limit, then an ended sign-in.
-    call harness "summary" HttpMethod.Post path confirmed |> ignore
-    call harness "summary-limit" HttpMethod.Post pathLimit confirmed |> ignore
-    call harness "summary-ended" HttpMethod.Post pathEnded confirmed |> ignore
+    summaryCall harness "summary" path confirmed
+    summaryCall harness "summary-limit" pathLimit confirmed
+    summaryCall harness "summary-ended" pathEnded confirmed
     call harness "destinations" HttpMethod.Get "/api/summary/destinations" "" |> ignore
     // A failed sign-in.
     fake.TokenFailure <- Some(400, """{"error":"invalid_grant","error_description":"CODESECRET"}""")

@@ -358,10 +358,14 @@ module private Ui =
             { state with ChatGpt = chatGpt }, chatGptCommand http navigation effect
         | SummaryMsg message ->
             let summary, effect = Summary.update message state.Summary
-            // A failure that ended the sign-in (stream event or problem alike) reloads the destinations.
+            // A failure that ended the sign-in reloads the destinations: whether it came as a problem on the POST, or as the
+            // failed state of a background job (the POST's own answer, or a later poll).
             let reload =
                 match message with
                 | Summary.Responded (request, Error failure) when state.Summary.State = Summary.Generating request && Summary.reloadsDestinations failure -> true
+                | Summary.Accepted (_, _, _, Summary.RemoteFailed failure)
+                | Summary.Polled (_, Some (Summary.RemoteFailed failure)) ->
+                    summary.State = Summary.Failed failure && state.Summary.State <> summary.State && Summary.reloadsDestinations failure
                 | _ -> false
             let chatGpt, chatGptEffect = if reload then ChatGpt.update ChatGpt.Load state.ChatGpt else state.ChatGpt, None
             { state with Summary = summary; ChatGpt = chatGpt },

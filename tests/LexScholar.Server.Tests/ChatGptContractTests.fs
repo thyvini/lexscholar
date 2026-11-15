@@ -922,7 +922,8 @@ let ``a plan summary answers 202 running and the finished summary is found with 
     signInThrough harness fake "" |> ignore
     let status, text = sendJson harness path confirmed
     Assert.Equal(HttpStatusCode.Accepted, status)
-    Assert.Equal("running", (JsonDocument.Parse text).RootElement.GetProperty("status").GetString())
+    // The job may already be done when the POST reads its state, so "running" is the usual answer, not the only one.
+    Assert.Contains((JsonDocument.Parse text).RootElement.GetProperty("status").GetString(), [ "running"; "finished" ])
     settle harness path
     let status, state = getState harness path
     Assert.Equal(HttpStatusCode.OK, status)
@@ -976,3 +977,23 @@ let ``an unreachable refresh becomes a job created failed with service_failed`` 
     Assert.Equal(HttpStatusCode.Accepted, status)
     Assert.Equal("service_failed", (JsonDocument.Parse text).RootElement.GetProperty("code").GetString())
     Assert.True(signedIn harness)
+
+/// Fails the model list with an error nobody planned for.
+type private BrokenModels(inner: HttpMessageHandler) =
+    inherit HttpMessageHandler()
+    override _.SendAsync(request, cancellation) =
+        if request.RequestUri.AbsolutePath = "/v1/models" then raise (InvalidOperationException "unplanned")
+        (new HttpMessageInvoker(inner, false)).SendAsync(request, cancellation)
+
+[<Fact; Trait("Task", "T003")>]
+let ``an unexpected error in the plan job fails the job instead of leaving it running`` () =
+    let fake = new FakeOpenAi(ResponsesScript.Completed answer)
+    use harness = TestHarness.Start(summaryHandler = new BrokenModels(fake))
+    let path = documentPath harness
+    signInThrough harness fake "" |> ignore
+    let status, _ = sendJson harness path confirmed
+    Assert.Equal(HttpStatusCode.Accepted, status)
+    settle harness path
+    let _, state = getState harness path
+    Assert.Equal("failed", state.GetProperty("status").GetString())
+    Assert.Equal("service_failed", state.GetProperty("code").GetString())
