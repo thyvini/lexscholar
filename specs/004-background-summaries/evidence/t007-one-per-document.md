@@ -15,7 +15,7 @@ Risky (concurrency). Covers FR-011, FR-005.
 
 ## RED
 
-`scripts/check.sh T007` at commit 64e3cbd: `Tests: 67 total, 2 failed`, on the assertions: a running summary's repeat POST to a service elsewhere without confirmation got `409` (expected `200`); a finished plan summary's repeat POST after sign-out got `503` (expected `200`). The other new tests pass already (behavior from T002/T006) and are covered by the sensitivity checks below.
+`scripts/check.sh T007` at commit 0d7d69e: `Tests: 67 total, 2 failed`, on the assertions: a running summary's repeat POST to a service elsewhere without confirmation got `409` (expected `200`); a finished plan summary's repeat POST after sign-out got `503` (expected `200`). The other new tests pass already (behavior from T002/T006) and are covered by the sensitivity checks below.
 
 ## GREEN
 
