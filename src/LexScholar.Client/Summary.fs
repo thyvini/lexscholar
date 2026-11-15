@@ -114,6 +114,8 @@ type Effect =
     | Send of request: int * project: Guid * document: Guid * destination: Destination option * confirmed: Confirmed option
     /// Fetch the open document's state now (`delay` false) or after the polling interval (`delay` true).
     | Fetch of watch: int * project: Guid * document: Guid * delay: bool
+    /// Dismissing a finished or failed summary deletes it on the server (F004 FR-010): otherwise asking again returns the old one.
+    | DeleteSummary of project: Guid * document: Guid
 
 let initial = { Project = None; Document = None; State = Idle; Available = { Plan = false; Configured = false }; Choice = None; Progress = None; Request = 0; Watch = 0; Claim = 0 }
 

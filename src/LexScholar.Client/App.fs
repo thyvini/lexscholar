@@ -337,6 +337,7 @@ module private Ui =
                     let! remote = Api.summaryState http projectId documentId
                     let remote = match remote with Ok state -> state | Error () -> (if delay then Some (Summary.RemoteRunning None) else None)
                     dispatch (SummaryMsg (Summary.Polled (watch, remote))) }))
+        | Some (Summary.DeleteSummary _) -> Cmd.none
         | None -> Cmd.none
 
     let chatGptCommand http (navigation: NavigationManager) (effect: ChatGpt.Effect option) : Cmd<Msg> =

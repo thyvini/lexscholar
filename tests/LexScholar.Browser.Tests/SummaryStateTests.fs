@@ -501,3 +501,20 @@ let ``a failure found on return is shown with its actions, and Summarize asks ag
     assertState (Failed SignedOut) signedOut.State
     let again, send = update Summarize failed
     assertState true (match again.State, send with Generating _, Some (Send _) -> true | _ -> false)
+
+// F004 T006: dismissing a finished or failed summary deletes it on the server.
+
+[<Fact; Trait("Task", "T006")>]
+let ``dismissing a shown or failed summary sends the delete, anything else sends nothing`` () =
+    let asked, _ = update Summarize reading
+    let shown, _ = update (Responded (1, Ok generated)) asked
+    let dismissedShown, shownEffect = update Dismiss shown
+    assertState Idle dismissedShown.State
+    assertState (Some (DeleteSummary (project, document))) shownEffect
+    let failed, _ = update (Responded (1, Error (ServiceFailed None))) asked
+    assertState (Some (DeleteSummary (project, document))) (snd (update Dismiss failed))
+    // Nothing finished or failed: nothing to delete.
+    assertState None (snd (update Dismiss reading))
+    assertState None (snd (update Dismiss asked))
+    let confirming, _ = update (Responded (1, Error (ConfirmationRequired (Plan "me")))) asked
+    assertState None (snd (update Dismiss confirming))

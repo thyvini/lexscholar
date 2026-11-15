@@ -232,3 +232,103 @@ let ``asking again after a failure starts a new job that replaces it`` () =
     settleJob harness project document
     Assert.Equal("finished", (getJson harness project document).GetProperty("status").GetString())
     Assert.Equal(2, fake.Requests.Length)
+
+
+// F004 T006: a finished summary is stored, found after a restart, and dismissing deletes it.
+
+let private delete (harness: TestHarness) project document = sendWith harness.Client HttpMethod.Delete (path project document) None
+
+let private storedRows (harness: TestHarness) =
+    use connection = new Microsoft.Data.Sqlite.SqliteConnection(WorkspaceDb.connectionString harness.Root)
+    connection.Open()
+    use command = connection.CreateCommand()
+    command.CommandText <- "SELECT count(*) FROM DocumentSummaries"
+    command.ExecuteScalar() :?> int64
+
+/// Asks on a fresh host over `workspace`, waits for the job and shuts the host down; returns the ids.
+let private finishThenStop (workspace: TemporaryWorkspace) (script: ChatScript) =
+    let fake = new FakeChatService(script)
+    use harness = TestHarness.Start(settings = settings, summaryHandler = fake, workspace = workspace)
+    let project = seedProject harness.Root
+    let document = addDocument harness.Client project "article-en.pdf"
+    ask harness.Client project document |> ignore
+    settleJob harness project document
+    project, document
+
+[<Fact; Trait("Task", "T006")>]
+let ``a finished summary is found after the host restarts, with its time, host and model`` () =
+    use workspace = TemporaryWorkspace.Create()
+    let project, document = finishThenStop workspace (Reply answer)
+    let fake = new FakeChatService(Reply answer)
+    use harness = TestHarness.Start(settings = settings, summaryHandler = fake, workspace = workspace)
+    let state = getJson harness project document
+    Assert.Equal("finished", state.GetProperty("status").GetString())
+    let summary = state.GetProperty("summary")
+    Assert.Equal(document, summary.GetProperty("documentId").GetGuid())
+    Assert.Equal("Main idea", summary.GetProperty("points").[0].GetProperty("text").GetString())
+    Assert.Equal("127.0.0.1:9", summary.GetProperty("serviceHost").GetString())
+    Assert.Equal("m", summary.GetProperty("model").GetString())
+    Assert.True(summary.GetProperty("generatedAt").GetDateTimeOffset() > DateTimeOffset.UtcNow.AddMinutes -10.)
+    Assert.Empty(fake.Requests)
+    // Asking again does not start a second job: the stored summary is returned.
+    let status, _ = ask harness.Client project document
+    Assert.Equal(HttpStatusCode.OK, status)
+    Assert.Empty(fake.Requests)
+
+[<Fact; Trait("Task", "T006")>]
+let ``dismissing a finished summary deletes it for good and she can ask again`` () =
+    use workspace = TemporaryWorkspace.Create()
+    let project, document =
+        let fake = new FakeChatService(Reply answer)
+        use harness = TestHarness.Start(settings = settings, summaryHandler = fake, workspace = workspace)
+        let project = seedProject harness.Root
+        let document = addDocument harness.Client project "article-en.pdf"
+        ask harness.Client project document |> ignore
+        settleJob harness project document
+        Assert.Equal(1L, storedRows harness)
+        let status, _ = delete harness project document
+        Assert.Equal(HttpStatusCode.NoContent, status)
+        Assert.Equal(0L, storedRows harness)
+        let status, _ = sendWith harness.Client HttpMethod.Get (path project document) None
+        Assert.Equal(HttpStatusCode.NotFound, status)
+        // Idempotent.
+        Assert.Equal(HttpStatusCode.NoContent, fst (delete harness project document))
+        project, document
+    let fake = new FakeChatService(Reply answer)
+    use harness = TestHarness.Start(settings = settings, summaryHandler = fake, workspace = workspace)
+    let status, _ = sendWith harness.Client HttpMethod.Get (path project document) None
+    Assert.Equal(HttpStatusCode.NotFound, status)
+    let status, _ = ask harness.Client project document
+    Assert.Equal(HttpStatusCode.Accepted, status)
+    settleJob harness project document
+    Assert.Equal(1, fake.Requests.Length)
+
+[<Fact; Trait("Task", "T006")>]
+let ``dismissing a failed summary clears it and nothing was stored`` () =
+    let fake = new FakeChatService(Status 500)
+    use harness = TestHarness.Start(settings = settings, summaryHandler = fake)
+    let project = seedProject harness.Root
+    let document = addDocument harness.Client project "article-en.pdf"
+    ask harness.Client project document |> ignore
+    settleJob harness project document
+    Assert.Equal(0L, storedRows harness)
+    Assert.Equal(HttpStatusCode.NoContent, fst (delete harness project document))
+    let status, _ = sendWith harness.Client HttpMethod.Get (path project document) None
+    Assert.Equal(HttpStatusCode.NotFound, status)
+
+[<Fact; Trait("Task", "T006")>]
+let ``a summary still running when the host shuts down stores nothing`` () =
+    use workspace = TemporaryWorkspace.Create()
+    let fake = new FakeChatService(Hold answer)
+    let project, document =
+        use harness = TestHarness.Start(settings = settings, summaryHandler = fake, workspace = workspace)
+        let project = seedProject harness.Root
+        let document = addDocument harness.Client project "article-en.pdf"
+        ask harness.Client project document |> ignore
+        fake.Waiting.WaitAsync(TimeSpan.FromSeconds 30.).GetAwaiter().GetResult()
+        project, document
+    let restarted = new FakeChatService(Reply answer)
+    use harness = TestHarness.Start(settings = settings, summaryHandler = restarted, workspace = workspace)
+    Assert.Equal(0L, storedRows harness)
+    let status, _ = sendWith harness.Client HttpMethod.Get (path project document) None
+    Assert.Equal(HttpStatusCode.NotFound, status)
