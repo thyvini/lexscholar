@@ -329,7 +329,7 @@ let private asked = update Summarize reading |> fst
 
 [<Fact; Trait("Task", "T002")>]
 let ``a 202 with a running job keeps waiting and polls after the interval`` () =
-    let model, effect = update (Accepted (1, RemoteRunning)) asked
+    let model, effect = update (Accepted (1, project, document, RemoteRunning)) asked
     assertState Running model.State
     match effect with
     | Some (Fetch (watch, p, d, true)) ->
@@ -342,17 +342,17 @@ let ``a 202 with a running job keeps waiting and polls after the interval`` () =
 
 [<Fact; Trait("Task", "T002")>]
 let ``a job answered while the POST was open is shown, or its failure`` () =
-    let shown, effect = update (Accepted (1, RemoteFinished generated)) asked
+    let shown, effect = update (Accepted (1, project, document, RemoteFinished generated)) asked
     assertState (Shown generated) shown.State
     assertState None effect
-    let failed, _ = update (Accepted (1, RemoteFailed UsageLimitReached)) asked
+    let failed, _ = update (Accepted (1, project, document, RemoteFailed UsageLimitReached)) asked
     assertState (Failed UsageLimitReached) failed.State
-    let stale, _ = update (Accepted (9, RemoteFinished generated)) asked
+    let stale, _ = update (Accepted (9, project, document, RemoteFinished generated)) asked
     assertState asked.State stale.State
 
 [<Fact; Trait("Task", "T002")>]
 let ``leaving a document with a running job cancels nothing and returning asks the server`` () =
-    let running, _ = update (Accepted (1, RemoteRunning)) asked
+    let running, _ = update (Accepted (1, project, document, RemoteRunning)) asked
     let away, cancel = update (ReaderChanged (Some project, Some (Guid.NewGuid()))) running
     assertState Idle away.State
     assertState None cancel
@@ -376,7 +376,7 @@ let ``a fetched state for a document she has left is dropped`` () =
     let late, lateEffect = update (Polled (watch, Some (RemoteFinished generated))) moved
     assertState Idle late.State
     assertState None lateEffect
-    let dismissed, _ = update (Accepted (1, RemoteRunning)) asked
+    let dismissed, _ = update (Accepted (1, project, document, RemoteRunning)) asked
     let hidden, _ = update Dismiss dismissed
     let stale, staleEffect = update (Polled (dismissed.Watch, Some RemoteRunning)) hidden
     assertState Idle stale.State
@@ -393,3 +393,19 @@ let ``leaving while the POST of a configured-service summary is in flight does n
     let dismissed, dismissCancel = update Dismiss asking
     assertState Idle dismissed.State
     assertState None dismissCancel
+
+[<Fact; Trait("Task", "T002")>]
+let ``a POST answered after she left and came back still shows the job`` () =
+    // Asked, left (the fetch is not aborted), came back and asked the server: nothing there yet (404).
+    let away, _ = update (ReaderChanged (Some project, Some (Guid.NewGuid()))) asked
+    let back, _ = update (ReaderChanged (Some project, Some document)) away
+    let refreshed, effect = update Refresh back
+    let watch = match effect with Some (Fetch (w, _, _, _)) -> w | other -> failwithf "Expected Fetch, got %A" other
+    let none, _ = update (Polled (watch, None)) refreshed
+    assertState Idle none.State
+    let running, next = update (Accepted (1, project, document, RemoteRunning)) none
+    assertState Running running.State
+    assertState true (match next with Some (Fetch (_, _, _, true)) -> true | _ -> false)
+    // The answer for another document is not shown here.
+    let other, _ = update (Accepted (1, project, Guid.NewGuid(), RemoteFinished generated)) none
+    assertState Idle other.State

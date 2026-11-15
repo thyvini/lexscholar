@@ -98,7 +98,7 @@ type Message =
     | Progressed of request: int * Progress
     | Responded of request: int * Result<Generated, Failure>
     /// The POST was answered with a job's state (202, or 200 when one already exists).
-    | Accepted of request: int * Remote
+    | Accepted of request: int * project: Guid * document: Guid * Remote
     /// The open document's state was asked for after a view change (`Fetch` effect).
     | Refresh
     /// A state fetched for the open document by watch number; `None` is 404 (nothing there).
@@ -173,16 +173,14 @@ let update (message: Message) (model: Model) : Model * Effect option =
     | Progressed (request, progress) when model.State = Generating request -> { model with Progress = Some progress }, None
     | Progressed _ -> model, None
     // The POST was answered with the job's state: show it, or wait for it by polling (the job is the server's).
-    | Accepted (request, remote) when model.State = Generating request ->
+    // Also when she left and came back meanwhile (state Idle): the answer is for the document now open, so it is kept.
+    | Accepted (request, project, document, remote) when (model.Project, model.Document) = (Some project, Some document) && (model.State = Generating request || model.State = Idle) ->
         match remote with
         | RemoteFinished generated -> { model with State = Shown generated; Progress = None }, None
         | RemoteFailed failure -> { model with State = Failed failure; Progress = None }, None
         | RemoteRunning ->
             let watch = model.Watch + 1
-            match model.Project, model.Document with
-            | Some project, Some document ->
-                { model with State = Running; Progress = None; Watch = watch }, Some (Fetch (watch, project, document, true))
-            | _ -> { model with State = Running; Progress = None; Watch = watch }, None
+            { model with State = Running; Progress = None; Watch = watch }, Some (Fetch (watch, project, document, true))
     // Back on a document (or asked after a view change): the state of its job, if the server has one.
     | Refresh ->
         match model.Project, model.Document, model.State with

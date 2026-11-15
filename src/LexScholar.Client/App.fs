@@ -357,7 +357,7 @@ module private Ui =
                     running.Remove request |> ignore
                     source.Dispose()
                     match result with
-                    | Ok (Api.Job remote) -> dispatch (SummaryMsg (Summary.Accepted (request, remote)))
+                    | Ok (Api.Job remote) -> dispatch (SummaryMsg (Summary.Accepted (request, projectId, documentId, remote)))
                     | Ok (Api.Streamed generated) -> dispatch (SummaryMsg (Summary.Responded (request, Ok generated)))
                     | Error failure -> dispatch (SummaryMsg (Summary.Responded (request, Error failure))) }))
         | Some (Summary.Cancel request) ->
