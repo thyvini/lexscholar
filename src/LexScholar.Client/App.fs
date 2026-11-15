@@ -442,10 +442,11 @@ module private Ui =
         let before = viewOf state
         let state, command = updateCore http navigation msg state
         // The markers are read again on every project or document view change (AR 4) and once a summary was asked for or
-        // dismissed (its POST or DELETE has been answered).
+        // dismissed (its POST or DELETE has been answered) and once a document was removed from the project.
         let statuses, statusEffect =
             match msg with
-            | SummaryMsg (Summary.Accepted _ | Summary.Dismissed _) -> SummaryStatus.updateStatuses SummaryStatus.Refresh state.Statuses
+            // A removal from the project deletes the document's stored summary on the server.
+            | SummaryMsg (Summary.Accepted _ | Summary.Dismissed _) | LibraryMsg (Library.Removed _) -> SummaryStatus.updateStatuses SummaryStatus.Refresh state.Statuses
             | _ -> SummaryStatus.followView before (viewOf state) state.Statuses
         let state = { state with Statuses = statuses }
         let command = Cmd.batch [ command; statusCommand http statusEffect ]

@@ -20,3 +20,7 @@ Covers FR-008, SC-008. AR 4 and AR 5 apply.
 ## Limits
 
 Markers lag by up to the 2 s polling interval (plan point 5); a tab with nothing running does not see another tab's changes until its next view change (AR 4).
+
+## Review fix (gpt-review P1)
+
+Removing a document with a finished or failed summary left the project's marker stale when the view did not change. The client now also refreshes the statuses after a removal. Journey test added; RED before the fix: 2 failed (marker still present, Chromium and Firefox); after: `scripts/check.sh T010`: `Tests: 59 total, 0 failed, 0 skipped`.

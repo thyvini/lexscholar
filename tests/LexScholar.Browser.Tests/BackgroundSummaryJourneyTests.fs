@@ -214,3 +214,22 @@ let ``a failed summary is marked failed in the list`` (browserName: string) =
         do! openDocument page "article-pt.pdf"
         do! Assertions.Expect((documentRow page "article-en.pdf").Locator(".summary-marker")).ToHaveTextAsync("Summary failed")
         do! Assertions.Expect((projectRow page "Alpha").Locator(".summary-marker")).ToHaveTextAsync("Summary failed") })
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T010"); Trait("Category", "Browser")>]
+let ``removing a document with a finished summary clears the project's marker`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use fake = new FakeChatService(Reply answer)
+        use harness = TestHarness.Start(serveClient = true, settings = settings, summaryHandler = fake)
+        let! page = openApp browser harness
+        do! createProject page "Alpha"
+        do! importAndAdd page "article-en.pdf"
+        do! importAndAdd page "article-pt.pdf"
+        do! openDocument page "article-en.pdf"
+        do! click (summarizeButton page)
+        do! expectCitation page
+        // Another document is open when the removal happens, so the view does not change.
+        do! openDocument page "article-pt.pdf"
+        do! Assertions.Expect((projectRow page "Alpha").Locator(".summary-marker")).ToHaveTextAsync("Summary finished")
+        do! click (button (documentRow page "article-en.pdf") "Remove")
+        do! Assertions.Expect(documentRow page "article-en.pdf").ToHaveCountAsync(0)
+        do! Assertions.Expect((projectRow page "Alpha").Locator(".summary-marker")).ToHaveCountAsync(0) })
