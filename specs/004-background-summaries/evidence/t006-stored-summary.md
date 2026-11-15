@@ -22,6 +22,10 @@ CI on the first push failed two F005 tests whose behavior this slice legitimatel
 - `ChatGptJourneyTests.fs` (T011 journey): Dismiss now sends DELETE, so the second ask really sends a request: the fake answers calls 1-2, and 2 requests are expected.
 - `BackgroundSummaryContractTests.fs` (T001): the `DELETE` placeholder assertion 501 became 204.
 
+## Review follow-up (gpt-review P1 x2)
+
+Dismiss is now a state, not a fire-and-forget: `Dismissing previous` until the DELETE answers (nothing can be asked meanwhile, so the old summary cannot return and a delayed DELETE cannot remove a newer one); a failed or refused DELETE restores the summary and shows "The summary could not be dismissed". Tests: `SummaryStateTests` (in-flight guards, answer ends or restores); the T004 dismiss test now sends the `Dismissed` answer. Residual: leaving the document while its DELETE is still in flight and coming back before it lands can still fetch the old summary once (localhost, milliseconds); accepted, she can dismiss again.
+
 ## Sensitivity checks (uncommitted, reverted)
 
 - `Dismiss` without `capabilities.Delete`: `dismissing a finished summary deletes it for good and she can ask again` fails (1 of 56).

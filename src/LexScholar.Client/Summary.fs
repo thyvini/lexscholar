@@ -69,6 +69,8 @@ type State =
     | Running
     | Shown of Generated
     | Failed of Failure
+    /// The DELETE of a finished or failed summary (the previous state) is in flight: nothing can be asked until it answers.
+    | Dismissing of previous: State
 
 type Model =
     { /// The open document the summary belongs to.
@@ -85,11 +87,15 @@ type Model =
       /// The latest watch of the open document's job; only its fetches are used.
       Watch: int
       /// The request whose job answer may still be shown after she left and came back; dismissing voids it (0).
-      Claim: int }
+      Claim: int
+      /// The last dismissal was refused or failed: the summary is still there and she is told.
+      DismissFailed: bool }
 
 type Message =
     | Summarize
     | Dismiss
+    /// The answer to the DELETE of the pair's summary (`DeleteSummary`).
+    | Dismissed of project: Guid * document: Guid * succeeded: bool
     | ConfirmSend
     | CancelSend
     | DestinationsChanged of Available
@@ -117,7 +123,7 @@ type Effect =
     /// Dismissing a finished or failed summary deletes it on the server (F004 FR-010): otherwise asking again returns the old one.
     | DeleteSummary of project: Guid * document: Guid
 
-let initial = { Project = None; Document = None; State = Idle; Available = { Plan = false; Configured = false }; Choice = None; Progress = None; Request = 0; Watch = 0; Claim = 0 }
+let initial = { Project = None; Document = None; State = Idle; Available = { Plan = false; Configured = false }; Choice = None; Progress = None; Request = 0; Watch = 0; Claim = 0; DismissFailed = false }
 
 let update (message: Message) (model: Model) : Model * Effect option =
     // A late result is dropped because only `Generating request` accepts its own number,
@@ -145,14 +151,22 @@ let update (message: Message) (model: Model) : Model * Effect option =
             | Some destination -> start project document destination None
             | None -> model, None
         | _ -> model, None
+    | Dismiss when (match model.State with Dismissing _ -> true | _ -> false) -> model, None
     | Dismiss ->
         let abandoned, effect = abandon model
+        match model.Project, model.Document, model.State with
         // A finished or failed summary is the server's too: dismissing deletes it there, or asking again returns the old one.
-        let delete =
-            match model.Project, model.Document, model.State with
-            | Some project, Some document, (Shown _ | Failed _) -> Some (DeleteSummary (project, document))
-            | _ -> effect
-        { abandoned with Claim = 0 }, delete
+        // Until the server answers she sees "Dismissing" and cannot ask, so the old summary can never come back or be
+        // deleted after a new one; a failed DELETE restores the summary and says so.
+        | Some project, Some document, (Shown _ | Failed _) ->
+            { abandoned with State = Dismissing model.State; Claim = 0; DismissFailed = false }, Some (DeleteSummary (project, document))
+        | _ -> { abandoned with Claim = 0 }, effect
+    | Dismissed (project, document, succeeded) ->
+        match model.State with
+        | Dismissing previous when (model.Project, model.Document) = (Some project, Some document) ->
+            if succeeded then { model with State = Idle; DismissFailed = false }, None
+            else { model with State = previous; DismissFailed = true }, None
+        | _ -> model, None
     | ConfirmSend ->
         match model.Project, model.Document, model.State with
         | Some project, Some document, Confirming (Service (host, name)) -> start project document (Some UseConfigured) (Some (ConfirmedService (host, name)))
@@ -208,7 +222,7 @@ let update (message: Message) (model: Model) : Model * Effect option =
         | Error failure -> { model with State = Failed failure; Progress = None }, None
     | ReaderChanged (project, document) when (project, document) <> (model.Project, model.Document) ->
         let abandoned, effect = abandon model
-        { abandoned with Project = project; Document = document }, effect
+        { abandoned with Project = project; Document = document; DismissFailed = false }, effect
     | _ -> model, None
 
 /// Follows the reader's project and open document; a newly opened document asks the server for the state of its summary job.
