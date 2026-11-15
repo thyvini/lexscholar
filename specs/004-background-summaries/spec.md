@@ -12,7 +12,7 @@
 
 ### Session 2026-11-14
 
-- Q: Does a finished summary survive an app restart? → A: Yes. It is stored and survives restarts until she dismisses it, and it is included in the workspace's export and deletion.
+- Q: Does a finished summary survive an app restart? → A: Yes. It is stored and survives restarts until she dismisses it, and it is included in the workspace's export and deletion. (Workspace export and full deletion are deferred to F002, $12y; see FR-010.)
 - Q: How many summaries may run at once, and what happens when she asks for another? → A: One per document, any number of documents at once; asking again for a document whose summary is running shows its progress instead of starting another.
 - Q: Where does she see that a summary is running or finished for a document she isn't viewing? → A: A status marker (running, finished, failed) next to the document in the project's document list, and on the project in the project list when the document is in another project.
 - Q: Can she cancel a background summary, and how? → A: Yes, with a "Stop" action on the running summary when she views its document; stopping discards it and nothing more is sent.
@@ -61,15 +61,15 @@ The researcher asks for a summary of a document, confirms where it is sent as to
 - **FR-006**: Everything F003 and F005 decide before sending MUST stay unchanged: the refusals (no text, too little text, over 100 pages), the confirmation for a service elsewhere and for her ChatGPT plan, and nothing sent to a service elsewhere or through her plan without her confirmation; a local service needs none (F003 FR-014). Leaving a document while a required confirmation is open MUST send nothing.
 - **FR-007**: Signing out of ChatGPT MUST cancel any summary running on her plan, as today, including one running for a document she is not viewing.
 - **FR-008**: The project's document list MUST show next to each document whether its summary is running, finished or failed, and the project list MUST show on a project that one of its documents has a summary running, finished or failed. The markers MUST update without her reloading.
+- **FR-009**: Replaces F003 FR-009. A finished summary MUST be stored and still be shown after the app restarts, until she dismisses it; dismissing it MUST delete it from storage.
+- **FR-010**: Stored summaries are derived data under constitution Principle II. In this feature she controls them by dismissing a summary (FR-009) and by removing its document from the project (FR-013). Full workspace export and deletion do not exist yet: they are deferred to F002 (Codecks $12y), which MUST include stored summaries, and this feature's storage MUST NOT block that. This feature MUST NOT be described as giving export or full deletion of summaries.
 - **FR-011**: Each document MUST have at most one summary running at a time; any number of documents may have one running at once. Asking for a summary of a document whose summary is running MUST show its progress and MUST NOT start a second summary; the running one continues unchanged.
 - **FR-012**: While she views a document whose summary is running, the app MUST offer a Stop action. Stopping MUST end the work, send no further request for it, keep nothing, and clear the document's status marker.
 - **FR-013**: Removing a document from its project MUST stop its running summary, sending nothing more, and MUST delete its stored summary.
-- **FR-009**: Replaces F003 FR-009. A finished summary MUST be stored and still be shown after the app restarts, until she dismisses it; dismissing it MUST delete it from storage.
-- **FR-010**: Stored summaries MUST be included in the workspace export and removed by the workspace's deletion, as the constitution requires for her data.
 
 ### Key Entities
 
-- **Background summary**: one summary asked for one document in one project. It has a state (running with progress, finished with its summary, or failed with its reason), the service it uses, A finished one is stored, with the summary text, its citations and labels, until she dismisses it.
+- **Background summary**: one summary asked for one document in one project. It has a state (running with progress, finished with its summary, or failed with its reason) and the service it uses. A finished one is stored, with the summary text, its citations and labels, until she dismisses it.
 
 ## Success Criteria *(mandatory)*
 
@@ -80,9 +80,9 @@ The researcher asks for a summary of a document, confirms where it is sent as to
 - **SC-003**: A failure while she was elsewhere is shown on return with the same message as when she waits (checked at least once, for example with her plan's usage limit or a disconnected service).
 - **SC-004**: She never sees a summary, progress or failure on a document other than the one it was asked for during manual validation.
 - **SC-005**: Signing out while a summary runs for a document she is not viewing leaves no summary to find on that document, and no further use of her plan.
+- **SC-006**: Switching documents or projects is no slower with a summary running than without one, as she perceives it.
 - **SC-007**: A summary finished before she closes the app is shown on its document after she reopens it, and is gone for good after she dismisses it.
 - **SC-008**: While viewing another document, she can tell from the document list which documents have a summary running, finished or failed, and the marker changes when a summary finishes.
-- **SC-006**: Switching documents or projects is no slower with a summary running than without one, as she perceives it.
 
 ## Assumptions
 
