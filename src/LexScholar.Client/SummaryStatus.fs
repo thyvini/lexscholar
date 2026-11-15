@@ -1,5 +1,5 @@
 /// The state of a background summary and the status list behind the list markers (F004).
-/// Types only until T002 and T010 add the state machines.
+/// 
 module LexScholar.Client.SummaryStatus
 
 open System.Text.Json
@@ -21,13 +21,71 @@ type SummaryState =
     | Finished of Finished
     | Failed of code: string * detail: string option * omittedPoints: int option
 
-type Status =
-    | Running
-    | Finished
-    | Failed
+type Status = LexScholar.Domain.SummaryStatus
 
 /// One entry of `GET /api/summaries`.
 type StatusEntry = { ProjectId: System.Guid; DocumentId: System.Guid; Status: Status }
+
+/// The list markers' state: the last statuses read, and the number of the polling loop that may continue.
+type Statuses = { Entries: StatusEntry list; Watch: int; Failures: int }
+
+type StatusMessage =
+    | Refresh
+    | StatusesLoaded of watch: int * Result<StatusEntry list, unit>
+
+type StatusEffect = FetchStatuses of watch: int * delay: bool
+
+let initialStatuses = { Entries = []; Watch = 0; Failures = 0 }
+
+/// How many times in a row a failed fetch is tried again when no summary is known to run (the first fetch after a POST
+/// must not lose a new summary's marker to one bad answer).
+let private retries = 3
+
+let private anyRunning (entries: StatusEntry list) = entries |> List.exists (fun entry -> entry.Status = Status.Running)
+
+/// A refresh starts a new polling loop (its number is `Watch`); a loop whose number is no longer current ends at its next answer.
+/// While any summary runs, the loop asks again after the polling delay; when none runs it stops (research §4).
+let updateStatuses (message: StatusMessage) (model: Statuses) : Statuses * StatusEffect option =
+    match message with
+    | Refresh ->
+        let model = { model with Watch = model.Watch + 1; Failures = 0 }
+        model, Some (FetchStatuses (model.Watch, false))
+    | StatusesLoaded (watch, _) when watch <> model.Watch -> model, None
+    | StatusesLoaded (watch, result) ->
+        match result with
+        | Ok entries ->
+            let model = { model with Entries = entries; Failures = 0 }
+            model, (if anyRunning entries then Some (FetchStatuses (watch, true)) else None)
+        | Error () ->
+            let model = { model with Failures = model.Failures + 1 }
+            model, (if anyRunning model.Entries || model.Failures <= retries then Some (FetchStatuses (watch, true)) else None)
+
+/// A change of the active project or the open document fetches the statuses again (AR 4: a tab that polls nothing
+/// catches up here).
+let followView (before: System.Guid option * System.Guid option) (after: System.Guid option * System.Guid option) (model: Statuses) : Statuses * StatusEffect option =
+    if before = after then model, None else updateStatuses Refresh model
+
+/// The status list of `GET /api/summaries`; None for a body that is not one.
+let parseStatuses (body: string) : StatusEntry list option =
+    try
+        use json = JsonDocument.Parse body
+        let status (name: string) =
+            match name with
+            | "running" -> Status.Running
+            | "finished" -> Status.Finished
+            | _ -> Status.Failed
+        [ for element in json.RootElement.EnumerateArray() ->
+            { ProjectId = element.GetProperty("projectId").GetGuid()
+              DocumentId = element.GetProperty("documentId").GetGuid()
+              Status = status (element.GetProperty("status").GetString()) } ]
+        |> Some
+    with _ -> None
+
+let documentStatus (entries: StatusEntry list) (project: System.Guid) (document: System.Guid) : Status option =
+    entries |> List.tryFind (fun entry -> entry.ProjectId = project && entry.DocumentId = document) |> Option.map (fun entry -> entry.Status)
+
+let projectStatus (entries: StatusEntry list) (project: System.Guid) : Status option =
+    entries |> List.filter (fun entry -> entry.ProjectId = project) |> List.map (fun entry -> entry.Status) |> LexScholar.Domain.Summaries.rollUp
 
 // Reading the summary endpoint's JSON (error bodies, job states) and writing its request, moved here from the
 // NDJSON reader (F004 T003). Pure parsing, no HTTP.

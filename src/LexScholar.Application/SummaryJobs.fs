@@ -158,6 +158,14 @@ type SummaryJobs(capabilities: SummaryJobCapabilities) =
             | true, job -> Some job.State
             | _ -> capabilities.Find key |> Option.map JobState.Finished)
 
+    /// The status of every pair with a job (running, or failed: both live in memory) and of every stored summary, read
+    /// under the lock so a job that completes is seen once, as stored (`Complete` saves inside the lock, then drops the job).
+    member _.Snapshot(listStored: unit -> SummaryKey list) : (SummaryKey * SummaryStatus) list =
+        lock gate (fun () ->
+            let live = [ for pair in jobs -> pair.Key, Summaries.statusOf pair.Value.State ]
+            let stored = [ for key in listStored () do if not (jobs.ContainsKey key) then key, SummaryStatus.Finished ]
+            live @ stored)
+
     /// Stops a running summary, or dismisses a finished or failed one; idempotent (research §3). Under the lock: the job is
     /// removed first, so a late `Complete`, `Fail` or `Progress` of it finds nothing, then its token is cancelled (no new call
     /// starts, one in flight is aborted) and the stored row is deleted (finishing may have won the race: nothing stopped is shown).

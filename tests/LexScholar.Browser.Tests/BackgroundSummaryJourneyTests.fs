@@ -175,3 +175,84 @@ let ``Stop clears a running summary, the held call is cancelled and she can ask 
         do! click (summarizeButton page)
         do! expectCitation page
         Assert.Equal(2, fake.Requests.Length) })
+
+let private documentRow (page: IPage) (fileName: string) = page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = fileName))
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T010"); Trait("Category", "Browser")>]
+let ``while viewing another document the marker of a running summary turns to finished without a reload`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use fake = new FakeChatService(Hold answer)
+        use harness = TestHarness.Start(serveClient = true, settings = settings, summaryHandler = fake)
+        let! page = openApp browser harness
+        do! createProject page "Alpha"
+        do! importAndAdd page "article-en.pdf"
+        do! importAndAdd page "article-pt.pdf"
+        do! openDocument page "article-en.pdf"
+        do! click (summarizeButton page)
+        do! fake.Waiting.WaitAsync(TimeSpan.FromSeconds 30.)
+        do! openDocument page "article-pt.pdf"
+        // Viewing B: A's marker and the project's marker say running; B has none.
+        do! Assertions.Expect((documentRow page "article-en.pdf").Locator(".summary-marker")).ToHaveTextAsync("Summary running")
+        do! Assertions.Expect((documentRow page "article-pt.pdf").Locator(".summary-marker")).ToHaveCountAsync(0)
+        do! Assertions.Expect((projectRow page "Alpha").Locator(".summary-marker")).ToHaveTextAsync("Summary running")
+        fake.Release()
+        // No reload, no click: polling updates both.
+        do! Assertions.Expect((documentRow page "article-en.pdf").Locator(".summary-marker")).ToHaveTextAsync("Summary finished")
+        do! Assertions.Expect((projectRow page "Alpha").Locator(".summary-marker")).ToHaveTextAsync("Summary finished") })
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T010"); Trait("Category", "Browser")>]
+let ``a failed summary is marked failed in the list`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use fake = new FakeChatService(fun _ -> Status 400)
+        use harness = TestHarness.Start(serveClient = true, settings = settings, summaryHandler = fake)
+        let! page = openApp browser harness
+        do! createProject page "Alpha"
+        do! importAndAdd page "article-en.pdf"
+        do! importAndAdd page "article-pt.pdf"
+        do! openDocument page "article-en.pdf"
+        do! click (summarizeButton page)
+        do! openDocument page "article-pt.pdf"
+        do! Assertions.Expect((documentRow page "article-en.pdf").Locator(".summary-marker")).ToHaveTextAsync("Summary failed")
+        do! Assertions.Expect((projectRow page "Alpha").Locator(".summary-marker")).ToHaveTextAsync("Summary failed") })
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T010"); Trait("Category", "Browser")>]
+let ``removing a document with a finished summary clears the project's marker`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use fake = new FakeChatService(Reply answer)
+        use harness = TestHarness.Start(serveClient = true, settings = settings, summaryHandler = fake)
+        let! page = openApp browser harness
+        do! createProject page "Alpha"
+        do! importAndAdd page "article-en.pdf"
+        do! importAndAdd page "article-pt.pdf"
+        do! openDocument page "article-en.pdf"
+        do! click (summarizeButton page)
+        do! expectCitation page
+        // Another document is open when the removal happens, so the view does not change.
+        do! openDocument page "article-pt.pdf"
+        do! Assertions.Expect((projectRow page "Alpha").Locator(".summary-marker")).ToHaveTextAsync("Summary finished")
+        do! click (button (documentRow page "article-en.pdf") "Remove")
+        do! Assertions.Expect(documentRow page "article-en.pdf").ToHaveCountAsync(0)
+        do! Assertions.Expect((projectRow page "Alpha").Locator(".summary-marker")).ToHaveCountAsync(0) })
+
+/// Lets a POST reach the server and drops its answer; other requests pass.
+let private loseAnswer (route: IRoute) : Task =
+    if route.Request.Method = "POST" then
+        task {
+            let! fetched = route.FetchAsync()
+            ignore fetched
+            do! route.AbortAsync() }
+    else route.ContinueAsync()
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T010"); Trait("Category", "Browser")>]
+let ``a lost answer to the summary request still shows the marker of the job the server started`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use fake = new FakeChatService(Reply answer)
+        use harness = TestHarness.Start(serveClient = true, settings = settings, summaryHandler = fake)
+        let! page = openApp browser harness
+        do! createProject page "Alpha"
+        do! importAndAdd page "article-en.pdf"
+        do! openDocument page "article-en.pdf"
+        // The server gets the POST and starts the job, but the answer never reaches the page.
+        use! _ = page.RouteAsync("**/summary", Func<IRoute, Task>(loseAnswer))
+        do! click (summarizeButton page)
+        do! Assertions.Expect((documentRow page "article-en.pdf").Locator(".summary-marker")).ToHaveTextAsync("Summary finished") })

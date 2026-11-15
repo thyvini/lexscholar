@@ -345,9 +345,8 @@ let private resolveDestination (configuration: WorkspaceConfiguration) (signedIn
     | _, true, Named Chatgpt -> Ok Chatgpt
     | false, _, Named Configured -> Error(notConfigured ())
 
-/// The state, stop/dismiss and status routes of F004. They answer 501 until T002 onwards fill them in.
-let private mapBackground (app: WebApplication) (jobs: SummaryJobs) =
-    let notImplemented () = problem 501 "not_implemented" "Not implemented yet" null
+/// The state, stop/dismiss and status routes of F004.
+let private mapBackground (app: WebApplication) (jobs: SummaryJobs) (listStored: unit -> SummaryKey list) =
     let path = "/api/projects/{projectId:guid}/documents/{documentId:guid}/summary"
     app.MapGet(path, Func<Guid, Guid, IResult>(fun projectId documentId ->
         match jobs.State { Project = projectId; Document = documentId } with
@@ -357,11 +356,21 @@ let private mapBackground (app: WebApplication) (jobs: SummaryJobs) =
     app.MapDelete(path, Func<Guid, Guid, IResult>(fun projectId documentId ->
         jobs.Stop { Project = projectId; Document = documentId }
         Results.NoContent())) |> ignore
-    app.MapGet("/api/summaries", Func<IResult>(fun () -> notImplemented ())) |> ignore
+    // One entry per pair with a running, finished or failed summary, for the list markers.
+    app.MapGet("/api/summaries", Func<IResult>(fun () ->
+        let statusName (status: SummaryStatus) =
+            match status with
+            | SummaryStatus.Running -> "running"
+            | SummaryStatus.Finished -> "finished"
+            | SummaryStatus.Failed -> "failed"
+        let entries =
+            jobs.Snapshot listStored
+            |> List.map (fun (key, status) -> {| projectId = key.Project; documentId = key.Document; status = statusName status |})
+        Results.Json entries)) |> ignore
 
 let map (app: WebApplication) (configuration: WorkspaceConfiguration) (vault: ChatGptAccess.Vault) (jobs: SummaryJobs) =
     let directory = configuration.DataDirectory
-    mapBackground app jobs
+    mapBackground app jobs (fun () -> SummaryRepository.listKeys directory)
     // Published so tests can wait for a job to end (a handshake instead of polling).
     (app :> IApplicationBuilder).Properties["LexScholar.SummaryJobs"] <- box jobs
     app.MapPost("/api/projects/{projectId:guid}/documents/{documentId:guid}/summary",

@@ -31,7 +31,8 @@ let ``the summary state and status routes exist`` () =
     use state = send harness.Client HttpMethod.Get (summaryPath ()) None
     Assert.Equal(HttpStatusCode.NotFound, state.StatusCode)
     use statuses = send harness.Client HttpMethod.Get "/api/summaries" None
-    Assert.Equal(HttpStatusCode.NotImplemented, statuses.StatusCode)
+    // Live since T010: an empty list when nothing is running, finished or failed.
+    Assert.Equal(HttpStatusCode.OK, statuses.StatusCode)
 
 [<Fact; Trait("Task", "T001")>]
 let ``deleting a summary exists and needs the antiforgery token`` () =
@@ -577,3 +578,47 @@ let ``removing a document that is not in the project is still not_found and touc
     Assert.Equal(HttpStatusCode.NotFound, fst (removeFromProject harness project (Guid.NewGuid())))
     Assert.Equal(HttpStatusCode.Accepted, fst (ask harness.Client project document))
     settleJob harness project document
+
+let private statuses (harness: TestHarness) : (Guid * Guid * string) list =
+    let status, text = sendWith harness.Client HttpMethod.Get "/api/summaries" None
+    Assert.Equal(HttpStatusCode.OK, status)
+    use json = JsonDocument.Parse text
+    [ for entry in json.RootElement.EnumerateArray() ->
+        entry.GetProperty("projectId").GetGuid(), entry.GetProperty("documentId").GetGuid(), entry.GetProperty("status").GetString() ]
+
+[<Fact; Trait("Task", "T010")>]
+let ``the status list has one entry for a running summary, then one for the finished stored one`` () =
+    let fake = new FakeChatService(Hold answer)
+    use harness = TestHarness.Start(settings = settings, summaryHandler = fake)
+    let project = seedProject harness.Root
+    let document = addDocument harness.Client project "article-en.pdf"
+    Assert.Empty(statuses harness)
+    Assert.Equal(HttpStatusCode.Accepted, fst (ask harness.Client project document))
+    fake.Waiting.WaitAsync(TimeSpan.FromSeconds 30.).GetAwaiter().GetResult()
+    Assert.Equal<(Guid * Guid * string) list>([ project, document, "running" ], statuses harness)
+    fake.Release()
+    settleJob harness project document
+    Assert.Equal<(Guid * Guid * string) list>([ project, document, "finished" ], statuses harness)
+
+[<Fact; Trait("Task", "T010")>]
+let ``dismissing a finished summary removes it from the status list`` () =
+    let fake = new FakeChatService(Reply answer)
+    use harness = TestHarness.Start(settings = settings, summaryHandler = fake)
+    let project = seedProject harness.Root
+    let document = addDocument harness.Client project "article-en.pdf"
+    Assert.Equal(HttpStatusCode.Accepted, fst (ask harness.Client project document))
+    settleJob harness project document
+    // Dismissing removes it from the list.
+    use deleted = send harness.Client HttpMethod.Delete (path project document) (Some (token harness.Client))
+    Assert.Equal(HttpStatusCode.NoContent, deleted.StatusCode)
+    Assert.Empty(statuses harness)
+
+[<Fact; Trait("Task", "T010")>]
+let ``a failed summary is listed as failed`` () =
+    let fake = new FakeChatService(fun _ -> Status 400)
+    use harness = TestHarness.Start(settings = settings, summaryHandler = fake)
+    let project = seedProject harness.Root
+    let document = addDocument harness.Client project "article-en.pdf"
+    Assert.Equal(HttpStatusCode.Accepted, fst (ask harness.Client project document))
+    settleJob harness project document
+    Assert.Equal<(Guid * Guid * string) list>([ project, document, "failed" ], statuses harness)
