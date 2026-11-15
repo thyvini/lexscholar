@@ -1022,3 +1022,26 @@ let ``a plan usage limit is kept as a failed state and asking again starts a new
     let _, again = getState harness path
     Assert.Equal("usage_limit_reached", again.GetProperty("code").GetString())
     Assert.Equal(first + 1, fake.RequestsTo("api.openai.com", "/v1/responses").Length)
+
+// ---- F004 T007: a pair with a summary answers 200 before any destination, confirmation or sign-in check ----
+
+[<Fact; Trait("Task", "T007")>]
+let ``a finished plan summary answers a repeat POST with 200, even signed out or unconfirmed`` () =
+    let fake = new FakeOpenAi(ResponsesScript.Completed answer)
+    use harness = TestHarness.Start(summaryHandler = fake)
+    let path = documentPath harness
+    signInThrough harness fake "" |> ignore
+    Assert.Equal(HttpStatusCode.Accepted, fst (sendJson harness path confirmed))
+    settle harness path
+    let requests = (openAiRequests fake).Length
+    // Signed out: no sign-in check (it would be 503 chatgpt_signed_out).
+    signOut harness |> ignore
+    let status, text = sendJson harness path """{"confirmSend":false}"""
+    Assert.Equal(HttpStatusCode.OK, status)
+    Assert.Equal("finished", (JsonDocument.Parse text).RootElement.GetProperty("status").GetString())
+    // Signed in again, not confirmed: no confirmation (it would be 409).
+    signInThrough harness fake "" |> ignore
+    let status, text = sendJson harness path """{"confirmSend":false}"""
+    Assert.Equal(HttpStatusCode.OK, status)
+    Assert.Equal("finished", (JsonDocument.Parse text).RootElement.GetProperty("status").GetString())
+    Assert.Equal(requests, (openAiRequests fake).Length)

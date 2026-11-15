@@ -333,3 +333,114 @@ let ``a summary still running when the host shuts down stores nothing`` () =
     Assert.Equal(0L, storedRows harness)
     let status, _ = sendWith harness.Client HttpMethod.Get (path project document) None
     Assert.Equal(HttpStatusCode.NotFound, status)
+
+// F004 T007: one summary per document in a project; several at once.
+
+let private waitFor (task: Threading.Tasks.Task) = task.WaitAsync(TimeSpan.FromSeconds 30.).GetAwaiter().GetResult()
+
+let private statusOf (text: string) = (use json = JsonDocument.Parse text in json.RootElement.GetProperty("status").GetString())
+
+[<Fact; Trait("Task", "T007")>]
+let ``a repeat POST while running answers 200 running, sends nothing new and the first job continues`` () =
+    let fake = new FakeChatService(Hold answer)
+    use harness = TestHarness.Start(settings = settings, summaryHandler = fake)
+    let project = seedProject harness.Root
+    let document = addDocument harness.Client project "article-en.pdf"
+    Assert.Equal(HttpStatusCode.Accepted, fst (ask harness.Client project document))
+    waitFor fake.Waiting
+    let status, text = ask harness.Client project document
+    Assert.Equal(HttpStatusCode.OK, status)
+    Assert.Equal("running", statusOf text)
+    Assert.Equal(1, fake.Requests.Length)
+    fake.Release()
+    settleJob harness project document
+    Assert.Equal("finished", (getJson harness project document).GetProperty("status").GetString())
+    Assert.Equal(1, fake.Requests.Length)
+
+[<Fact; Trait("Task", "T007")>]
+let ``a running summary answers a repeat POST with 200 without the confirmation a service elsewhere needs`` () =
+    let fake = new FakeChatService(Hold answer)
+    let elsewhere = [ "LexScholar:Summary:Endpoint", "https://summary.example.test/v1"; "LexScholar:Summary:Model", "m" ]
+    use harness = TestHarness.Start(settings = elsewhere, summaryHandler = fake)
+    let project = seedProject harness.Root
+    let document = addDocument harness.Client project "article-en.pdf"
+    let confirmed = """{"confirmSend":true,"confirmedHost":"summary.example.test","confirmedModel":"m"}"""
+    let post body = sendWith harness.Client HttpMethod.Post (path project document) (Some (new StringContent(body, Encoding.UTF8, "application/json")))
+    Assert.Equal(HttpStatusCode.Accepted, fst (post confirmed))
+    waitFor fake.Waiting
+    // No confirmation, and even a destination that would be refused: the pair already has its summary.
+    for body in [ """{"confirmSend":false}"""; """{"destination":"nowhere"}""" ] do
+        let status, text = post body
+        Assert.Equal(HttpStatusCode.OK, status)
+        Assert.Equal("running", statusOf text)
+    Assert.Equal(1, fake.Requests.Length)
+    fake.Release()
+    settleJob harness project document
+
+[<Fact; Trait("Task", "T007")>]
+let ``a repeat POST after finishing answers 200 with the summary and calls the service no more`` () =
+    let fake = new FakeChatService(Reply answer)
+    use harness = TestHarness.Start(settings = settings, summaryHandler = fake)
+    let project = seedProject harness.Root
+    let document = addDocument harness.Client project "article-en.pdf"
+    ask harness.Client project document |> ignore
+    settleJob harness project document
+    let status, text = ask harness.Client project document
+    Assert.Equal(HttpStatusCode.OK, status)
+    Assert.Equal("finished", statusOf text)
+    Assert.Equal(1, fake.Requests.Length)
+
+[<Fact; Trait("Task", "T007")>]
+let ``two POSTs racing for one document start one job`` () =
+    let fake = new FakeChatService(Hold answer)
+    use harness = TestHarness.Start(settings = settings, summaryHandler = fake)
+    let project = seedProject harness.Root
+    let document = addDocument harness.Client project "article-en.pdf"
+    let results =
+        [ for _ in 1 .. 2 -> Threading.Tasks.Task.Run(fun () -> fst (ask harness.Client project document)) ]
+        |> List.map (fun task -> task.GetAwaiter().GetResult())
+        |> List.sort
+    Assert.Equal<HttpStatusCode list>([ HttpStatusCode.OK; HttpStatusCode.Accepted ], results)
+    waitFor fake.Waiting
+    fake.Release()
+    settleJob harness project document
+    Assert.Equal(1, fake.Requests.Length)
+
+[<Fact; Trait("Task", "T007")>]
+let ``three documents summarize at once and all finish`` () =
+    let fake = new FakeChatService(Hold """{"points":[{"text":"Main idea","pages":[1]}]}""")
+    use harness = TestHarness.Start(settings = settings, summaryHandler = fake)
+    let project = seedProject harness.Root
+    let documents = [ "article-en.pdf"; "article-pt.pdf"; "partial.pdf" ] |> List.map (addDocument harness.Client project)
+    for document in documents do
+        Assert.Equal(HttpStatusCode.Accepted, fst (ask harness.Client project document))
+    // Every request is held before any is released: they ran side by side.
+    let deadline = DateTime.UtcNow.AddSeconds 30.
+    waitFor fake.Waiting
+    while fake.Requests.Length < 3 && DateTime.UtcNow < deadline do Threading.Thread.Yield() |> ignore
+    Assert.Equal(3, fake.Requests.Length)
+    fake.Release()
+    for document in documents do
+        settleJob harness project document
+        Assert.Equal("finished", (getJson harness project document).GetProperty("status").GetString())
+
+[<Fact; Trait("Task", "T007")>]
+let ``the same document in two projects has two independent summaries`` () =
+    let fake = new FakeChatService(Reply answer)
+    use harness = TestHarness.Start(settings = settings, summaryHandler = fake)
+    let first = seedProject harness.Root
+    let second = seedProject harness.Root
+    let document = addDocument harness.Client first "article-en.pdf"
+    let body = JsonSerializer.Serialize({| documentId = string document; role = "FocusedSource" |})
+    Assert.Equal(HttpStatusCode.Created, fst (sendWith harness.Client HttpMethod.Post $"/api/projects/{second}/documents" (Some (new StringContent(body, Encoding.UTF8, "application/json")))))
+    Assert.Equal(HttpStatusCode.Accepted, fst (ask harness.Client first document))
+    settleJob harness first document
+    // The other project has nothing yet, and asking there starts its own job (202, not 200).
+    Assert.Equal(HttpStatusCode.NotFound, fst (sendWith harness.Client HttpMethod.Get (path second document) None))
+    Assert.Equal(HttpStatusCode.Accepted, fst (ask harness.Client second document))
+    settleJob harness second document
+    Assert.Equal(2, fake.Requests.Length)
+    // Dismissing one leaves the other.
+    Assert.Equal(HttpStatusCode.NoContent, fst (delete harness first document))
+    Assert.Equal(HttpStatusCode.NotFound, fst (sendWith harness.Client HttpMethod.Get (path first document) None))
+    Assert.Equal("finished", (getJson harness second document).GetProperty("status").GetString())
