@@ -175,3 +175,60 @@ let ``the state of a running multi-chunk summary reports the pages processed, th
     Assert.Equal(HttpStatusCode.OK, status)
     use json = JsonDocument.Parse text
     Assert.Equal("finished", json.RootElement.GetProperty("status").GetString())
+
+// F004 T005: a failure is the job's state, readable on return, with what F003 sent.
+
+let private settleJob (harness: TestHarness) project document =
+    SummaryJobsAccess.settled harness.App project document |> fun task -> task.WaitAsync(TimeSpan.FromSeconds 30.).GetAwaiter().GetResult()
+
+let private getJson (harness: TestHarness) project document =
+    let status, text = sendWith harness.Client HttpMethod.Get (path project document) None
+    Assert.Equal(HttpStatusCode.OK, status)
+    (use json = JsonDocument.Parse text in json.RootElement.Clone())
+
+[<Fact; Trait("Task", "T005")>]
+let ``a service error is kept as a failed state with F003's code and detail`` () =
+    let fake = new FakeChatService(Status 500)
+    use harness = TestHarness.Start(settings = settings, summaryHandler = fake)
+    let project = seedProject harness.Root
+    let document = addDocument harness.Client project "article-en.pdf"
+    let status, _ = ask harness.Client project document
+    Assert.Equal(HttpStatusCode.Accepted, status)
+    settleJob harness project document
+    let state = getJson harness project document
+    Assert.Equal("failed", state.GetProperty("status").GetString())
+    Assert.Equal("service_failed", state.GetProperty("code").GetString())
+    let detail = state.GetProperty("detail").GetString()
+    Assert.False(String.IsNullOrWhiteSpace detail)
+    // The service's own body never reaches the researcher.
+    Assert.DoesNotContain("service detail", detail)
+    // It is still there when asked again later.
+    Assert.Equal("failed", (getJson harness project document).GetProperty("status").GetString())
+
+[<Fact; Trait("Task", "T005")>]
+let ``a reply without a valid citation is kept as not_enough_text with the omitted count`` () =
+    let fake = new FakeChatService(Reply """{"points":[{"text":"Nowhere","pages":[999]}]}""")
+    use harness = TestHarness.Start(settings = settings, summaryHandler = fake)
+    let project = seedProject harness.Root
+    let document = addDocument harness.Client project "article-en.pdf"
+    ask harness.Client project document |> ignore
+    settleJob harness project document
+    let state = getJson harness project document
+    Assert.Equal("failed", state.GetProperty("status").GetString())
+    Assert.Equal("not_enough_text", state.GetProperty("code").GetString())
+    Assert.Equal(1, state.GetProperty("omittedPoints").GetInt32())
+
+[<Fact; Trait("Task", "T005")>]
+let ``asking again after a failure starts a new job that replaces it`` () =
+    let fake = new FakeChatService(fun n -> if n = 1 then Status 500 else Reply answer)
+    use harness = TestHarness.Start(settings = settings, summaryHandler = fake)
+    let project = seedProject harness.Root
+    let document = addDocument harness.Client project "article-en.pdf"
+    ask harness.Client project document |> ignore
+    settleJob harness project document
+    Assert.Equal("failed", (getJson harness project document).GetProperty("status").GetString())
+    let status, _ = ask harness.Client project document
+    Assert.Equal(HttpStatusCode.Accepted, status)
+    settleJob harness project document
+    Assert.Equal("finished", (getJson harness project document).GetProperty("status").GetString())
+    Assert.Equal(2, fake.Requests.Length)

@@ -134,3 +134,24 @@ let ``returning to a document while its summary runs shows it running, and the s
         // No click: polling finds it.
         do! expectCitation page
         Assert.Equal(1, fake.Requests.Length) })
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T005"); Trait("Category", "Browser")>]
+let ``a summary that fails while she is on another document shows its message on return and Try again replaces it`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use fake = new FakeChatService(fun call -> if call = 1 then Status 400 else Reply answer)
+        use harness = TestHarness.Start(serveClient = true, settings = settings, summaryHandler = fake)
+        let! page = openApp browser harness
+        do! createProject page "Alpha"
+        do! importAndAdd page "article-en.pdf"
+        do! importAndAdd page "article-pt.pdf"
+        do! openDocument page "article-en.pdf"
+        do! click (summarizeButton page)
+        do! openDocument page "article-pt.pdf"
+        do! Assertions.Expect(panel page).ToHaveCountAsync(0)
+        do! openDocument page "article-en.pdf"
+        // The failure belongs to the job, so it is found whether it ended before or after her return.
+        let alert = page.GetByRole(AriaRole.Alert).Filter(LocatorFilterOptions(HasText = "MaxOutputTokens"))
+        do! Assertions.Expect(alert).ToBeVisibleAsync()
+        do! click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = "Try again", Exact = true)))
+        do! expectCitation page
+        Assert.Equal(2, fake.Requests.Length) })
