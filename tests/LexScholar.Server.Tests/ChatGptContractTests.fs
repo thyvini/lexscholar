@@ -541,11 +541,13 @@ let ``sign-out, then sign-in asks for the confirmation again`` () =
     signInThrough harness fake "" |> ignore
     expectSummary (sendSummary harness path confirmed) |> ignore
     signOut harness |> ignore
-    let status, text = sendSummary harness path confirmed
+    // The first document's summary is finished (F004 T007: its repeat ask answers 200 first), so another document is asked.
+    let otherPath = documentPathFor harness "article-pt.pdf"
+    let status, text = sendSummary harness otherPath confirmed
     Assert.Equal(HttpStatusCode.ServiceUnavailable, status)
     Assert.Equal("summary_service_not_configured", problemCode text)
     signInThrough harness fake "" |> ignore
-    let status, text = sendSummary harness path """{"confirmSend":false}"""
+    let status, text = sendSummary harness otherPath """{"confirmSend":false}"""
     Assert.Equal(HttpStatusCode.Conflict, status)
     Assert.Equal("confirmation_required", problemCode text)
     Assert.Single(fake.RequestsTo("api.openai.com", "/v1/responses")) |> ignore

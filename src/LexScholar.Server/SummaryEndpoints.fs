@@ -366,33 +366,44 @@ let map (app: WebApplication) (configuration: WorkspaceConfiguration) (vault: Ch
     app.MapPost("/api/projects/{projectId:guid}/documents/{documentId:guid}/summary",
                 Func<Guid, Guid, HttpContext, Task<IResult>>(fun projectId documentId context -> task {
         let! body = readBody context
-        // Reading the vault waits for a refresh in flight, so a request that explicitly names its
-        // configured service (which exists) never reads it: a local summary does not wait for ChatGPT.
-        let! signedIn =
-            task {
-                match body.Destination with
-                | Named Configured when configuration.Summary.IsSome -> return false
-                | _ ->
-                    let! record = vault.Read()
-                    return record.IsSome
-            }
-        match resolveDestination configuration signedIn body.Destination with
-        | Error answer -> return answer
-        | Ok destination ->
-            if notAssociated directory projectId documentId then
-                if LibraryRepository.list directory |> List.exists (fun document -> document.Id = documentId) then
-                    return problem 404 "not_found" "Association not found" null
+        // One summary per document in a project (FR-011): a running or finished (stored included) summary for a pair that is
+        // still in the project answers with its state before any destination, confirmation or sign-in check, since nothing
+        // new is sent. A failed one is not returned: asking again replaces it, through the checks below.
+        let key = { Project = projectId; Document = documentId }
+        let existing =
+            match jobs.State key with
+            | Some (JobState.Running _ | JobState.Finished _ as state) when not (notAssociated directory projectId documentId) -> Some state
+            | _ -> None
+        match existing with
+        | Some state -> return stateResult 200 state
+        | None ->
+            // Reading the vault waits for a refresh in flight, so a request that explicitly names its
+            // configured service (which exists) never reads it: a local summary does not wait for ChatGPT.
+            let! signedIn =
+                task {
+                    match body.Destination with
+                    | Named Configured when configuration.Summary.IsSome -> return false
+                    | _ ->
+                        let! record = vault.Read()
+                        return record.IsSome
+                }
+            match resolveDestination configuration signedIn body.Destination with
+            | Error answer -> return answer
+            | Ok destination ->
+                if notAssociated directory projectId documentId then
+                    if LibraryRepository.list directory |> List.exists (fun document -> document.Id = documentId) then
+                        return problem 404 "not_found" "Association not found" null
+                    else
+                        return problem 404 "document_not_found" "Document not found" null
                 else
-                    return problem 404 "document_not_found" "Document not found" null
-            else
-                match! PdfText.extractPages directory documentId context.RequestAborted with
-                | Error error -> return extractionProblem error
-                | Ok pages ->
-                    match Summaries.readability pages with
-                    | Error failure -> return readabilityProblem failure
-                    | Ok readable ->
-                        // These two calls are the only paths to `summarizeOnce`, and both run after the local checks
-                        // and after their own confirmation rule.
-                        match destination with
-                        | Chatgpt -> return! summarizeViaPlan context vault jobs body projectId documentId readable
-                        | Configured -> return! summarizeConfigured context jobs configuration.Summary.Value body projectId documentId readable })) |> ignore
+                    match! PdfText.extractPages directory documentId context.RequestAborted with
+                    | Error error -> return extractionProblem error
+                    | Ok pages ->
+                        match Summaries.readability pages with
+                        | Error failure -> return readabilityProblem failure
+                        | Ok readable ->
+                            // These two calls are the only paths to `summarizeOnce`, and both run after the local checks
+                            // and after their own confirmation rule.
+                            match destination with
+                            | Chatgpt -> return! summarizeViaPlan context vault jobs body projectId documentId readable
+                            | Configured -> return! summarizeConfigured context jobs configuration.Summary.Value body projectId documentId readable })) |> ignore
