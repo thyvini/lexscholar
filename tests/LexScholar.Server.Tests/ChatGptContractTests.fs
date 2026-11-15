@@ -447,6 +447,18 @@ let storedRecord (harness: TestHarness) =
     use json = JsonDocument.Parse(IO.File.ReadAllText(recordPath harness))
     json.RootElement.Clone()
 
+/// Posts to a summary path. The summary runs as a background job (F004): a `202` is settled (a handshake, no polling)
+/// and answered as the `200` event it replaced (`summary` or `failed`), so the F005 assertions on the plan path stay as they were.
+/// Other statuses are returned as they are. The 202 itself is asserted in BackgroundSummary tests below (T003).
+let sendSummary (harness: TestHarness) (path: string) (body: string) =
+    let status, text = sendJson harness path body
+    if status <> HttpStatusCode.Accepted then status, text
+    else
+        let parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries)
+        let project, document = Guid.Parse parts.[2], Guid.Parse parts.[4]
+        let _, state = SummaryContractTests.settledState harness project document (status, text)
+        HttpStatusCode.OK, (SummaryContractTests.asEvent state).GetRawText()
+
 let expectSummary (status: HttpStatusCode, text: string) =
     Assert.Equal(HttpStatusCode.OK, status)
     let event = Assert.Single(events text)
@@ -471,7 +483,7 @@ let ``signed in without confirmation is 409 and nothing at all reaches the OpenA
     use harness = TestHarness.Start(summaryHandler = fake)
     let path = documentPath harness
     signInThrough harness fake "" |> ignore
-    let status, text = sendJson harness path """{"confirmSend":false}"""
+    let status, text = sendSummary harness path """{"confirmSend":false}"""
     Assert.Equal(HttpStatusCode.Conflict, status)
     use json = JsonDocument.Parse text
     Assert.Equal("confirmation_required", json.RootElement.GetProperty("code").GetString())
@@ -481,7 +493,7 @@ let ``signed in without confirmation is 409 and nothing at all reaches the OpenA
     Assert.False((storedRecord harness).TryGetProperty("confirmedAt") |> fst)
     // A confirmation that is not the boolean true is not one.
     for body in [ "{}"; """{"confirmSend":"true"}"""; """{"confirmSend":1}""" ] do
-        Assert.Equal(HttpStatusCode.Conflict, fst (sendJson harness path body))
+        Assert.Equal(HttpStatusCode.Conflict, fst (sendSummary harness path body))
     Assert.Empty(openAiRequests fake)
 
 [<Fact; Trait("Task", "T007")>]
@@ -490,7 +502,7 @@ let ``confirming sends the summary through the plan with the first listed model 
     use harness = TestHarness.Start(summaryHandler = fake)
     let path = documentPath harness
     signInThrough harness fake "" |> ignore
-    let event = expectSummary (sendJson harness path confirmed)
+    let event = expectSummary (sendSummary harness path confirmed)
     Assert.Equal("ChatGPT plan", event.GetProperty("serviceHost").GetString())
     Assert.Equal("gpt-test", event.GetProperty("model").GetString())
     let point = event.GetProperty("points").[0]
@@ -502,7 +514,7 @@ let ``confirming sends the summary through the plan with the first listed model 
     Assert.Contains("gpt-test", request.Body)
     Assert.True((storedRecord harness).TryGetProperty("confirmedAt") |> fst)
     // A second summary of the same sign-in needs no confirmation.
-    expectSummary (sendJson harness path """{"confirmSend":false}""") |> ignore
+    expectSummary (sendSummary harness path """{"confirmSend":false}""") |> ignore
     use destinations = destinations harness.Client
     Assert.True(destinations.RootElement.GetProperty("chatgpt").GetProperty("confirmed").GetBoolean())
 
@@ -514,10 +526,10 @@ let ``the confirmation survives a host restart`` () =
         use first = TestHarness.Start(workspace = workspace, summaryHandler = fake)
         let path = documentPath first
         signInThrough first fake "" |> ignore
-        expectSummary (sendJson first path confirmed) |> ignore
+        expectSummary (sendSummary first path confirmed) |> ignore
         path
     use second = TestHarness.Start(workspace = workspace, summaryHandler = fake)
-    expectSummary (sendJson second path """{"confirmSend":false}""") |> ignore
+    expectSummary (sendSummary second path """{"confirmSend":false}""") |> ignore
 
 [<Fact; Trait("Task", "T007")>]
 let ``sign-out, then sign-in asks for the confirmation again`` () =
@@ -525,13 +537,13 @@ let ``sign-out, then sign-in asks for the confirmation again`` () =
     use harness = TestHarness.Start(summaryHandler = fake)
     let path = documentPath harness
     signInThrough harness fake "" |> ignore
-    expectSummary (sendJson harness path confirmed) |> ignore
+    expectSummary (sendSummary harness path confirmed) |> ignore
     signOut harness |> ignore
-    let status, text = sendJson harness path confirmed
+    let status, text = sendSummary harness path confirmed
     Assert.Equal(HttpStatusCode.ServiceUnavailable, status)
     Assert.Equal("summary_service_not_configured", problemCode text)
     signInThrough harness fake "" |> ignore
-    let status, text = sendJson harness path """{"confirmSend":false}"""
+    let status, text = sendSummary harness path """{"confirmSend":false}"""
     Assert.Equal(HttpStatusCode.Conflict, status)
     Assert.Equal("confirmation_required", problemCode text)
     Assert.Single(fake.RequestsTo("api.openai.com", "/v1/responses")) |> ignore
@@ -542,7 +554,7 @@ let ``with a service configured, signing out gives chatgpt_signed_out for a name
     let chat = new FakeChatService(Reply answer)
     use harness = TestHarness.Start(settings = sumSettings, summaryHandler = new Router(fake, chat, ignore))
     let path = documentPath harness
-    let status, text = sendJson harness path """{"destination":"chatgpt","confirmSend":true}"""
+    let status, text = sendSummary harness path """{"destination":"chatgpt","confirmSend":true}"""
     Assert.Equal(HttpStatusCode.ServiceUnavailable, status)
     Assert.Equal("chatgpt_signed_out", problemCode text)
     Assert.Empty(fake.Requests)
@@ -557,7 +569,7 @@ let ``both destinations without a valid destination is 400 destination_required 
     signInThrough harness fake "" |> ignore
     let before = fake.Requests.Length
     for body in [ confirmed; """{"destination":"other","confirmSend":true}"""; """{"destination":1,"confirmSend":true}""" ] do
-        let status, text = sendJson harness path body
+        let status, text = sendSummary harness path body
         Assert.Equal(HttpStatusCode.BadRequest, status)
         Assert.Equal("destination_required", problemCode text)
     Assert.Equal(before, fake.Requests.Length)
@@ -574,7 +586,7 @@ let ``with both available the named destination is used and configured keeps the
     Assert.Equal("127.0.0.1:9", configured.GetProperty("serviceHost").GetString())
     Assert.Single chat.Requests |> ignore
     Assert.Empty(openAiRequests fake)
-    let plan = expectSummary (sendJson harness path """{"destination":"chatgpt","confirmSend":true}""")
+    let plan = expectSummary (sendSummary harness path """{"destination":"chatgpt","confirmSend":true}""")
     Assert.Equal("ChatGPT plan", plan.GetProperty("serviceHost").GetString())
     Assert.Single chat.Requests |> ignore
 
@@ -603,7 +615,7 @@ let ``a token expiring within ten minutes is refreshed once and the rotated refr
     use harness = TestHarness.Start(summaryHandler = fake)
     let path = documentPath harness
     signInExpiring harness fake
-    expectSummary (sendJson harness path confirmed) |> ignore
+    expectSummary (sendSummary harness path confirmed) |> ignore
     let tokenRequests = fake.RequestsTo("auth.openai.com", tokenPath)
     Assert.Equal(2, tokenRequests.Length)
     Assert.Contains("grant_type=refresh_token", tokenRequests[1].Body)
@@ -615,7 +627,7 @@ let ``a token expiring within ten minutes is refreshed once and the rotated refr
     Assert.Equal("access-token-2", record.GetProperty("accessToken").GetString())
     Assert.True(record.TryGetProperty("confirmedAt") |> fst)
     // The new token is good for an hour: the next summary does not refresh again.
-    expectSummary (sendJson harness path confirmed) |> ignore
+    expectSummary (sendSummary harness path confirmed) |> ignore
     Assert.Equal(2, fake.RequestsTo("auth.openai.com", tokenPath).Length)
 
 [<Fact; Trait("Task", "T007")>]
@@ -625,7 +637,7 @@ let ``an unconfirmed request does not refresh or touch the network`` () =
     let path = documentPath harness
     signInExpiring harness fake
     let before = fake.Requests.Length
-    Assert.Equal(HttpStatusCode.Conflict, fst (sendJson harness path """{"confirmSend":false}"""))
+    Assert.Equal(HttpStatusCode.Conflict, fst (sendSummary harness path """{"confirmSend":false}"""))
     Assert.Equal(before, fake.Requests.Length)
     Assert.Equal("refresh-token-1", (storedRecord harness).GetProperty("refreshToken").GetString())
 
@@ -639,7 +651,7 @@ let ``a refresh that fails without a terminal code keeps the record and is a ret
     let path = documentPath harness
     signInExpiring harness fake
     fake.TokenFailure <- Some(status, (if code = "" then "{}" else $"{{\"error\":\"{code}\"}}"))
-    let status, text = sendJson harness path confirmed
+    let status, text = sendSummary harness path confirmed
     Assert.Equal(HttpStatusCode.OK, status)
     let event = Assert.Single(events text)
     Assert.Equal("failed", event.GetProperty("type").GetString())
@@ -657,7 +669,7 @@ let ``a terminal refresh error deletes the record and signs her out`` () =
     let path = documentPath harness
     signInExpiring harness fake
     fake.TokenFailure <- Some(400, """{"error":"invalid_grant"}""")
-    let status, text = sendJson harness path confirmed
+    let status, text = sendSummary harness path confirmed
     // T008: the run ends with a `failed` event (T010's client treats it like the `chatgpt_signed_out` problem).
     Assert.Equal(HttpStatusCode.OK, status)
     Assert.Equal("signed_out", (Assert.Single(events text)).GetProperty("code").GetString())
@@ -672,7 +684,7 @@ let ``a model list that cannot be used fails the run and sends no text`` () =
     let path = documentPath harness
     signInThrough harness fake "" |> ignore
     fake.Models <- [ "gpt-hidden", "hide" ]
-    let status, text = sendJson harness path confirmed
+    let status, text = sendSummary harness path confirmed
     Assert.Equal(HttpStatusCode.OK, status)
     let event = Assert.Single(events text)
     Assert.Equal("service_failed", event.GetProperty("code").GetString())
@@ -690,7 +702,7 @@ let ``a refresh in flight when she signs out leaves her signed out with no recor
     signInExpiring harness fake
     signedInYet.Value <- true
     let release = fake.HoldTokens()
-    let summary = Threading.Tasks.Task.Run(fun () -> sendJson harness path confirmed)
+    let summary = Threading.Tasks.Task.Run(fun () -> sendSummary harness path confirmed)
     refreshArrived.Task.WaitAsync(TimeSpan.FromSeconds 10.).GetAwaiter().GetResult()
     // The refresh holds the vault lock, so this sign-out can only run after it finishes.
     // Whether or not this request has reached the vault by the time the refresh is released, the
@@ -724,7 +736,7 @@ let ``a summary naming the configured service does not wait for a refresh in fli
     signInExpiring harness fake
     signedInYet.Value <- true
     let release = fake.HoldTokens()
-    let viaPlan = Threading.Tasks.Task.Run(fun () -> sendJson harness path """{"destination":"chatgpt","confirmSend":true}""")
+    let viaPlan = Threading.Tasks.Task.Run(fun () -> sendSummary harness path """{"destination":"chatgpt","confirmSend":true}""")
     refreshArrived.Task.WaitAsync(TimeSpan.FromSeconds 10.).GetAwaiter().GetResult()
     // The refresh holds the vault lock; the local summary must finish while it is held.
     let local = Threading.Tasks.Task.Run(fun () -> sendJson harness path """{"destination":"configured","confirmSend":false}""")
@@ -753,7 +765,7 @@ let ``a usage limit before the stream is usage_limit_reached and keeps the sign-
     use harness = TestHarness.Start(summaryHandler = fake)
     let path = documentPath harness
     signInThrough harness fake "" |> ignore
-    let status, text = sendJson harness path confirmed
+    let status, text = sendSummary harness path confirmed
     Assert.Equal(HttpStatusCode.OK, status)
     Assert.Equal("usage_limit_reached", failedCode text)
     Assert.True(signedIn harness)
@@ -767,7 +779,7 @@ let ``a usage limit as response.failed mid-document gives no partial summary`` (
     use harness = TestHarness.Start(summaryHandler = fake)
     let path = documentPathFor harness "long-40.pdf"
     signInThrough harness fake "" |> ignore
-    let status, text = sendJson harness path confirmed
+    let status, text = sendSummary harness path confirmed
     Assert.Equal(HttpStatusCode.OK, status)
     let all = events text
     Assert.DoesNotContain(all, fun e -> e.GetProperty("type").GetString() = "summary")
@@ -785,7 +797,7 @@ let ``a refused plan deletes the record, ends the run and signs her out`` (statu
     use harness = TestHarness.Start(summaryHandler = fake)
     let path = documentPath harness
     signInThrough harness fake "" |> ignore
-    let _, text = sendJson harness path confirmed
+    let _, text = sendSummary harness path confirmed
     Assert.Equal(expected, failedCode text)
     expectSignedOutEverywhere harness
 
@@ -795,7 +807,7 @@ let ``a refusal as response.failed mid-stream also signs her out`` () =
     use harness = TestHarness.Start(summaryHandler = fake)
     let path = documentPath harness
     signInThrough harness fake "" |> ignore
-    let _, text = sendJson harness path confirmed
+    let _, text = sendSummary harness path confirmed
     Assert.Equal("signed_out", failedCode text)
     expectSignedOutEverywhere harness
 
@@ -805,7 +817,7 @@ let ``signing out while the fake waits ends the request with signed_out and send
     use harness = TestHarness.Start(summaryHandler = fake)
     let path = documentPathFor harness "long-40.pdf"
     signInThrough harness fake "" |> ignore
-    let summary = Threading.Tasks.Task.Run(fun () -> sendJson harness path confirmed)
+    let summary = Threading.Tasks.Task.Run(fun () -> sendSummary harness path confirmed)
     fake.Waiting.WaitAsync(TimeSpan.FromSeconds 10.).GetAwaiter().GetResult()
     signOut harness |> ignore
     let status, text = summary.WaitAsync(TimeSpan.FromSeconds 10.).GetAwaiter().GetResult()
@@ -881,6 +893,102 @@ let ``signing out after the service answered with an error but before it is repo
     harnessRef.Value <- Some harness
     let path = documentPath harness
     signInThrough harness fake "" |> ignore
-    let _, text = sendJson harness path confirmed
+    let _, text = sendSummary harness path confirmed
     Assert.Equal("signed_out", failedCode text)
     expectSignedOutEverywhere harness
+
+
+// ---- F004 T003: plan summaries run in the background ----
+
+let private projectAndDocument (path: string) =
+    let parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries)
+    Guid.Parse parts.[2], Guid.Parse parts.[4]
+
+let private getState (harness: TestHarness) (path: string) =
+    use message = new HttpRequestMessage(HttpMethod.Get, path)
+    use response = harness.Client.Send message
+    response.StatusCode, JsonDocument.Parse(response.Content.ReadAsStringAsync().GetAwaiter().GetResult()).RootElement.Clone()
+
+let private settle (harness: TestHarness) (path: string) =
+    let project, document = projectAndDocument path
+    SummaryJobsAccess.settled harness.App project document |> fun task -> task.WaitAsync(TimeSpan.FromSeconds 30.).GetAwaiter().GetResult()
+
+[<Fact; Trait("Task", "T003")>]
+let ``a plan summary answers 202 running and the finished summary is found with GET`` () =
+    let fake = new FakeOpenAi(ResponsesScript.Completed answer)
+    use harness = TestHarness.Start(summaryHandler = fake)
+    let path = documentPath harness
+    signInThrough harness fake "" |> ignore
+    let status, text = sendJson harness path confirmed
+    Assert.Equal(HttpStatusCode.Accepted, status)
+    Assert.Equal("running", (JsonDocument.Parse text).RootElement.GetProperty("status").GetString())
+    settle harness path
+    let status, state = getState harness path
+    Assert.Equal(HttpStatusCode.OK, status)
+    Assert.Equal("finished", state.GetProperty("status").GetString())
+    Assert.Equal("ChatGPT plan", state.GetProperty("summary").GetProperty("serviceHost").GetString())
+    Assert.Equal("gpt-test", state.GetProperty("summary").GetProperty("model").GetString())
+
+[<Fact; Trait("Task", "T003")>]
+let ``signing out while the plan job waits fails it with signed_out and sends nothing more`` () =
+    let fake = new FakeOpenAi(ResponsesScript.WaitUntilCancelled)
+    use harness = TestHarness.Start(summaryHandler = fake)
+    let path = documentPath harness
+    signInThrough harness fake "" |> ignore
+    // The POST has long been answered and nobody views the document: the job is the only thing running.
+    let status, _ = sendJson harness path confirmed
+    Assert.Equal(HttpStatusCode.Accepted, status)
+    fake.Waiting.WaitAsync(TimeSpan.FromSeconds 10.).GetAwaiter().GetResult()
+    signOut harness |> ignore
+    fake.Cancelled.WaitAsync(TimeSpan.FromSeconds 10.).GetAwaiter().GetResult()
+    settle harness path
+    let status, state = getState harness path
+    Assert.Equal(HttpStatusCode.OK, status)
+    Assert.Equal("failed", state.GetProperty("status").GetString())
+    Assert.Equal("signed_out", state.GetProperty("code").GetString())
+    Assert.Equal(1, fake.RequestsTo("api.openai.com", "/v1/responses").Length)
+    expectSignedOutEverywhere harness
+
+[<Fact; Trait("Task", "T003")>]
+let ``signing out after the result arrived but before it is kept fails the job and keeps no summary`` () =
+    let fake = new FakeOpenAi(ResponsesScript.Completed answer)
+    let harnessRef = ref None
+    let signOutNow () = harnessRef.Value |> Option.iter (fun h -> signOut h |> ignore)
+    use harness = TestHarness.Start(summaryHandler = new AfterResponses(fake, signOutNow))
+    harnessRef.Value <- Some harness
+    let path = documentPath harness
+    signInThrough harness fake "" |> ignore
+    let status, _ = sendJson harness path confirmed
+    Assert.Equal(HttpStatusCode.Accepted, status)
+    settle harness path
+    let _, state = getState harness path
+    Assert.Equal("failed", state.GetProperty("status").GetString())
+    Assert.Equal("signed_out", state.GetProperty("code").GetString())
+    Assert.False(state.TryGetProperty("summary") |> fst)
+
+[<Fact; Trait("Task", "T003")>]
+let ``a sign-in that ended during the refresh becomes a job created failed, readable with GET`` () =
+    let fake = new FakeOpenAi(ResponsesScript.Completed answer)
+    use harness = TestHarness.Start(summaryHandler = fake)
+    let path = documentPath harness
+    signInExpiring harness fake
+    fake.TokenFailure <- Some(400, """{"error":"invalid_grant"}""")
+    let status, text = sendJson harness path confirmed
+    Assert.Equal(HttpStatusCode.Accepted, status)
+    Assert.Equal("failed", (JsonDocument.Parse text).RootElement.GetProperty("status").GetString())
+    Assert.Equal("signed_out", (JsonDocument.Parse text).RootElement.GetProperty("code").GetString())
+    let _, state = getState harness path
+    Assert.Equal("signed_out", state.GetProperty("code").GetString())
+    Assert.Empty(openAiRequests fake)
+
+[<Fact; Trait("Task", "T003")>]
+let ``an unreachable refresh becomes a job created failed with service_failed`` () =
+    let fake = new FakeOpenAi(ResponsesScript.Completed answer)
+    use harness = TestHarness.Start(summaryHandler = fake)
+    let path = documentPath harness
+    signInExpiring harness fake
+    fake.TokenFailure <- Some(503, "{}")
+    let status, text = sendJson harness path confirmed
+    Assert.Equal(HttpStatusCode.Accepted, status)
+    Assert.Equal("service_failed", (JsonDocument.Parse text).RootElement.GetProperty("code").GetString())
+    Assert.True(signedIn harness)

@@ -72,6 +72,13 @@ type SummaryJobs(capabilities: SummaryJobCapabilities) =
                     job.Run <- Task.Run(fun () -> run handle :> Task)
                     Started)
 
+    /// STUB (RED): see T003.
+    member this.StartWith(key: SummaryKey, source: CancellationTokenSource, effective: CancellationToken, run: JobHandle -> Task<unit>) : StartOutcome =
+        this.Start(key, source.Token, run)
+
+    /// STUB (RED): see T003.
+    member _.StartFailed(key: SummaryKey, code: string, detail: string) : StartOutcome = NotAssociated
+
     /// Finishes the job `id` of `key` with its summary; false when the registry no longer holds that job.
     member _.Complete(key: SummaryKey, id: Guid, summary: StoredSummary) : bool =
         lock gate (fun () ->
