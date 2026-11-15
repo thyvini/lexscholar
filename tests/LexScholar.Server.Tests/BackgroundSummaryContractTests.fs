@@ -406,18 +406,27 @@ let ``two POSTs racing for one document start one job`` () =
     settleJob harness project document
     Assert.Equal(1, fake.Requests.Length)
 
+/// Completes `Arrived` when `expected` requests have reached the inner handler (a handshake: all of them are in flight together).
+type private ArrivalCounter(inner: Net.Http.HttpMessageHandler, expected: int) =
+    inherit DelegatingHandler(inner)
+    let mutable count = 0
+    let arrived = Threading.Tasks.TaskCompletionSource()
+    member _.Arrived : Threading.Tasks.Task = arrived.Task
+    override _.SendAsync(request, cancellation) =
+        if Threading.Interlocked.Increment(&count) = expected then arrived.TrySetResult() |> ignore
+        base.SendAsync(request, cancellation)
+
 [<Fact; Trait("Task", "T007")>]
 let ``three documents summarize at once and all finish`` () =
     let fake = new FakeChatService(Hold """{"points":[{"text":"Main idea","pages":[1]}]}""")
-    use harness = TestHarness.Start(settings = settings, summaryHandler = fake)
+    let counter = new ArrivalCounter(fake, 3)
+    use harness = TestHarness.Start(settings = settings, summaryHandler = counter)
     let project = seedProject harness.Root
     let documents = [ "article-en.pdf"; "article-pt.pdf"; "partial.pdf" ] |> List.map (addDocument harness.Client project)
     for document in documents do
         Assert.Equal(HttpStatusCode.Accepted, fst (ask harness.Client project document))
-    // Every request is held before any is released: they ran side by side.
-    let deadline = DateTime.UtcNow.AddSeconds 30.
-    waitFor fake.Waiting
-    while fake.Requests.Length < 3 && DateTime.UtcNow < deadline do Threading.Thread.Yield() |> ignore
+    // All three requests are held in flight before any is released: the jobs ran side by side.
+    waitFor counter.Arrived
     Assert.Equal(3, fake.Requests.Length)
     fake.Release()
     for document in documents do
