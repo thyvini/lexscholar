@@ -27,7 +27,7 @@ type Status = LexScholar.Domain.SummaryStatus
 type StatusEntry = { ProjectId: System.Guid; DocumentId: System.Guid; Status: Status }
 
 /// The list markers' state: the last statuses read, and the number of the polling loop that may continue.
-type Statuses = { Entries: StatusEntry list; Watch: int }
+type Statuses = { Entries: StatusEntry list; Watch: int; Failures: int }
 
 type StatusMessage =
     | Refresh
@@ -35,7 +35,11 @@ type StatusMessage =
 
 type StatusEffect = FetchStatuses of watch: int * delay: bool
 
-let initialStatuses = { Entries = []; Watch = 0 }
+let initialStatuses = { Entries = []; Watch = 0; Failures = 0 }
+
+/// How many times in a row a failed fetch is tried again when no summary is known to run (the first fetch after a POST
+/// must not lose a new summary's marker to one bad answer).
+let private retries = 3
 
 let private anyRunning (entries: StatusEntry list) = entries |> List.exists (fun entry -> entry.Status = Status.Running)
 
@@ -44,12 +48,17 @@ let private anyRunning (entries: StatusEntry list) = entries |> List.exists (fun
 let updateStatuses (message: StatusMessage) (model: Statuses) : Statuses * StatusEffect option =
     match message with
     | Refresh ->
-        let model = { model with Watch = model.Watch + 1 }
+        let model = { model with Watch = model.Watch + 1; Failures = 0 }
         model, Some (FetchStatuses (model.Watch, false))
     | StatusesLoaded (watch, _) when watch <> model.Watch -> model, None
     | StatusesLoaded (watch, result) ->
-        let model = match result with Ok entries -> { model with Entries = entries } | Error () -> model
-        model, (if anyRunning model.Entries then Some (FetchStatuses (watch, true)) else None)
+        match result with
+        | Ok entries ->
+            let model = { model with Entries = entries; Failures = 0 }
+            model, (if anyRunning entries then Some (FetchStatuses (watch, true)) else None)
+        | Error () ->
+            let model = { model with Failures = model.Failures + 1 }
+            model, (if anyRunning model.Entries || model.Failures <= retries then Some (FetchStatuses (watch, true)) else None)
 
 /// A change of the active project or the open document fetches the statuses again (AR 4: a tab that polls nothing
 /// catches up here).

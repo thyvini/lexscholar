@@ -50,15 +50,31 @@ let ``polling continues every tick while one summary runs and stops when none do
     assertState [ entry project first SummaryStatus.Finished ] finished.Entries
 
 [<Fact; Trait("Task", "T010")>]
-let ``a failed fetch keeps the markers and keeps polling only while one was running`` () =
+let ``a failed fetch keeps the markers and keeps polling while one was running`` () =
     let fetching, _ = updateStatuses Refresh initialStatuses
     let running, _ = updateStatuses (StatusesLoaded (fetching.Watch, Ok [ entry project first SummaryStatus.Running ])) fetching
-    let kept, effect = updateStatuses (StatusesLoaded (fetching.Watch, Error ())) running
-    assertState running.Entries kept.Entries
+    // However many times it fails: a running summary is waited for.
+    let mutable model = running
+    for _ in 1 .. 5 do
+        let next, effect = updateStatuses (StatusesLoaded (fetching.Watch, Error ())) model
+        assertState running.Entries next.Entries
+        assertState (Some (FetchStatuses (fetching.Watch, true))) effect
+        model <- next
+
+[<Fact; Trait("Task", "T010")>]
+let ``a fetch that fails right after a refresh is tried again a few times, then given up`` () =
+    let fetching, _ = updateStatuses Refresh initialStatuses
+    let mutable model = fetching
+    for _ in 1 .. 3 do
+        let next, effect = updateStatuses (StatusesLoaded (fetching.Watch, Error ())) model
+        assertState (Some (FetchStatuses (fetching.Watch, true))) effect
+        model <- next
+    let _, effect = updateStatuses (StatusesLoaded (fetching.Watch, Error ())) model
+    assertState None effect
+    // The retry's answer is read like any other.
+    let recovered, effect = updateStatuses (StatusesLoaded (fetching.Watch, Ok [ entry project first SummaryStatus.Running ])) model
     assertState (Some (FetchStatuses (fetching.Watch, true))) effect
-    let idle, _ = updateStatuses (StatusesLoaded (fetching.Watch, Ok [])) kept
-    let _, none = updateStatuses (StatusesLoaded (fetching.Watch, Error ())) idle
-    assertState None none
+    assertState 1 recovered.Entries.Length
 
 [<Fact; Trait("Task", "T010")>]
 let ``a newer refresh supersedes the older polling loop`` () =
