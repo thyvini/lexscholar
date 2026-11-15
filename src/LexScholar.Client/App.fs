@@ -445,8 +445,9 @@ module private Ui =
         // dismissed (its POST or DELETE has been answered) and once a document was removed from the project.
         let statuses, statusEffect =
             match msg with
-            // A removal from the project deletes the document's stored summary on the server.
-            | SummaryMsg (Summary.Accepted _ | Summary.Dismissed _) | LibraryMsg (Library.Removed _) -> SummaryStatus.updateStatuses SummaryStatus.Refresh state.Statuses
+            // A removal from the project deletes the document's stored summary on the server; a POST whose answer failed may still have
+            // started the job.
+            | SummaryMsg (Summary.Accepted _ | Summary.Responded _ | Summary.Dismissed _) | LibraryMsg (Library.Removed _) -> SummaryStatus.updateStatuses SummaryStatus.Refresh state.Statuses
             | _ -> SummaryStatus.followView before (viewOf state) state.Statuses
         let state = { state with Statuses = statuses }
         let command = Cmd.batch [ command; statusCommand http statusEffect ]

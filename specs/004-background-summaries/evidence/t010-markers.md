@@ -28,3 +28,7 @@ Removing a document with a finished or failed summary left the project's marker 
 ## Review fix 2 (gpt-review P1)
 
 A failed first fetch after a POST, with no running entry known, stopped the loop and lost the new summary's marker until the next view change. A failed fetch is now tried again up to 3 times in a row (unlimited while a summary is known to run); a success resets the count. State tests replace the old failed-fetch test; the old code returned no effect at the first assertion of the new one. `scripts/check.sh T010`: `Tests: 60 total, 0 failed, 0 skipped`.
+
+## Review fix 3 (gpt-review P1)
+
+A POST whose answer is lost may still have started the job; the client now refreshes the statuses after `Responded` too. Journey test (the route lets the POST reach the server, then aborts it); RED before the fix: 2 failed (marker never appears); after: `scripts/check.sh T010`: `Tests: 62 total, 0 failed, 0 skipped`.
