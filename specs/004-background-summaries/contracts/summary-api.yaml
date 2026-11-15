@@ -1,0 +1,88 @@
+openapi: 3.1.0
+info:
+  title: LexScholar background summaries (F004)
+  version: 0.3.0
+  description: >-
+    Changes to F003's summary endpoint (specs/003-document-summary/contracts/summary-api.yaml) and
+    F005's plan destination (specs/005-chatgpt-sign-in/contracts/chatgpt-api.yaml). Request body, checks, their order and
+    every 4xx/409/503 answer of the POST are unchanged; schemas not repeated here (Problem,
+    ConfirmationProblem, the summary fields, failure codes) are those of F003/F005. Host security
+    (Host/Origin checks, antiforgery on POST and DELETE) applies as for every route. Decisions: research.md.
+servers:
+  - url: http://127.0.0.1:5000/api
+paths:
+  /projects/{projectId}/documents/{documentId}/summary:
+    parameters:
+      - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: documentId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: Ask for a summary of a document in a project; it runs in the background
+      description: >-
+        All F003/F005 checks and confirmations run first, inside this request; nothing is sent before
+        they pass. Then a job starts for the pair and the answer is immediate. Closing this request
+        does not stop the job.
+      responses:
+        "202":
+          description: Job started (state running), or created already failed for plan outcomes decided before sending (signed_out, service_failed for an unreachable refresh).
+          content: { application/json: { schema: { $ref: "#/components/schemas/SummaryState" } } }
+        "200":
+          description: A summary for the pair is already running or finished; its state is returned and nothing new starts (FR-011).
+          content: { application/json: { schema: { $ref: "#/components/schemas/SummaryState" } } }
+        "400": { description: "As F005 (`destination_required`)." }
+        "404": { description: "As F003 (`not_found`, `document_not_found`); checked before the registry." }
+        "409": { description: "As F003/F005 (`confirmation_required`); never for a pair already running or finished." }
+        "422": { description: "As F003 (`too_many_pages`, `no_text`, `not_enough_text`)." }
+        "503": { description: "As F003/F005 (`summary_service_not_configured`, `document_unavailable`, `chatgpt_signed_out`)." }
+    get:
+      summary: State of the pair's summary
+      responses:
+        "200":
+          description: The pair's summary is running, finished or failed.
+          content: { application/json: { schema: { $ref: "#/components/schemas/SummaryState" } } }
+        "404":
+          description: "`no_summary`: nothing running, finished or failed for the pair; `not_found` / `document_not_found` as F003."
+    delete:
+      summary: Stop a running summary or dismiss a finished or failed one
+      description: Stop cancels the job; no further request is sent after this returns, and nothing is kept. Dismiss deletes the stored summary. Idempotent.
+      responses:
+        "204": { description: Nothing remains for the pair. }
+  /summaries:
+    get:
+      summary: Status of every summary, for the list markers
+      responses:
+        "200":
+          description: One entry per pair with a running, finished or failed summary.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [projectId, documentId, status]
+                  properties:
+                    projectId: { type: string, format: uuid }
+                    documentId: { type: string, format: uuid }
+                    status: { enum: [running, finished, failed] }
+components:
+  schemas:
+    SummaryState:
+      oneOf:
+        - type: object
+          required: [status]
+          properties:
+            status: { const: running }
+            pagesProcessed: { type: integer, minimum: 0 }
+            totalPages: { type: integer, minimum: 1 }
+            combining: { type: boolean }
+        - type: object
+          required: [status, summary]
+          properties:
+            status: { const: finished }
+            summary: { description: "F003 SummaryEvent fields without `type`." }
+        - type: object
+          required: [status, code]
+          properties:
+            status: { const: failed }
+            code: { type: string, description: "F003/F005 failed codes (service_failed, not_enough_text, usage_limit_reached, signed_out, no_plan_access)." }
+            detail: { type: string }
+            omittedPoints: { type: integer, minimum: 0 }
