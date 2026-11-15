@@ -83,9 +83,12 @@ let ``every shown page exists and was readable, and the omitted points are count
     use harness = TestHarness.Start(settings = local, summaryHandler = fake)
     let project = seedProject harness.Root
     let document = addDocument harness.Client project name
-    let status, text = send harness.Client HttpMethod.Post (summaryPath project document) (Some (json """{"confirmSend":false}"""))
-    Assert.Equal(HttpStatusCode.OK, status)
-    let summary = Assert.Single(events text |> Array.filter (fun e -> e.GetProperty("type").GetString() = "summary"))
+    let status, state =
+        send harness.Client HttpMethod.Post (summaryPath project document) (Some (json """{"confirmSend":false}"""))
+        |> SummaryContractTests.settledState harness project document
+    Assert.Equal(HttpStatusCode.Accepted, status)
+    let summary = SummaryContractTests.asEvent state
+    Assert.Equal("summary", summary.GetProperty("type").GetString())
     let covered = ints (summary.GetProperty("pagesCovered"))
     let unreadable = ints (summary.GetProperty("unreadablePages"))
     let shown = [ for point in summary.GetProperty("points").EnumerateArray() do yield! ints (point.GetProperty("pages")) ]
@@ -147,7 +150,8 @@ let ``requesting a summary changes no database row and no original`` () =
     let documents = importedAll harness.Client project
     let before = snapshot harness.Root
     for document in documents do
-        send harness.Client HttpMethod.Post (summaryPath project document) (Some (json """{"confirmSend":false}""")) |> ignore
+        send harness.Client HttpMethod.Post (summaryPath project document) (Some (json """{"confirmSend":false}"""))
+        |> SummaryContractTests.settledState harness project document |> ignore
     Assert.NotEmpty(fake.Requests)
     Assert.Equal(before, snapshot harness.Root)
 
@@ -165,28 +169,29 @@ let ``declining and confirming the send to another host change no database row a
     Assert.Equal(before, snapshot harness.Root)
     // Confirmed.
     let confirmed = """{"confirmSend":true,"confirmedHost":"summary.example.test:8080","confirmedModel":"gpt"}"""
-    let status, _ = send harness.Client HttpMethod.Post (summaryPath project document) (Some (json confirmed))
-    Assert.Equal(HttpStatusCode.OK, status)
+    let status, _ =
+        send harness.Client HttpMethod.Post (summaryPath project document) (Some (json confirmed))
+        |> SummaryContractTests.settledState harness project document
+    Assert.Equal(HttpStatusCode.Accepted, status)
     Assert.NotEmpty(fake.Requests)
     Assert.Equal(before, snapshot harness.Root)
 
 [<Fact; Trait("Task", "T011")>]
-let ``abandoning a summary changes no database row and no original`` () =
-    let fake = new FakeChatService(fun n -> if n = 1 then Reply citationAnswer else WaitUntilCancelled)
-    use workspace = TemporaryWorkspace.Create()
-    let before =
-        use harness = TestHarness.Start(settings = local, summaryHandler = fake, workspace = workspace)
-        let project = seedProject harness.Root
-        let document = addDocument harness.Client project "long-40.pdf"
-        let before = snapshot harness.Root
-        use abandon = new Threading.CancellationTokenSource()
-        use request = message harness.Client HttpMethod.Post (summaryPath project document) (Some (json """{"confirmSend":false}""" :> HttpContent))
-        let response = harness.Client.Send(request, HttpCompletionOption.ResponseHeadersRead, abandon.Token)
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode)
-        fake.Waiting.WaitAsync(TimeSpan.FromSeconds 30.).GetAwaiter().GetResult()
-        abandon.Cancel()
-        response.Dispose()
-        fake.Cancelled.WaitAsync(TimeSpan.FromSeconds 30.).GetAwaiter().GetResult()
-        before // disposing the host waits for the abandoned request to end
-    Assert.Equal(before, snapshot workspace.Root)
-    Assert.Equal(2, fake.Requests.Length)
+let ``a summary left running while the request is closed changes no database row and no original`` () =
+    // F004: closing the request no longer stops the summary, so it finishes and still touches nothing stored.
+    let fake = new FakeChatService(Hold citationAnswer)
+    use harness = TestHarness.Start(settings = local, summaryHandler = fake)
+    let project = seedProject harness.Root
+    let document = addDocument harness.Client project "article-en.pdf"
+    let before = snapshot harness.Root
+    use abandon = new Threading.CancellationTokenSource()
+    use request = message harness.Client HttpMethod.Post (summaryPath project document) (Some (json """{"confirmSend":false}""" :> HttpContent))
+    let response = harness.Client.Send(request, HttpCompletionOption.ResponseHeadersRead, abandon.Token)
+    Assert.Equal(HttpStatusCode.Accepted, response.StatusCode)
+    fake.Waiting.WaitAsync(TimeSpan.FromSeconds 30.).GetAwaiter().GetResult()
+    abandon.Cancel()
+    response.Dispose()
+    fake.Release()
+    SummaryJobsAccess.settled harness.App project document |> fun task -> task.WaitAsync(TimeSpan.FromSeconds 30.).GetAwaiter().GetResult()
+    Assert.Equal(1, fake.Requests.Length)
+    Assert.Equal(before, snapshot harness.Root)

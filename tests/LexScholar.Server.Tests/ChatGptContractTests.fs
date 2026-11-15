@@ -453,6 +453,16 @@ let expectSummary (status: HttpStatusCode, text: string) =
     Assert.Equal("summary", event.GetProperty("type").GetString())
     event
 
+/// A configured-service summary runs in the background (F004): 202, then the job's final state as one `summary` event.
+let expectConfiguredSummary (harness: TestHarness) (path: string) (status: HttpStatusCode, text: string) =
+    Assert.Equal(HttpStatusCode.Accepted, status)
+    let parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries)
+    let project, document = Guid.Parse parts.[2], Guid.Parse parts.[4]
+    let _, state = SummaryContractTests.settledState harness project document (status, text)
+    let event = SummaryContractTests.asEvent state
+    Assert.Equal("summary", event.GetProperty("type").GetString())
+    event
+
 let confirmed = """{"confirmSend":true}"""
 
 [<Fact; Trait("Task", "T007")>]
@@ -560,7 +570,7 @@ let ``with both available the named destination is used and configured keeps the
     use harness = TestHarness.Start(settings = sumSettings, summaryHandler = new Router(fake, chat, ignore))
     let path = documentPath harness
     signInThrough harness fake "" |> ignore
-    let configured = expectSummary (sendJson harness path """{"destination":"configured","confirmSend":false}""")
+    let configured = expectConfiguredSummary harness path (sendJson harness path """{"destination":"configured","confirmSend":false}""")
     Assert.Equal("127.0.0.1:9", configured.GetProperty("serviceHost").GetString())
     Assert.Single chat.Requests |> ignore
     Assert.Empty(openAiRequests fake)
@@ -718,7 +728,7 @@ let ``a summary naming the configured service does not wait for a refresh in fli
     refreshArrived.Task.WaitAsync(TimeSpan.FromSeconds 10.).GetAwaiter().GetResult()
     // The refresh holds the vault lock; the local summary must finish while it is held.
     let local = Threading.Tasks.Task.Run(fun () -> sendJson harness path """{"destination":"configured","confirmSend":false}""")
-    expectSummary (local.WaitAsync(TimeSpan.FromSeconds 10.).GetAwaiter().GetResult()) |> ignore
+    expectConfiguredSummary harness path (local.WaitAsync(TimeSpan.FromSeconds 10.).GetAwaiter().GetResult()) |> ignore
     release ()
     expectSummary (viaPlan.GetAwaiter().GetResult()) |> ignore
 

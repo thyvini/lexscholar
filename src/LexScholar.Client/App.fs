@@ -163,9 +163,27 @@ module Api =
             | Library.InvalidRole -> Reader.InvalidRole
             | _ -> Reader.RequestFailed) }
 
-    /// Requests a summary and reads the NDJSON stream until its one `summary` or
-    /// `failed` event. Failures never show response details.
-    let summarize (http: HttpClient) (projectId: Guid) (documentId: Guid) (destination: Summary.Destination option) (confirmed: Summary.Confirmed option) (onProgress: Summary.Progress -> unit) (cancellation: Threading.CancellationToken) = async {
+    /// What a summary request answered: the plan's streamed summary (until T003) or the server's background job.
+    type SummaryAnswer =
+        | Streamed of Summary.Generated
+        | Job of Summary.Remote
+
+    /// Requests a summary. The configured service answers with its job's state (202, or 200 when one exists); the plan
+    /// path still streams NDJSON until its one `summary` or `failed` event. Failures never show response details.
+    /// The state of the pair's summary job: None when the server has nothing (404); Error when it could not be asked.
+    let summaryState (http: HttpClient) (projectId: Guid) (documentId: Guid) : Async<Result<Summary.Remote option, unit>> = async {
+        try
+            use! response = http.GetAsync($"api/projects/{projectId:D}/documents/{documentId:D}/summary") |> Async.AwaitTask
+            if response.StatusCode = HttpStatusCode.NotFound then return Ok None
+            elif not response.IsSuccessStatusCode then return Error ()
+            else
+                let! body = response.Content.ReadAsStringAsync() |> Async.AwaitTask
+                match SummaryStatus.parseRemote body with
+                | Some remote -> return Ok (Some remote)
+                | None -> return Error ()
+        with _ -> return Error () }
+
+    let summarize (http: HttpClient) (projectId: Guid) (documentId: Guid) (destination: Summary.Destination option) (confirmed: Summary.Confirmed option) (onProgress: Summary.Progress -> unit) (cancellation: Threading.CancellationToken) : Async<Result<SummaryAnswer, Summary.Failure>> = async {
         try
             use! tokenResponse = http.GetAsync("api/antiforgery", cancellation) |> Async.AwaitTask
             if not tokenResponse.IsSuccessStatusCode then return Error Summary.RequestFailed
@@ -180,6 +198,11 @@ module Api =
                 if not response.IsSuccessStatusCode then
                     let! body = response.Content.ReadAsStringAsync() |> Async.AwaitTask
                     return Error (SummaryStream.failureOfBody body)
+                elif response.StatusCode = HttpStatusCode.Accepted || response.StatusCode = HttpStatusCode.OK && response.Content.Headers.ContentType.MediaType = "application/json" then
+                    let! body = response.Content.ReadAsStringAsync() |> Async.AwaitTask
+                    match SummaryStatus.parseRemote body with
+                    | Some remote -> return Ok (Job remote)
+                    | None -> return Error Summary.RequestFailed
                 else
                     use! stream = response.Content.ReadAsStreamAsync() |> Async.AwaitTask
                     use reader = new IO.StreamReader(stream)
@@ -190,7 +213,7 @@ module Api =
                         | line ->
                             use json = JsonDocument.Parse(line)
                             match SummaryStream.outcome json.RootElement with
-                            | Some outcome -> return outcome
+                            | Some outcome -> return outcome |> Result.map Streamed
                             | None ->
                                 SummaryStream.progress json.RootElement |> Option.iter onProgress
                                 return! next () }
@@ -317,6 +340,9 @@ module private Ui =
             state, Cmd.OfAsync.perform (fun () -> Api.changeRole http projectId documentId role) () (fun result -> ReaderMsg (Reader.RoleChanged (projectId, result)))
         | None -> state, Cmd.none
 
+    /// How often the open document's running summary is asked for (research §4).
+    let private summaryPollMilliseconds = 2000
+
     /// The requests in flight, by request number, so a `Cancel` effect can abort the fetch (FR-009).
     let private running = Collections.Generic.Dictionary<int, Threading.CancellationTokenSource>()
 
@@ -330,12 +356,23 @@ module private Ui =
                     let! result = Api.summarize http projectId documentId destination confirmed (fun progress -> dispatch (SummaryMsg (Summary.Progressed (request, progress)))) source.Token
                     running.Remove request |> ignore
                     source.Dispose()
-                    dispatch (SummaryMsg (Summary.Responded (request, result))) }))
+                    match result with
+                    | Ok (Api.Job remote) -> dispatch (SummaryMsg (Summary.Accepted (request, projectId, documentId, remote)))
+                    | Ok (Api.Streamed generated) -> dispatch (SummaryMsg (Summary.Responded (request, Ok generated)))
+                    | Error failure -> dispatch (SummaryMsg (Summary.Responded (request, Error failure))) }))
         | Some (Summary.Cancel request) ->
             match running.TryGetValue request with
             | true, source -> source.Cancel()
             | _ -> ()
             Cmd.none
+        | Some (Summary.Fetch (watch, projectId, documentId, delay)) ->
+            Cmd.ofEffect (fun dispatch ->
+                Async.StartImmediate(async {
+                    // While polling, a failed fetch keeps waiting; the first fetch on return shows nothing then.
+                    if delay then do! Async.Sleep summaryPollMilliseconds
+                    let! remote = Api.summaryState http projectId documentId
+                    let remote = match remote with Ok state -> state | Error () -> (if delay then Some Summary.RemoteRunning else None)
+                    dispatch (SummaryMsg (Summary.Polled (watch, remote))) }))
         | None -> Cmd.none
 
     let chatGptCommand http (navigation: NavigationManager) (effect: ChatGpt.Effect option) : Cmd<Msg> =
@@ -394,8 +431,8 @@ module private Ui =
               Summary.Configured = state.ChatGpt.Configured.IsSome }
         let summary, _ = Summary.update (Summary.DestinationsChanged available) state.Summary
         let state = { state with Summary = summary }
-        let summary, effect = Summary.followReader state.Reader state.Summary
-        { state with Summary = summary }, Cmd.batch [ command; summaryCommand http effect ]
+        let summary, effects = Summary.followReader state.Reader state.Summary
+        { state with Summary = summary }, Cmd.batch [ command; yield! effects |> List.map (Some >> summaryCommand http) ]
 
     let errorText = function
         | InvalidName -> "Enter a project name that is not blank."
@@ -712,11 +749,11 @@ module private Ui =
     let summaryView (document: Reader.Document) (summary: Summary.Model) (chatGpt: ChatGpt.Model) onCite dispatch dispatchChatGpt =
         let needsChoice = summary.Available.Plan && summary.Available.Configured
         concat {
-            cond (needsChoice && (match summary.State with Summary.Generating _ | Summary.Confirming _ -> false | _ -> true)) <| function
+            cond (needsChoice && (match summary.State with Summary.Generating _ | Summary.Running | Summary.Confirming _ -> false | _ -> true)) <| function
                 | true -> destinationChoice chatGpt summary dispatch
                 | false -> empty ()
             cond summary.State <| function
-                | Summary.Generating _ ->
+                | Summary.Generating _ | Summary.Running ->
                     span {
                         "role" => "status"
                         "Summarizing… "

@@ -1,2 +1,114 @@
-/// Placeholder: this slice's tests arrive with a later F004 task (see tasks.md).
+/// Journeys for background summaries (F004): leaving a document or project neither stops the work nor loses its result.
+/// Only Playwright's auto-waiting assertions and the fake's handshakes are used; there are no sleeps.
 module LexScholar.Browser.Tests.BackgroundSummaryJourneyTests
+
+open System
+open System.IO
+open System.Threading.Tasks
+open Microsoft.Playwright
+open Xunit
+open LexScholar.Server.Tests
+
+let private withBrowser (name: string) (journey: IBrowser -> Task) : Task = task {
+    use! playwright = Playwright.CreateAsync()
+    let! browser =
+        task {
+            try
+                return! playwright.[name].LaunchAsync(BrowserTypeLaunchOptions(Headless = true))
+            with :? PlaywrightException as error ->
+                return failwithf "Could not launch %s. Install the Playwright browsers with scripts/install-browsers.sh.\n%s" name error.Message
+        }
+    use _ = browser
+    do! journey browser }
+
+let private openApp (browser: IBrowser) (harness: TestHarness) = task {
+    let! context = browser.NewContextAsync(BrowserNewContextOptions(BaseURL = harness.Client.BaseAddress.ToString()))
+    let! page = context.NewPageAsync()
+    let! _ = page.GotoAsync("/")
+    do! Assertions.Expect(page.GetByRole(AriaRole.Heading, PageGetByRoleOptions(Name = "Your projects"))).ToBeVisibleAsync()
+    return page }
+
+let private button (scope: ILocator) (name: string) =
+    scope.GetByRole(AriaRole.Button, LocatorGetByRoleOptions(Name = name, Exact = true))
+
+let private click (control: ILocator) = task {
+    do! Assertions.Expect(control).ToBeVisibleAsync()
+    do! control.ClickAsync() }
+
+let private settings = [ "LexScholar:Summary:Endpoint", "http://127.0.0.1:9/v1"; "LexScholar:Summary:Model", "test-model" ]
+
+let private answer = """{"points":[{"text":"Main idea","pages":[1,2]}]}"""
+
+let private projectRow (page: IPage) (name: string) = page.Locator("ul.projects li").Filter(LocatorFilterOptions(HasText = name))
+
+let private selectProject (page: IPage) (name: string) = task {
+    let row = projectRow page name
+    do! click (button row "Select")
+    do! Assertions.Expect(row.Locator("strong.active")).ToHaveTextAsync("Active") }
+
+let private createProject (page: IPage) (name: string) = task {
+    do! page.GetByLabel("Project name").FillAsync(name)
+    do! page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = "Create project")).ClickAsync()
+    do! selectProject page name }
+
+let private importAndAdd (page: IPage) (fileName: string) = task {
+    let input = page.GetByLabel("Import a PDF")
+    do! Assertions.Expect(input).ToBeVisibleAsync()
+    do! input.SetInputFilesAsync(Path.Combine(AppContext.BaseDirectory, "Fixtures", "summary", fileName))
+    do! Assertions.Expect(page.GetByText($"Imported {fileName}.")).ToBeVisibleAsync()
+    do! click (button (page.Locator("ul.documents li").Filter(LocatorFilterOptions(HasText = fileName))) "Add as Focused Source")
+    do! Assertions.Expect(page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = fileName))).ToContainTextAsync("Focused Source") }
+
+let private openDocument (page: IPage) (fileName: string) = task {
+    let row = page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = fileName))
+    do! click (button row "Open")
+    do! Assertions.Expect(page.Locator("iframe.reader-frame")).ToBeVisibleAsync() }
+
+let private summarizeButton (page: IPage) = page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = "Summarize", Exact = true))
+
+let private panel (page: IPage) = page.Locator("section.summary")
+
+let private expectCitation (page: IPage) = task {
+    do! Assertions.Expect(panel page).ToContainTextAsync("Main idea")
+    do! click ((panel page).Locator("button.citation[data-page='2']"))
+    do! Assertions.Expect(page.Locator("iframe.reader-frame")).ToHaveAttributeAsync("src", Text.RegularExpressions.Regex("/content#page=2$")) }
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T002"); Trait("Category", "Browser")>]
+let ``a summary asked on one document is found on return after opening another document`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use fake = new FakeChatService(Hold answer)
+        use harness = TestHarness.Start(serveClient = true, settings = settings, summaryHandler = fake)
+        let! page = openApp browser harness
+        do! createProject page "Alpha"
+        do! importAndAdd page "article-en.pdf"
+        do! importAndAdd page "article-pt.pdf"
+        do! openDocument page "article-en.pdf"
+        do! click (summarizeButton page)
+        do! fake.Waiting.WaitAsync(TimeSpan.FromSeconds 30.)
+        do! openDocument page "article-pt.pdf"
+        do! Assertions.Expect(panel page).ToHaveCountAsync(0)
+        fake.Release()
+        do! openDocument page "article-en.pdf"
+        do! expectCitation page
+        Assert.False(fake.Cancelled.IsCompleted)
+        Assert.Equal(1, fake.Requests.Length) })
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T002"); Trait("Category", "Browser")>]
+let ``a summary asked in one project is found on return after switching project`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use fake = new FakeChatService(Hold answer)
+        use harness = TestHarness.Start(serveClient = true, settings = settings, summaryHandler = fake)
+        let! page = openApp browser harness
+        do! createProject page "Alpha"
+        do! importAndAdd page "article-en.pdf"
+        do! openDocument page "article-en.pdf"
+        do! click (summarizeButton page)
+        do! fake.Waiting.WaitAsync(TimeSpan.FromSeconds 30.)
+        do! createProject page "Beta"
+        do! Assertions.Expect(panel page).ToHaveCountAsync(0)
+        fake.Release()
+        do! selectProject page "Alpha"
+        do! openDocument page "article-en.pdf"
+        do! expectCitation page
+        Assert.False(fake.Cancelled.IsCompleted)
+        Assert.Equal(1, fake.Requests.Length) })

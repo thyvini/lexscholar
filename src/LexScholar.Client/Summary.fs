@@ -54,10 +54,19 @@ type Destination =
 /// Which destinations the host offers right now, and the one she chose when there are two.
 type Available = { Plan: bool; Configured: bool }
 
+/// What the server's job registry holds for the open document (`SummaryState` of the contract).
+type Remote =
+    | RemoteRunning
+    | RemoteFinished of Generated
+    | RemoteFailed of Failure
+
 type State =
     | Idle
     | Confirming of ConfirmTarget
+    /// The POST is in flight (the plan's NDJSON stream is read until T003 replaces it).
     | Generating of request: int
+    /// The server runs the summary in the background; the client polls for it.
+    | Running
     | Shown of Generated
     | Failed of Failure
 
@@ -72,7 +81,14 @@ type Model =
       /// The latest progress of the running request, if any.
       Progress: Progress option
       /// The latest request; only its result is used.
-      Request: int }
+      Request: int
+      /// The latest watch of the open document's job; only its fetches are used.
+      Watch: int
+      /// Whether the request in flight is read as a stream (anything but the configured service, whose job is the server's):
+      /// only a stream is aborted when she leaves, so the POST of a background job always reaches the server.
+      Streaming: bool
+      /// The request whose job answer may still be shown after she left and came back; dismissing voids it (0).
+      Claim: int }
 
 type Message =
     | Summarize
@@ -83,6 +99,12 @@ type Message =
     | Choose of Destination
     | Progressed of request: int * Progress
     | Responded of request: int * Result<Generated, Failure>
+    /// The POST was answered with a job's state (202, or 200 when one already exists).
+    | Accepted of request: int * project: Guid * document: Guid * Remote
+    /// The open document's state was asked for after a view change (`Fetch` effect).
+    | Refresh
+    /// A state fetched for the open document by watch number; `None` is 404 (nothing there).
+    | Polled of watch: int * Remote option
     /// The reader's project and open document, after any change.
     | ReaderChanged of project: Guid option * document: Guid option
 
@@ -95,20 +117,23 @@ type Effect =
     | Send of request: int * project: Guid * document: Guid * destination: Destination option * confirmed: Confirmed option
     /// Abandon the running request: its fetch is aborted and the server stops (FR-009).
     | Cancel of request: int
+    /// Fetch the open document's state now (`delay` false) or after the polling interval (`delay` true).
+    | Fetch of watch: int * project: Guid * document: Guid * delay: bool
 
-let initial = { Project = None; Document = None; State = Idle; Available = { Plan = false; Configured = false }; Choice = None; Progress = None; Request = 0 }
+let initial = { Project = None; Document = None; State = Idle; Available = { Plan = false; Configured = false }; Choice = None; Progress = None; Request = 0; Watch = 0; Streaming = true; Claim = 0 }
 
 let update (message: Message) (model: Model) : Model * Effect option =
     // A late result is dropped because only `Generating request` accepts its own number,
     // and every new request takes a fresh one.
-    let reset model = { model with State = Idle; Progress = None }
+    // Any change of view or dismissal also ends the watch of the server's job: its late fetches are dropped.
+    let reset model = { model with State = Idle; Progress = None; Watch = model.Watch + 1 }
     // Leaving a running request aborts it (FR-009); other states have nothing in flight.
     let abandon model =
-        reset model, (match model.State with Generating request -> Some (Cancel request) | _ -> None)
+        reset model, (match model.State with Generating request when model.Streaming -> Some (Cancel request) | _ -> None)
     // Every request takes a fresh number.
     let start project document destination confirmed =
         let request = model.Request + 1
-        { model with State = Generating request; Progress = None; Request = request }, Some (Send (request, project, document, destination, confirmed))
+        { model with State = Generating request; Progress = None; Request = request; Streaming = (destination <> Some UseConfigured); Claim = request }, Some (Send (request, project, document, destination, confirmed))
     // One available destination is used; with two, only her choice (none: nothing can be sent yet).
     let destination =
         match model.Available with
@@ -124,7 +149,9 @@ let update (message: Message) (model: Model) : Model * Effect option =
             | Some destination -> start project document destination None
             | None -> model, None
         | _ -> model, None
-    | Dismiss -> abandon model
+    | Dismiss ->
+        let abandoned, effect = abandon model
+        { abandoned with Claim = 0 }, effect
     | ConfirmSend ->
         match model.Project, model.Document, model.State with
         | Some project, Some document, Confirming (Service (host, name)) -> start project document (Some UseConfigured) (Some (ConfirmedService (host, name)))
@@ -149,6 +176,30 @@ let update (message: Message) (model: Model) : Model * Effect option =
         { model with Choice = Some choice; State = state }, None
     | Progressed (request, progress) when model.State = Generating request -> { model with Progress = Some progress }, None
     | Progressed _ -> model, None
+    // The POST was answered with the job's state: show it, or wait for it by polling (the job is the server's).
+    // Also when she left and came back meanwhile (state Idle): the answer is for the document now open, so it is kept.
+    | Accepted (request, project, document, remote) when (model.Project, model.Document) = (Some project, Some document) && (model.State = Generating request || (model.State = Idle && model.Claim = request)) ->
+        match remote with
+        | RemoteFinished generated -> { model with State = Shown generated; Progress = None; Claim = 0 }, None
+        | RemoteFailed failure -> { model with State = Failed failure; Progress = None; Claim = 0 }, None
+        | RemoteRunning ->
+            let watch = model.Watch + 1
+            { model with State = Running; Progress = None; Watch = watch; Claim = 0 }, Some (Fetch (watch, project, document, true))
+    // Back on a document (or asked after a view change): the state of its job, if the server has one.
+    | Refresh ->
+        match model.Project, model.Document, model.State with
+        | Some project, Some document, Idle ->
+            let watch = model.Watch + 1
+            { model with Watch = watch }, Some (Fetch (watch, project, document, false))
+        | _ -> model, None
+    | Polled (watch, remote) when watch = model.Watch && (model.State = Idle || model.State = Running) ->
+        match remote, model.Project, model.Document with
+        | Some RemoteRunning, Some project, Some document -> { model with State = Running }, Some (Fetch (watch, project, document, true))
+        | Some (RemoteFinished generated), _, _ -> { model with State = Shown generated; Progress = None }, None
+        | Some (RemoteFailed failure), _, _ -> { model with State = Failed failure; Progress = None }, None
+        | _ -> { model with State = Idle; Progress = None }, None
+    | Polled _ -> model, None
+    | Accepted _ -> model, None
     | Responded (request, result) when model.State = Generating request ->
         match result with
         | Ok generated -> { model with State = Shown generated; Progress = None }, None
@@ -159,9 +210,12 @@ let update (message: Message) (model: Model) : Model * Effect option =
         { abandoned with Project = project; Document = document }, effect
     | _ -> model, None
 
-/// Follows the reader's project and open document; leaving a running request's document cancels it.
-let followReader (reader: Reader.Model) (model: Model) : Model * Effect option =
-    update (ReaderChanged (reader.Project, reader.Open |> Option.map (fun document -> document.Id))) model
+/// Follows the reader's project and open document; leaving a running stream request cancels it, and a newly
+/// opened document asks the server for the state of its summary job.
+let followReader (reader: Reader.Model) (model: Model) : Model * Effect list =
+    let moved, cancel = update (ReaderChanged (reader.Project, reader.Open |> Option.map (fun document -> document.Id))) model
+    let refreshed, fetch = if moved = model then moved, None else update Refresh moved
+    refreshed, List.choose id [ cancel; fetch ]
 
 /// Page numbers as ranges for the context line: "pages 1–3, 5" (a single page is "page 5").
 let pageRanges (pages: int list) : string =
