@@ -80,7 +80,7 @@ The researcher asks for a summary of a document, confirms where it is sent as to
 - **SC-002**: A summary finished in the background has the same page citations as one she waited for: every citation she follows during manual validation opens the cited page.
 - **SC-003**: A failure while she was elsewhere is shown on return with the same message as when she waits (checked at least once, for example with her plan's usage limit or a disconnected service).
 - **SC-004**: She never sees a summary, progress or failure on a document other than the one it was asked for during manual validation.
-- **SC-005**: Signing out while a summary runs for a document she is not viewing leaves no summary to find on that document, and no further use of her plan.
+- **SC-005**: Signing out while a summary runs for a document she is not viewing leaves no summary to find on that document, and no new request to her plan after the sign-out. A summary that had already finished before the sign-out may stay (plan, accepted risk 9).
 - **SC-006**: Switching documents or projects is no slower with a summary running than without one, as she perceives it.
 - **SC-007**: A summary finished before she closes the app is shown on its document after she reopens it, and is gone for good after she dismisses it.
 - **SC-008**: While viewing another document, she can tell from the document list which documents have a summary running, finished or failed, and the marker changes when a summary finishes.

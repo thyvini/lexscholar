@@ -28,7 +28,7 @@ On your ChatGPT plan: open a project document of a few pages, ask for a summary,
 | SC-002 | Follow every citation of a background summary | Each opens the cited page |
 | SC-003 | Cause a failure while elsewhere (usage limit or stop the local service) | Same message as when waiting |
 | SC-004 | Throughout | Nothing shown on another document |
-| SC-005 | Start a plan summary, open another document, sign out | No summary on return; no further plan use |
+| SC-005 | Start a plan summary, open another document, sign out | No summary on return; no new plan request after the sign-out (a summary that finished first may stay, AR 9) |
 | SC-006 | Switch documents with a job running | No perceptible slowdown |
 | SC-007 | Finish a summary, close and reopen the app; then dismiss and reopen | Shown after restart; gone after dismiss |
 | SC-008 | View another document while a summary runs | List marker shows running, then finished |
