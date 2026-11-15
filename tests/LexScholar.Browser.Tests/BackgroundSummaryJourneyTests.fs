@@ -167,7 +167,7 @@ let ``Stop clears a running summary, the held call is cancelled and she can ask 
         do! openDocument page "article-en.pdf"
         do! click (summarizeButton page)
         do! fake.Waiting.WaitAsync(TimeSpan.FromSeconds 30.)
-        do! click (button (panel page) "Stop")
+        do! click (button (page.GetByRole(AriaRole.Status).Filter(LocatorFilterOptions(HasText = "Summarizing"))) "Stop")
         do! fake.Cancelled.WaitAsync(TimeSpan.FromSeconds 30.)
         do! Assertions.Expect(summarizeButton page).ToBeVisibleAsync()
         do! Assertions.Expect(page.GetByRole(AriaRole.Status).Filter(LocatorFilterOptions(HasText = "Summarizing"))).ToHaveCountAsync(0)

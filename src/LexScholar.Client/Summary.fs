@@ -155,7 +155,13 @@ let update (message: Message) (model: Model) : Model * Effect option =
             | Some destination -> start project document destination None
             | None -> model, None
         | _ -> model, None
-    | Stop -> model, None
+    // Stopping a running summary is a DELETE like dismissing; she waits for its answer and cannot ask meanwhile.
+    | Stop ->
+        match model.Project, model.Document, model.State with
+        | Some project, Some document, Running ->
+            let abandoned, _ = abandon model
+            { abandoned with State = Dismissing Running; Claim = 0; DismissFailed = false; Pending = (project, document) :: model.Pending }, Some (DeleteSummary (project, document))
+        | _ -> model, None
     | Dismiss when (match model.State with Dismissing _ -> true | _ -> false) -> model, None
     | Dismiss ->
         let abandoned, effect = abandon model
@@ -173,8 +179,8 @@ let update (message: Message) (model: Model) : Model * Effect option =
             if succeeded then { model with State = Idle; DismissFailed = false }, None
             else
                 match previous with
-                // She left and came back meanwhile: the summary was not shown, so ask the server for it again.
-                | Idle ->
+                // She left and came back meanwhile (or stopped a running summary): ask the server what is there, which also resumes polling.
+                | Idle | Running ->
                     let watch = model.Watch + 1
                     { model with State = Idle; DismissFailed = true; Watch = watch }, Some (Fetch (watch, project, document, false))
                 | _ -> { model with State = previous; DismissFailed = true }, None

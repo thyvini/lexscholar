@@ -740,14 +740,22 @@ module private Ui =
                 | true -> destinationChoice chatGpt summary dispatch
                 | false -> empty ()
             cond summary.State <| function
-                | Summary.Generating _ | Summary.Running ->
+                | Summary.Generating _ ->
                     span {
                         "role" => "status"
                         "Summarizing… "
                         progressText summary.Progress
                         plainButton "Dismiss" None (fun _ -> dispatch Summary.Dismiss)
                     }
+                | Summary.Running ->
+                    span {
+                        "role" => "status"
+                        "Summarizing… "
+                        progressText summary.Progress
+                        plainButton "Stop" None (fun _ -> dispatch Summary.Stop)
+                    }
                 | Summary.Shown _ -> empty ()
+                | Summary.Dismissing Summary.Running -> span { "role" => "status"; "Stopping… " }
                 | Summary.Dismissing _ -> span { "role" => "status"; "Dismissing… " }
                 | Summary.Confirming target -> confirmDialog document target dispatch
                 | Summary.Idle ->
