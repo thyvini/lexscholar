@@ -107,7 +107,19 @@ let parseRemote (body: string) : Summary.Remote option =
         use json = System.Text.Json.JsonDocument.Parse body
         let root = json.RootElement
         match root.GetProperty("status").GetString() with
-        | "running" -> Some (Summary.RemoteRunning None)
+        | "running" ->
+            let number name =
+                match root.TryGetProperty (name: string) with
+                | true, value when value.ValueKind = System.Text.Json.JsonValueKind.Number -> Some (value.GetInt32())
+                | _ -> None
+            let combining =
+                match root.TryGetProperty "combining" with
+                | true, value -> value.ValueKind = System.Text.Json.JsonValueKind.True
+                | _ -> false
+            match number "pagesProcessed", number "totalPages" with
+            | Some processed, Some total -> Some (Summary.RemoteRunning (Some (Summary.PagesProcessed (processed, total))))
+            | _ when combining -> Some (Summary.RemoteRunning (Some Summary.Combining))
+            | _ -> Some (Summary.RemoteRunning None)
         | "finished" -> Some (Summary.RemoteFinished (generated (root.GetProperty "summary")))
         | "failed" ->
             match failureOfCode (root.GetProperty("code").GetString()) with
