@@ -45,6 +45,7 @@ The researcher asks for a summary of a document, confirms where it is sent as to
 - She dismisses a finished summary: it is gone, as today.
 - She asks again for a summary of a document whose summary is running: she sees its progress; no second summary starts, and the running one continues as before. A document with a finished summary shows that summary; she dismisses it to ask for a new one.
 - She asks for summaries of several documents in turn: each runs at the same time as the others.
+- The document is in two projects: each project has its own summary of it, asked for, shown, stopped and removed separately.
 - The document is removed from the project while its summary runs: the summary stops and nothing more is sent. Removed after it finished: the stored summary is deleted with it.
 - The app is closed while a summary runs: the running work is lost, and on restart the document shows no summary (she can ask again). A finished summary is still there after a restart.
 - A page citation in a summary finished in the background points at the right page when she follows it, and a citation that fails its check is handled as today.
@@ -63,9 +64,9 @@ The researcher asks for a summary of a document, confirms where it is sent as to
 - **FR-008**: The project's document list MUST show next to each document whether its summary is running, finished or failed, and the project list MUST show on a project that one of its documents has a summary running, finished or failed. The markers MUST update without her reloading.
 - **FR-009**: Replaces F003 FR-009. A finished summary MUST be stored and still be shown after the app restarts, until she dismisses it; dismissing it MUST delete it from storage.
 - **FR-010**: Stored summaries are derived data under constitution Principle II. In this feature she controls them by dismissing a summary (FR-009) and by removing its document from the project (FR-013). Full workspace export and deletion do not exist yet: they are deferred to F002 (Codecks $12y), which MUST include stored summaries, and this feature's storage MUST NOT block that. This feature MUST NOT be described as giving export or full deletion of summaries.
-- **FR-011**: Each document MUST have at most one summary running at a time; any number of documents may have one running at once. Asking for a summary of a document whose summary is running MUST show its progress and MUST NOT start a second summary; the running one continues unchanged.
+- **FR-011**: A summary belongs to one document in one project. Each document in a project MUST have at most one summary running at a time; any number of documents, in any projects, may have one running at once. A document shared by two projects has a separate summary in each. Asking for a summary of a document whose summary is running in that project MUST show its progress and MUST NOT start a second summary; the running one continues unchanged.
 - **FR-012**: While she views a document whose summary is running, the app MUST offer a Stop action. Stopping MUST end the work, send no further request for it, keep nothing, and clear the document's status marker.
-- **FR-013**: Removing a document from its project MUST stop its running summary, sending nothing more, and MUST delete its stored summary.
+- **FR-013**: Removing a document from a project MUST stop that project's running summary of it, sending nothing more, and MUST delete that project's stored summary of it. Its summary in any other project is unaffected.
 
 ### Key Entities
 
