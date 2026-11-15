@@ -117,3 +117,59 @@ let ``the job's token is linked to the application stopping, not to a request`` 
     stopping.Cancel()
     Assert.True given.Token.IsCancellationRequested
     finish.SetResult()
+
+[<Fact; Trait("Task", "T003")>]
+let ``a plan job's own token is the one handed to its work, and Stop's source reaches it`` () =
+    let jobs = registry (ref true) (ref None)
+    use source = new CancellationTokenSource()
+    use run = new CancellationTokenSource()
+    let work, handle, finish = held ()
+    Assert.Equal(Started, jobs.StartWith(key, source, run.Token, work))
+    let given = handle.Result
+    // The work is given the effective token (the plan's run token), not the source's.
+    run.Cancel()
+    Assert.True given.Token.IsCancellationRequested
+    Assert.False source.IsCancellationRequested
+    finish.SetResult()
+
+[<Fact; Trait("Task", "T003")>]
+let ``Complete with a cancelled effective token ends the job as signed_out and keeps nothing`` () =
+    let stored = ref None
+    let jobs = registry (ref true) stored
+    use source = new CancellationTokenSource()
+    use run = new CancellationTokenSource()
+    let work, handle, finish = held ()
+    jobs.StartWith(key, source, run.Token, work) |> ignore
+    let given = handle.Result
+    run.Cancel()
+    Assert.False(jobs.Complete(key, given.Id, summary))
+    match jobs.State key with
+    | Some (JobState.Failed ("signed_out", _, None)) -> ()
+    | other -> failwith $"expected failed signed_out, got {other}"
+    Assert.Equal(None, stored.Value)
+    finish.SetResult()
+
+[<Fact; Trait("Task", "T003")>]
+let ``Complete with a live effective token finishes the job`` () =
+    let jobs = registry (ref true) (ref None)
+    use source = new CancellationTokenSource()
+    let work, handle, finish = held ()
+    jobs.StartWith(key, source, source.Token, work) |> ignore
+    Assert.True(jobs.Complete(key, handle.Result.Id, summary))
+    Assert.Equal(Some (JobState.Finished summary), jobs.State key)
+    finish.SetResult()
+
+[<Fact; Trait("Task", "T003")>]
+let ``StartFailed creates a failed job, replaces a failed one, and refuses a running or finished pair`` () =
+    let jobs = registry (ref true) (ref None)
+    Assert.Equal(Started, jobs.StartFailed(key, "signed_out", "detail"))
+    Assert.Equal(Some (JobState.Failed ("signed_out", "detail", None)), jobs.State key)
+    Assert.Equal(Started, jobs.StartFailed(key, "service_failed", "again"))
+    Assert.Equal(Some (JobState.Failed ("service_failed", "again", None)), jobs.State key)
+    let other = { key with Document = Guid.NewGuid() }
+    Assert.Equal(NotAssociated, (registry (ref false) (ref None)).StartFailed(other, "signed_out", "d"))
+    let run, handle, finish = held ()
+    jobs.Start(other, CancellationToken.None, run) |> ignore
+    handle.Wait()
+    Assert.Equal(AlreadyRunning, jobs.StartFailed(other, "signed_out", "d"))
+    finish.SetResult()

@@ -63,7 +63,7 @@ type Remote =
 type State =
     | Idle
     | Confirming of ConfirmTarget
-    /// The POST is in flight (the plan's NDJSON stream is read until T003 replaces it).
+    /// The POST is in flight.
     | Generating of request: int
     /// The server runs the summary in the background; the client polls for it.
     | Running
@@ -84,9 +84,6 @@ type Model =
       Request: int
       /// The latest watch of the open document's job; only its fetches are used.
       Watch: int
-      /// Whether the request in flight is read as a stream (anything but the configured service, whose job is the server's):
-      /// only a stream is aborted when she leaves, so the POST of a background job always reaches the server.
-      Streaming: bool
       /// The request whose job answer may still be shown after she left and came back; dismissing voids it (0).
       Claim: int }
 
@@ -115,25 +112,22 @@ type Confirmed =
 
 type Effect =
     | Send of request: int * project: Guid * document: Guid * destination: Destination option * confirmed: Confirmed option
-    /// Abandon the running request: its fetch is aborted and the server stops (FR-009).
-    | Cancel of request: int
     /// Fetch the open document's state now (`delay` false) or after the polling interval (`delay` true).
     | Fetch of watch: int * project: Guid * document: Guid * delay: bool
 
-let initial = { Project = None; Document = None; State = Idle; Available = { Plan = false; Configured = false }; Choice = None; Progress = None; Request = 0; Watch = 0; Streaming = true; Claim = 0 }
+let initial = { Project = None; Document = None; State = Idle; Available = { Plan = false; Configured = false }; Choice = None; Progress = None; Request = 0; Watch = 0; Claim = 0 }
 
 let update (message: Message) (model: Model) : Model * Effect option =
     // A late result is dropped because only `Generating request` accepts its own number,
     // and every new request takes a fresh one.
     // Any change of view or dismissal also ends the watch of the server's job: its late fetches are dropped.
     let reset model = { model with State = Idle; Progress = None; Watch = model.Watch + 1 }
-    // Leaving a running request aborts it (FR-009); other states have nothing in flight.
-    let abandon model =
-        reset model, (match model.State with Generating request when model.Streaming -> Some (Cancel request) | _ -> None)
+    // Leaving never aborts the POST: the job is the server's (F004), and the answer is kept for `Claim`.
+    let abandon model = reset model, None
     // Every request takes a fresh number.
     let start project document destination confirmed =
         let request = model.Request + 1
-        { model with State = Generating request; Progress = None; Request = request; Streaming = (destination <> Some UseConfigured); Claim = request }, Some (Send (request, project, document, destination, confirmed))
+        { model with State = Generating request; Progress = None; Request = request; Claim = request }, Some (Send (request, project, document, destination, confirmed))
     // One available destination is used; with two, only her choice (none: nothing can be sent yet).
     let destination =
         match model.Available with
@@ -210,8 +204,7 @@ let update (message: Message) (model: Model) : Model * Effect option =
         { abandoned with Project = project; Document = document }, effect
     | _ -> model, None
 
-/// Follows the reader's project and open document; leaving a running stream request cancels it, and a newly
-/// opened document asks the server for the state of its summary job.
+/// Follows the reader's project and open document; a newly opened document asks the server for the state of its summary job.
 let followReader (reader: Reader.Model) (model: Model) : Model * Effect list =
     let moved, cancel = update (ReaderChanged (reader.Project, reader.Open |> Option.map (fun document -> document.Id))) model
     let refreshed, fetch = if moved = model then moved, None else update Refresh moved

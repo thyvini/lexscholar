@@ -152,10 +152,11 @@ let ``confirm and cancel do nothing unless a confirmation is open, and a reader 
 let private generating = update Summarize reading |> fst
 
 [<Fact; Trait("Task", "T008")>]
-let ``dismissing a running request cancels it and drops its late events`` () =
+let ``dismissing a running request aborts nothing and drops its late events`` () =
     let model, effect = update Dismiss generating
     assertState Idle model.State
-    assertState (Some (Cancel 1)) effect
+    // Every summary is a server job (F004 T003): there is no stream left to abort.
+    assertState None effect
     let late, lateEffect = update (Responded (1, Ok generated)) model
     assertState Idle late.State
     assertState None lateEffect
@@ -163,13 +164,13 @@ let ``dismissing a running request cancels it and drops its late events`` () =
     assertState None progressed.Progress
 
 [<Fact; Trait("Task", "T008")>]
-let ``changing document or project cancels the running request`` () =
+let ``changing document or project aborts nothing and leaves the request to the server`` () =
     let otherDocument, effect = update (ReaderChanged (Some project, Some (Guid.NewGuid()))) generating
     assertState Idle otherDocument.State
-    assertState (Some (Cancel 1)) effect
+    assertState None effect
     let otherProject, effect2 = update (ReaderChanged (Some (Guid.NewGuid()), None)) generating
     assertState Idle otherProject.State
-    assertState (Some (Cancel 1)) effect2
+    assertState None effect2
     let late, _ = update (Responded (1, Ok generated)) otherDocument
     assertState Idle late.State
 
@@ -283,22 +284,22 @@ let ``a signed-out failure reloads the destinations and offers sign-in`` () =
     Assert.False(offersSignIn UsageLimitReached)
 
 [<Fact; Trait("Task", "T010")>]
-let ``the stream and the problem map the new failures alike`` () =
-    let event code = (use json = System.Text.Json.JsonDocument.Parse($"""{{"type":"failed","code":"{code}"}}""") in LexScholar.Client.SummaryStream.outcome json.RootElement)
-    assertState (Some (Error SignedOut)) (event "signed_out")
-    assertState (Some (Error UsageLimitReached)) (event "usage_limit_reached")
-    assertState (Some (Error NoPlanAccess)) (event "no_plan_access")
-    let body code = LexScholar.Client.SummaryStream.failureOfBody $"""{{"code":"{code}"}}"""
+let ``a job state and a problem map the new failures alike`` () =
+    let state code = LexScholar.Client.SummaryStatus.parseRemote $"""{{"status":"failed","code":"{code}"}}"""
+    assertState (Some (RemoteFailed SignedOut)) (state "signed_out")
+    assertState (Some (RemoteFailed UsageLimitReached)) (state "usage_limit_reached")
+    assertState (Some (RemoteFailed NoPlanAccess)) (state "no_plan_access")
+    let body code = LexScholar.Client.SummaryStatus.failureOfBody $"""{{"code":"{code}"}}"""
     assertState SignedOut (body "chatgpt_signed_out")
     assertState DestinationRequired (body "destination_required")
     assertState NotConfigured (body "summary_service_not_configured")
     assertState (ConfirmationRequired (Plan "Ada"))
-        (LexScholar.Client.SummaryStream.failureOfBody """{"code":"confirmation_required","destination":"chatgpt","account":"Ada"}""")
+        (LexScholar.Client.SummaryStatus.failureOfBody """{"code":"confirmation_required","destination":"chatgpt","account":"Ada"}""")
 
 [<Fact; Trait("Task", "T010")>]
 let ``the request body carries the destination and the confirmation`` () =
     let body destination confirmed =
-        use json = System.Text.Json.JsonDocument.Parse(LexScholar.Client.SummaryStream.requestBody destination confirmed)
+        use json = System.Text.Json.JsonDocument.Parse(LexScholar.Client.SummaryStatus.requestBody destination confirmed)
         json.RootElement.GetRawText()
     assertState """{"destination":"chatgpt","confirmSend":false}""" (body (Some UsePlan) None)
     assertState """{"destination":"configured","confirmSend":false}""" (body (Some UseConfigured) None)
