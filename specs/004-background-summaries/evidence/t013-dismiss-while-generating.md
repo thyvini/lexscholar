@@ -10,7 +10,7 @@ Risky-ish (client concurrency). Covers FR-012. Defect found by speckit-analyze C
 ## Verification
 
 - No RED commit: the fix and tests were written together, so a sensitivity check replaces it (below).
-- `scripts/check.sh T004 T006 T008 T013`: `Tests: 151 total, 0 failed, 0 skipped` (state tests; journey in Chromium and Firefox: the POST is held in the browser, Dismiss is clicked, the DELETE answers, the POST is released, the fake's held call starts and is cancelled, one request in total, no marker, she can ask again).
+- `scripts/check.sh T002 T010 T013`: `Tests: 152 total, 0 failed, 0 skipped` (state tests; journey in Chromium and Firefox: the POST is held in the browser, Dismiss is clicked, the DELETE answers, the POST is released, the fake's held call starts and is cancelled, one request in total, no marker, she can ask again).
 - One existing T006 assertion changed: dismissing an ask in flight now emits the delete.
 
 ## Sensitivity check (uncommitted, reverted)
@@ -20,3 +20,7 @@ Removing the `Generating` case of `Dismiss`: `scripts/check.sh T013` gave `Tests
 ## Limits
 
 The journey forces the ordering DELETE-before-POST (the harder case). POST-before-DELETE is covered in the state tests only. CI runs the full suite on the PR.
+
+## CI correction
+
+The first CI run failed three older state tests (T002 x2, T010) that asserted the old behavior (Dismiss in flight goes straight to Idle, no effect). They now assert `Dismissing (Generating 1)` with the delete, then Idle once answered. The whole `SummaryStateTests` class passes (50).

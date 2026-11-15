@@ -168,7 +168,9 @@ let ``a service failure shows the server's explanation and offers another try th
 let ``abandoning a request is never shown as a failure, even when its fetch ends with an error`` () =
     let dismissed, _ = update Dismiss generating
     let late, _ = update (Responded (1, Error RequestFailed)) dismissed
-    assertState Idle late.State
+    assertState (Dismissing (Generating 1)) late.State
+    let settled, _ = update (Dismissed (project, document, true)) late
+    assertState Idle settled.State
     let moved, _ = update (ReaderChanged (Some project, None)) generating
     let lateMoved, _ = update (Responded (1, Error (ServiceFailed None))) moved
     assertState Idle lateMoved.State
@@ -358,9 +360,10 @@ let ``leaving while the POST of a configured-service summary is in flight does n
     let away, cancel = update (ReaderChanged (Some project, Some (Guid.NewGuid()))) asking
     assertState Idle away.State
     assertState None cancel
-    let dismissed, dismissCancel = update Dismiss asking
-    assertState Idle dismissed.State
-    assertState None dismissCancel
+    // Dismissing it deletes the job on the server (T013), still without aborting the POST.
+    let dismissed, dismissEffect = update Dismiss asking
+    assertState (Dismissing (Generating 1)) dismissed.State
+    assertState (Some (DeleteSummary (project, document))) dismissEffect
 
 [<Fact; Trait("Task", "T002")>]
 let ``a POST answered after she left and came back still shows the job`` () =
@@ -382,10 +385,14 @@ let ``a POST answered after she left and came back still shows the job`` () =
 let ``a POST answered after she dismissed is not shown`` () =
     let dismissed, _ = update Dismiss asked
     let late, effect = update (Accepted (1, project, document, RemoteFinished generated)) dismissed
-    assertState Idle late.State
-    assertState None effect
+    assertState (Dismissing (Generating 1)) late.State
+    // Not shown; the job it found is deleted again (T013).
+    assertState (Some (DeleteSummary (project, document))) effect
+    let settled, _ = update (Dismissed (project, document, true)) late
+    let settled, _ = update (Dismissed (project, document, true)) settled
+    assertState Idle settled.State
     // A later request is not claimed by an older answer.
-    let again, _ = update Summarize dismissed
+    let again, _ = update Summarize settled
     let old, _ = update (Accepted (1, project, document, RemoteFinished generated)) again
     assertState again.State old.State
 
