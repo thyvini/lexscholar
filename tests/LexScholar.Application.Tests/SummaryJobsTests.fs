@@ -244,9 +244,18 @@ let ``a Start launched while the association is being deleted gets NotAssociated
     let associated = ref true
     let jobs = registry associated (ref None)
     let mutable racing : Task<StartOutcome> = Unchecked.defaultof<_>
+    let thread = TaskCompletionSource<Thread>()
     jobs.RemoveAssociation(key, fun () ->
         // Another request's Start begins now; it must wait for the lock, so it sees the association gone.
-        racing <- Task.Run(fun () -> jobs.Start(key, CancellationToken.None, noJob))
+        racing <- Task.Run(fun () ->
+            thread.SetResult Thread.CurrentThread
+            jobs.Start(key, CancellationToken.None, noJob))
+        // Handshake instead of a sleep: go on once that request has either finished (no lock held it back) or blocked on the lock.
+        let racer = thread.Task.WaitAsync(TimeSpan.FromSeconds 30.).GetAwaiter().GetResult()
+        let limit = Diagnostics.Stopwatch.StartNew()
+        let mutable spin = SpinWait()
+        while not racing.IsCompleted && not (racer.ThreadState.HasFlag ThreadState.WaitSleepJoin) && limit.Elapsed < TimeSpan.FromSeconds 30. do
+            spin.SpinOnce()
         associated.Value <- false)
     Assert.Equal(NotAssociated, racing.WaitAsync(TimeSpan.FromSeconds 30.).GetAwaiter().GetResult())
     Assert.Equal(None, jobs.State key)
