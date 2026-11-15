@@ -23,6 +23,8 @@
     <Compile Include="LibraryContractTests.fs" />
     <Compile Include="ReaderContractTests.fs" />
     <Compile Include="SummaryContractTests.fs" />
+    <Compile Include="BackgroundSummaryContractTests.fs" />
+    <Compile Include="PreSendRegressionTests.fs" />
     <Compile Include="ChatGptContractTests.fs" />
     <Compile Include="ChatGptHygieneTests.fs" />
     <Compile Include="SummaryReferenceSetTests.fs" />

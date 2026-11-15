@@ -294,8 +294,17 @@ let private resolveDestination (configuration: WorkspaceConfiguration) (signedIn
     | _, true, Named Chatgpt -> Ok Chatgpt
     | false, _, Named Configured -> Error(notConfigured ())
 
-let map (app: WebApplication) (configuration: WorkspaceConfiguration) (vault: ChatGptAccess.Vault) =
+/// The state, stop/dismiss and status routes of F004. They answer 501 until T002 onwards fill them in.
+let private mapBackground (app: WebApplication) (_jobs: SummaryJobs) =
+    let notImplemented () = problem 501 "not_implemented" "Not implemented yet" null
+    let path = "/api/projects/{projectId:guid}/documents/{documentId:guid}/summary"
+    app.MapGet(path, Func<Guid, Guid, IResult>(fun projectId documentId -> notImplemented ())) |> ignore
+    app.MapDelete(path, Func<Guid, Guid, IResult>(fun projectId documentId -> notImplemented ())) |> ignore
+    app.MapGet("/api/summaries", Func<IResult>(fun () -> notImplemented ())) |> ignore
+
+let map (app: WebApplication) (configuration: WorkspaceConfiguration) (vault: ChatGptAccess.Vault) (jobs: SummaryJobs) =
     let directory = configuration.DataDirectory
+    mapBackground app jobs
     app.MapPost("/api/projects/{projectId:guid}/documents/{documentId:guid}/summary",
                 Func<Guid, Guid, HttpContext, Task<IResult>>(fun projectId documentId context -> task {
         let! body = readBody context
