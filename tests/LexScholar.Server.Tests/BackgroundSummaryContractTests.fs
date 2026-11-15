@@ -406,7 +406,7 @@ let ``two POSTs racing for one document start one job`` () =
     settleJob harness project document
     Assert.Equal(1, fake.Requests.Length)
 
-/// Completes `Arrived` when `expected` requests have reached the inner handler (a handshake: all of them are in flight together).
+/// Completes `Arrived` when `expected` requests have reached this handler (a handshake: all of them are in flight together).
 type private ArrivalCounter(inner: Net.Http.HttpMessageHandler, expected: int) =
     inherit DelegatingHandler(inner)
     let mutable count = 0
@@ -427,11 +427,11 @@ let ``three documents summarize at once and all finish`` () =
         Assert.Equal(HttpStatusCode.Accepted, fst (ask harness.Client project document))
     // All three requests are held in flight before any is released: the jobs ran side by side.
     waitFor counter.Arrived
-    Assert.Equal(3, fake.Requests.Length)
     fake.Release()
     for document in documents do
         settleJob harness project document
         Assert.Equal("finished", (getJson harness project document).GetProperty("status").GetString())
+    Assert.Equal(3, fake.Requests.Length)
 
 [<Fact; Trait("Task", "T007")>]
 let ``the same document in two projects has two independent summaries`` () =
