@@ -112,3 +112,25 @@ let ``a summary asked in one project is found on return after switching project`
         do! expectCitation page
         Assert.False(fake.Cancelled.IsCompleted)
         Assert.Equal(1, fake.Requests.Length) })
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T004"); Trait("Category", "Browser")>]
+let ``returning to a document while its summary runs shows it running, and the summary appears without asking again`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use fake = new FakeChatService(Hold answer)
+        use harness = TestHarness.Start(serveClient = true, settings = settings, summaryHandler = fake)
+        let! page = openApp browser harness
+        do! createProject page "Alpha"
+        do! importAndAdd page "article-en.pdf"
+        do! importAndAdd page "article-pt.pdf"
+        do! openDocument page "article-en.pdf"
+        do! click (summarizeButton page)
+        do! fake.Waiting.WaitAsync(TimeSpan.FromSeconds 30.)
+        do! openDocument page "article-pt.pdf"
+        do! openDocument page "article-en.pdf"
+        // Back while it still runs: the running state, not the Summarize button.
+        do! Assertions.Expect(page.GetByRole(AriaRole.Status).Filter(LocatorFilterOptions(HasText = "Summarizing"))).ToBeVisibleAsync()
+        do! Assertions.Expect(summarizeButton page).ToHaveCountAsync(0)
+        fake.Release()
+        // No click: polling finds it.
+        do! expectCitation page
+        Assert.Equal(1, fake.Requests.Length) })

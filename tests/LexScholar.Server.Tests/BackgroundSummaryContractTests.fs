@@ -143,3 +143,35 @@ let ``a pair with no summary has no state`` () =
     Assert.Equal(HttpStatusCode.NotFound, status)
     use json = JsonDocument.Parse text
     Assert.Equal("no_summary", json.RootElement.GetProperty("code").GetString())
+
+/// The first call answers, the rest are held: the job has reported one finished chunk and is still running.
+let private heldAfterFirst n = if n = 1 then Reply """{"points":[{"text":"Main idea","pages":[1]}]}""" else Hold """{"points":[{"text":"Main idea","pages":[1]}]}"""
+
+[<Fact; Trait("Task", "T004")>]
+let ``the state of a running multi-chunk summary reports the pages processed, then the summary`` () =
+    let fake = new FakeChatService(heldAfterFirst)
+    use harness = TestHarness.Start(settings = settings, summaryHandler = fake)
+    let project = seedProject harness.Root
+    let document = addDocument harness.Client project "long-40.pdf"
+    let status, _ = ask harness.Client project document
+    Assert.Equal(HttpStatusCode.Accepted, status)
+    fake.Waiting.WaitAsync(TimeSpan.FromSeconds 30.).GetAwaiter().GetResult()
+    let status, text = sendWith harness.Client HttpMethod.Get (path project document) None
+    Assert.Equal(HttpStatusCode.OK, status)
+    (
+        use json = JsonDocument.Parse text
+        let root = json.RootElement
+        Assert.Equal("running", root.GetProperty("status").GetString())
+        let processed = root.GetProperty("pagesProcessed").GetInt32()
+        Assert.InRange(processed, 1, 39)
+        Assert.Equal(40, root.GetProperty("totalPages").GetInt32()))
+    // A repeat ask while it runs shows the same progress and starts nothing.
+    let status, again = ask harness.Client project document
+    Assert.Equal(HttpStatusCode.OK, status)
+    Assert.Contains("pagesProcessed", again)
+    fake.Release()
+    SummaryJobsAccess.settled harness.App project document |> fun task -> task.WaitAsync(TimeSpan.FromSeconds 30.).GetAwaiter().GetResult()
+    let status, text = sendWith harness.Client HttpMethod.Get (path project document) None
+    Assert.Equal(HttpStatusCode.OK, status)
+    use json = JsonDocument.Parse text
+    Assert.Equal("finished", json.RootElement.GetProperty("status").GetString())

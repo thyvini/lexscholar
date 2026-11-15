@@ -56,7 +56,7 @@ type Available = { Plan: bool; Configured: bool }
 
 /// What the server's job registry holds for the open document (`SummaryState` of the contract).
 type Remote =
-    | RemoteRunning
+    | RemoteRunning of Progress option
     | RemoteFinished of Generated
     | RemoteFailed of Failure
 
@@ -176,9 +176,9 @@ let update (message: Message) (model: Model) : Model * Effect option =
         match remote with
         | RemoteFinished generated -> { model with State = Shown generated; Progress = None; Claim = 0 }, None
         | RemoteFailed failure -> { model with State = Failed failure; Progress = None; Claim = 0 }, None
-        | RemoteRunning ->
+        | RemoteRunning progress ->
             let watch = model.Watch + 1
-            { model with State = Running; Progress = None; Watch = watch; Claim = 0 }, Some (Fetch (watch, project, document, true))
+            { model with State = Running; Progress = progress; Watch = watch; Claim = 0 }, Some (Fetch (watch, project, document, true))
     // Back on a document (or asked after a view change): the state of its job, if the server has one.
     | Refresh ->
         match model.Project, model.Document, model.State with
@@ -188,7 +188,7 @@ let update (message: Message) (model: Model) : Model * Effect option =
         | _ -> model, None
     | Polled (watch, remote) when watch = model.Watch && (model.State = Idle || model.State = Running) ->
         match remote, model.Project, model.Document with
-        | Some RemoteRunning, Some project, Some document -> { model with State = Running }, Some (Fetch (watch, project, document, true))
+        | Some (RemoteRunning progress), Some project, Some document -> { model with State = Running; Progress = progress }, Some (Fetch (watch, project, document, true))
         | Some (RemoteFinished generated), _, _ -> { model with State = Shown generated; Progress = None }, None
         | Some (RemoteFailed failure), _, _ -> { model with State = Failed failure; Progress = None }, None
         | _ -> { model with State = Idle; Progress = None }, None

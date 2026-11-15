@@ -44,7 +44,9 @@ let private serviceClient (context: HttpContext) (summary: SummaryConfiguration)
 /// `SummaryState` of the contract for a job's state.
 let private stateJson (state: JobState) : obj =
     match state with
-    | JobState.Running _ -> box {| status = "running" |}
+    | JobState.Running None -> box {| status = "running" |}
+    | JobState.Running (Some (Progress.Pages (processed, total))) -> box {| status = "running"; pagesProcessed = processed; totalPages = total |}
+    | JobState.Running (Some Progress.Combining) -> box {| status = "running"; combining = true |}
     | JobState.Finished summary ->
         box {| status = "finished"
                summary =
@@ -67,7 +69,14 @@ let private runJob (logger: ILogger) (jobs: SummaryJobs) (key: SummaryKey) (job:
     let capabilities : Summarize.Capabilities =
         { ExtractPages = fun _ -> failwith "pages are extracted by the endpoint"
           Complete = complete
-          Report = fun _ -> Task.FromResult() }
+          // A report after the job was replaced or stopped changes nothing (the registry checks the id).
+          Report = fun progress ->
+              let progress =
+                  match progress with
+                  | Summarize.Progress.PagesProcessed (processed, total) -> Progress.Pages (processed, total)
+                  | Summarize.Progress.Combining -> Progress.Combining
+              jobs.Progress(key, job.Id, progress) |> ignore
+              Task.FromResult() }
     logger.LogInformation("Summarizing document {DocumentId}: {Readable} readable pages, {Unreadable} unreadable",
                           box key.Document, pages.Readable.Length, pages.Unreadable.Length)
     try
