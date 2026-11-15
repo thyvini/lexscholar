@@ -48,6 +48,19 @@ type SummaryJobs(capabilities: SummaryJobCapabilities) =
         job.State <- state
         job.Source.Dispose()
 
+    /// Removes the job for `key` and cancels a running one. Call inside the lock. The job is removed first, so a late
+    /// `Complete`, `Fail` or `Progress` of it finds nothing.
+    let dropJob key =
+        match jobs.TryGetValue key with
+        | true, job ->
+            jobs.Remove key |> ignore
+            match job.State with
+            | JobState.Running _ ->
+                job.Source.Cancel()
+                job.Source.Dispose()
+            | _ -> ()
+        | _ -> ()
+
     member _.Capabilities = capabilities
 
     /// Runs `work` under the registry lock.
@@ -150,16 +163,18 @@ type SummaryJobs(capabilities: SummaryJobCapabilities) =
     /// starts, one in flight is aborted) and the stored row is deleted (finishing may have won the race: nothing stopped is shown).
     member _.Stop(key: SummaryKey) : unit =
         lock gate (fun () ->
-            match jobs.TryGetValue key with
-            | true, job ->
-                jobs.Remove key |> ignore
-                match job.State with
-                | JobState.Running _ ->
-                    job.Source.Cancel()
-                    job.Source.Dispose()
-                | _ -> ()
-            | _ -> ()
+            dropJob key
             capabilities.Delete key)
+
+    /// Removes the pair from the project (research §3 "Removal"): under the lock, drops and cancels its job, then runs
+    /// `delete` (the association delete) and returns its result. The stored summary is NOT deleted here: its row goes with
+    /// the association (ON DELETE CASCADE), in the same database operation, so a failed or interrupted removal never loses
+    /// a summary of a document that stays in the project. `Start` checks the association inside the same lock, so it cannot
+    /// start a job for a pair removed here.
+    member _.RemoveAssociation(key: SummaryKey, delete: unit -> 'a) : 'a =
+        lock gate (fun () ->
+            dropJob key
+            delete ())
 
     /// Completes when the key's current job has ended (tests wait on this instead of polling).
     member _.Settled(key: SummaryKey) : Task =

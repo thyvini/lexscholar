@@ -218,3 +218,50 @@ let ``Stop removes a stored summary and a stopped key can be started again`` () 
     Assert.Equal(Started, jobs.Start(key, CancellationToken.None, run))
     handle.Wait()
     finish.SetResult()
+
+// F004 T009: removal from the project.
+
+[<Fact; Trait("Task", "T009")>]
+let ``RemoveAssociation stops a running job and deletes the association, whose cascade takes the stored row`` () =
+    let associated = ref true
+    let stored = ref None
+    let jobs = registry associated stored
+    let run, handle, finish = held ()
+    jobs.Start(key, CancellationToken.None, run) |> ignore
+    let given = handle.Result
+    // A row is stored as well (finishing may have won the race): the association delete takes it with it (the cascade).
+    stored.Value <- Some summary
+    let result = jobs.RemoveAssociation(key, fun () -> associated.Value <- false; stored.Value <- None; "removed")
+    Assert.Equal("removed", result)
+    Assert.True given.Token.IsCancellationRequested
+    Assert.Equal(None, stored.Value)
+    Assert.Equal(None, jobs.State key)
+    Assert.Equal(NotAssociated, jobs.Start(key, CancellationToken.None, noJob))
+    finish.SetResult()
+
+[<Fact; Trait("Task", "T009")>]
+let ``a Start launched while the association is being deleted gets NotAssociated`` () =
+    let associated = ref true
+    let jobs = registry associated (ref None)
+    let mutable racing : Task<StartOutcome> = Unchecked.defaultof<_>
+    let answered = new ManualResetEventSlim()
+    jobs.RemoveAssociation(key, fun () ->
+        // Another request's Start begins now; it must wait for the lock, so it sees the association gone.
+        racing <- Task.Run(fun () ->
+            let outcome = jobs.Start(key, CancellationToken.None, noJob)
+            answered.Set()
+            outcome)
+        // Bounded wait for an early answer: only a Start that did NOT wait for the lock can give one here, so with the lock this
+        // times out and the test goes on; without it the early `Started` is seen and the assertion below fails.
+        answered.Wait(TimeSpan.FromMilliseconds 200.) |> ignore
+        associated.Value <- false)
+    Assert.Equal(NotAssociated, racing.WaitAsync(TimeSpan.FromSeconds 30.).GetAwaiter().GetResult())
+    Assert.Equal(None, jobs.State key)
+
+[<Fact; Trait("Task", "T009")>]
+let ``a failed association delete leaves the stored summary alone`` () =
+    let stored = ref (Some summary)
+    let jobs = registry (ref true) stored
+    let failed = jobs.RemoveAssociation(key, fun () -> Error "database error")
+    Assert.Equal(Error "database error", failed)
+    Assert.Equal(Some summary, stored.Value)
