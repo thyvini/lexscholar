@@ -63,7 +63,9 @@ let ``a failure is kept as the state, with not configured distinct`` () =
 [<Fact; Trait("Task", "T004")>]
 let ``dismissing returns to idle and drops a late result`` () =
     let shown, _ = update (Responded (1, Ok generated)) (update Summarize reading |> fst)
-    let dismissed, _ = update Dismiss shown
+    let dismissing, _ = update Dismiss shown
+    // The server's answer to the delete (F004 T006) ends the dismissal.
+    let dismissed, _ = update (Dismissed (project, document, true)) dismissing
     assertState Idle dismissed.State
     let generating, _ = update Summarize dismissed
     let dismissedWhileGenerating, _ = update Dismiss generating
@@ -501,3 +503,61 @@ let ``a failure found on return is shown with its actions, and Summarize asks ag
     assertState (Failed SignedOut) signedOut.State
     let again, send = update Summarize failed
     assertState true (match again.State, send with Generating _, Some (Send _) -> true | _ -> false)
+
+// F004 T006: dismissing a finished or failed summary deletes it on the server.
+
+[<Fact; Trait("Task", "T006")>]
+let ``dismissing a shown or failed summary sends the delete, anything else sends nothing`` () =
+    let asked, _ = update Summarize reading
+    let shown, _ = update (Responded (1, Ok generated)) asked
+    let dismissedShown, shownEffect = update Dismiss shown
+    assertState (Dismissing (Shown generated)) dismissedShown.State
+    assertState (Some (DeleteSummary (project, document))) shownEffect
+    let failed, _ = update (Responded (1, Error (ServiceFailed None))) asked
+    assertState (Some (DeleteSummary (project, document))) (snd (update Dismiss failed))
+    // Nothing finished or failed: nothing to delete.
+    assertState None (snd (update Dismiss reading))
+    assertState None (snd (update Dismiss asked))
+    let confirming, _ = update (Responded (1, Error (ConfirmationRequired (Plan "me")))) asked
+    assertState None (snd (update Dismiss confirming))
+
+[<Fact; Trait("Task", "T006")>]
+let ``while the delete is in flight nothing can be asked; its answer ends or restores the summary`` () =
+    let asked, _ = update Summarize reading
+    let shown, _ = update (Responded (1, Ok generated)) asked
+    let dismissing, _ = update Dismiss shown
+    // Asking again, or dismissing again, does nothing until the server answers.
+    assertState (dismissing, None) (update Summarize dismissing)
+    assertState (dismissing, None) (update Dismiss dismissing)
+    let done', effect = update (Dismissed (project, document, true)) dismissing
+    assertState Idle done'.State
+    assertState false done'.DismissFailed
+    assertState None effect
+    // A refused delete brings the summary back and says so; the next dismissal clears the message.
+    let refused, _ = update (Dismissed (project, document, false)) dismissing
+    assertState (Shown generated) refused.State
+    assertState true refused.DismissFailed
+    assertState false (fst (update Dismiss refused)).DismissFailed
+    // An answer for another document, or when not dismissing, is ignored.
+    assertState (dismissing, None) (update (Dismissed (project, Guid.NewGuid(), true)) dismissing)
+    assertState (shown, None) (update (Dismissed (project, document, true)) shown)
+
+[<Fact; Trait("Task", "T006")>]
+let ``coming back while the delete is in flight waits for its answer`` () =
+    let asked, _ = update Summarize reading
+    let shown, _ = update (Responded (1, Ok generated)) asked
+    let dismissing, _ = update Dismiss shown
+    let away, _ = update (ReaderChanged (Some project, Some other)) dismissing
+    let returned, _ = update (ReaderChanged (Some project, Some document)) away
+    let back, fetch = update Refresh returned
+    // No fetch of the summary being deleted.
+    assertState (Dismissing Idle) back.State
+    assertState None fetch
+    let ended, endEffect = update (Dismissed (project, document, true)) back
+    assertState Idle ended.State
+    assertState None endEffect
+    // A refused delete after coming back fetches the summary that is still stored.
+    let refused, refusedEffect = update (Dismissed (project, document, false)) back
+    assertState true refused.DismissFailed
+    assertState Idle refused.State
+    assertState true (match refusedEffect with Some (Fetch (_, p, d, false)) -> (p, d) = (project, document) | _ -> false)

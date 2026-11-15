@@ -69,6 +69,8 @@ type State =
     | Running
     | Shown of Generated
     | Failed of Failure
+    /// The DELETE of a finished or failed summary (the previous state) is in flight: nothing can be asked until it answers.
+    | Dismissing of previous: State
 
 type Model =
     { /// The open document the summary belongs to.
@@ -85,11 +87,17 @@ type Model =
       /// The latest watch of the open document's job; only its fetches are used.
       Watch: int
       /// The request whose job answer may still be shown after she left and came back; dismissing voids it (0).
-      Claim: int }
+      Claim: int
+      /// The last dismissal was refused or failed: the summary is still there and she is told.
+      DismissFailed: bool
+      /// Pairs whose DELETE has not answered yet, also after she left the document: coming back waits for the answer.
+      Pending: (Guid * Guid) list }
 
 type Message =
     | Summarize
     | Dismiss
+    /// The answer to the DELETE of the pair's summary (`DeleteSummary`).
+    | Dismissed of project: Guid * document: Guid * succeeded: bool
     | ConfirmSend
     | CancelSend
     | DestinationsChanged of Available
@@ -114,8 +122,10 @@ type Effect =
     | Send of request: int * project: Guid * document: Guid * destination: Destination option * confirmed: Confirmed option
     /// Fetch the open document's state now (`delay` false) or after the polling interval (`delay` true).
     | Fetch of watch: int * project: Guid * document: Guid * delay: bool
+    /// Dismissing a finished or failed summary deletes it on the server (F004 FR-010): otherwise asking again returns the old one.
+    | DeleteSummary of project: Guid * document: Guid
 
-let initial = { Project = None; Document = None; State = Idle; Available = { Plan = false; Configured = false }; Choice = None; Progress = None; Request = 0; Watch = 0; Claim = 0 }
+let initial = { Project = None; Document = None; State = Idle; Available = { Plan = false; Configured = false }; Choice = None; Progress = None; Request = 0; Watch = 0; Claim = 0; DismissFailed = false; Pending = [] }
 
 let update (message: Message) (model: Model) : Model * Effect option =
     // A late result is dropped because only `Generating request` accepts its own number,
@@ -143,9 +153,29 @@ let update (message: Message) (model: Model) : Model * Effect option =
             | Some destination -> start project document destination None
             | None -> model, None
         | _ -> model, None
+    | Dismiss when (match model.State with Dismissing _ -> true | _ -> false) -> model, None
     | Dismiss ->
         let abandoned, effect = abandon model
-        { abandoned with Claim = 0 }, effect
+        match model.Project, model.Document, model.State with
+        // A finished or failed summary is the server's too: dismissing deletes it there, or asking again returns the old one.
+        // Until the server answers she sees "Dismissing" and cannot ask, so the old summary can never come back or be
+        // deleted after a new one; a failed DELETE restores the summary and says so.
+        | Some project, Some document, (Shown _ | Failed _) ->
+            { abandoned with State = Dismissing model.State; Claim = 0; DismissFailed = false; Pending = (project, document) :: model.Pending }, Some (DeleteSummary (project, document))
+        | _ -> { abandoned with Claim = 0 }, effect
+    | Dismissed (project, document, succeeded) ->
+        let model = { model with Pending = model.Pending |> List.filter (fun pair -> pair <> (project, document)) }
+        match model.State with
+        | Dismissing previous when (model.Project, model.Document) = (Some project, Some document) ->
+            if succeeded then { model with State = Idle; DismissFailed = false }, None
+            else
+                match previous with
+                // She left and came back meanwhile: the summary was not shown, so ask the server for it again.
+                | Idle ->
+                    let watch = model.Watch + 1
+                    { model with State = Idle; DismissFailed = true; Watch = watch }, Some (Fetch (watch, project, document, false))
+                | _ -> { model with State = previous; DismissFailed = true }, None
+        | _ -> model, None
     | ConfirmSend ->
         match model.Project, model.Document, model.State with
         | Some project, Some document, Confirming (Service (host, name)) -> start project document (Some UseConfigured) (Some (ConfirmedService (host, name)))
@@ -182,6 +212,9 @@ let update (message: Message) (model: Model) : Model * Effect option =
     // Back on a document (or asked after a view change): the state of its job, if the server has one.
     | Refresh ->
         match model.Project, model.Document, model.State with
+        // Her delete of this summary has not answered yet: wait for it rather than fetch what is being deleted.
+        | Some project, Some document, Idle when List.contains (project, document) model.Pending ->
+            { model with State = Dismissing Idle }, None
         | Some project, Some document, Idle ->
             let watch = model.Watch + 1
             { model with Watch = watch }, Some (Fetch (watch, project, document, false))
@@ -201,7 +234,7 @@ let update (message: Message) (model: Model) : Model * Effect option =
         | Error failure -> { model with State = Failed failure; Progress = None }, None
     | ReaderChanged (project, document) when (project, document) <> (model.Project, model.Document) ->
         let abandoned, effect = abandon model
-        { abandoned with Project = project; Document = document }, effect
+        { abandoned with Project = project; Document = document; DismissFailed = false }, effect
     | _ -> model, None
 
 /// Follows the reader's project and open document; a newly opened document asks the server for the state of its summary job.

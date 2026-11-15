@@ -112,7 +112,11 @@ type SummaryJobs(capabilities: SummaryJobCapabilities) =
                     end' job (JobState.Failed ("signed_out", Summarize.failureDetail Summarize.ServiceError.SignedOut, None))
                     false
                 else
+                    // Saved inside the lock, before the job is dropped: a `Dismiss` or a restart sees the row or the job, never neither.
+                    // A failed save leaves the job running for the caller to `Fail`.
+                    capabilities.Save key summary
                     end' job (JobState.Finished summary)
+                    jobs.Remove key |> ignore
                     true
             | _ -> false)
 
@@ -134,11 +138,23 @@ type SummaryJobs(capabilities: SummaryJobCapabilities) =
                 true
             | _ -> false)
 
+    /// The job's state, else the stored summary (a finished job is dropped once saved).
     member _.State(key: SummaryKey) : JobState option =
         lock gate (fun () ->
             match jobs.TryGetValue key with
             | true, job -> Some job.State
-            | _ -> None)
+            | _ -> capabilities.Find key |> Option.map JobState.Finished)
+
+    /// Dismisses a finished or failed summary: the job is dropped and the stored row deleted. A running job is left
+    /// alone (Stop is T008); returns false then.
+    member _.Dismiss(key: SummaryKey) : bool =
+        lock gate (fun () ->
+            match jobs.TryGetValue key with
+            | true, { State = JobState.Running _ } -> false
+            | _ ->
+                jobs.Remove key |> ignore
+                capabilities.Delete key
+                true)
 
     /// Completes when the key's current job has ended (tests wait on this instead of polling).
     member _.Settled(key: SummaryKey) : Task =

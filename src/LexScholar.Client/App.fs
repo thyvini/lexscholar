@@ -178,6 +178,20 @@ module Api =
                 | None -> return Error ()
         with _ -> return Error () }
 
+    /// Deletes the pair's finished or failed summary on the server (idempotent); false when it could not be deleted.
+    let dismissSummary (http: HttpClient) (projectId: Guid) (documentId: Guid) : Async<bool> = async {
+        try
+            use! tokenResponse = http.GetAsync("api/antiforgery") |> Async.AwaitTask
+            if not tokenResponse.IsSuccessStatusCode then return false
+            else
+                let! tokenBody = tokenResponse.Content.ReadAsStringAsync() |> Async.AwaitTask
+                use tokenJson = JsonDocument.Parse(tokenBody)
+                use request = new HttpRequestMessage(HttpMethod.Delete, $"api/projects/{projectId:D}/documents/{documentId:D}/summary")
+                request.Headers.Add("X-CSRF-TOKEN", tokenJson.RootElement.GetProperty("requestToken").GetString())
+                use! response = http.SendAsync request |> Async.AwaitTask
+                return response.IsSuccessStatusCode
+        with _ -> return false }
+
     let summarize (http: HttpClient) (projectId: Guid) (documentId: Guid) (destination: Summary.Destination option) (confirmed: Summary.Confirmed option) (cancellation: Threading.CancellationToken) : Async<Result<Summary.Remote, Summary.Failure>> = async {
         try
             use! tokenResponse = http.GetAsync("api/antiforgery", cancellation) |> Async.AwaitTask
@@ -337,6 +351,11 @@ module private Ui =
                     let! remote = Api.summaryState http projectId documentId
                     let remote = match remote with Ok state -> state | Error () -> (if delay then Some (Summary.RemoteRunning None) else None)
                     dispatch (SummaryMsg (Summary.Polled (watch, remote))) }))
+        | Some (Summary.DeleteSummary (projectId, documentId)) ->
+            Cmd.ofEffect (fun dispatch ->
+                Async.StartImmediate(async {
+                    let! succeeded = Api.dismissSummary http projectId documentId
+                    dispatch (SummaryMsg (Summary.Dismissed (projectId, documentId, succeeded))) }))
         | None -> Cmd.none
 
     let chatGptCommand http (navigation: NavigationManager) (effect: ChatGpt.Effect option) : Cmd<Msg> =
@@ -729,6 +748,7 @@ module private Ui =
                         plainButton "Dismiss" None (fun _ -> dispatch Summary.Dismiss)
                     }
                 | Summary.Shown _ -> empty ()
+                | Summary.Dismissing _ -> span { "role" => "status"; "Dismissing… " }
                 | Summary.Confirming target -> confirmDialog document target dispatch
                 | Summary.Idle ->
                     button {
@@ -764,6 +784,9 @@ module private Ui =
                         span { attr.``class`` "secondary"; text (Summary.failureText Summary.NotConfigured) } }
                 | Summary.Failed failure -> p { attr.``class`` "error"; "role" => "alert"; text (Summary.failureText failure) }
                 | _ -> empty ()
+            cond summary.DismissFailed <| function
+                | true -> p { attr.``class`` "error"; "role" => "alert"; "The summary could not be dismissed. Please try again." }
+                | false -> empty ()
             cond summary.State <| function
                 | Summary.Shown generated -> summaryPanel document generated onCite dispatch
                 | _ -> empty ()
