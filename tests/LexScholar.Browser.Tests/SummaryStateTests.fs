@@ -468,3 +468,36 @@ let ``a running state is read with its pages processed or combining`` () =
     assertState (Some (RemoteRunning None)) (read """{"status":"running"}""")
     assertState (Some (RemoteRunning (Some (PagesProcessed (5, 40))))) (read """{"status":"running","pagesProcessed":5,"totalPages":40}""")
     assertState (Some (RemoteRunning (Some Combining))) (read """{"status":"running","combining":true}""")
+
+// F004 T005: every failure a GET reports renders as the one a waited-for POST gave.
+
+[<Fact; Trait("Task", "T005")>]
+let ``each failed state read from a GET is the failure F003 and F005 showed`` () =
+    let read code = LexScholar.Client.SummaryStatus.parseRemote $"""{{"status":"failed","code":"{code}"}}"""
+    for code, failure in
+        [ "usage_limit_reached", UsageLimitReached
+          "signed_out", SignedOut
+          "no_plan_access", NoPlanAccess
+          "not_enough_text", NotEnoughText
+          "no_text", NoText
+          "too_many_pages", TooManyPages ] do
+        assertState (Some (RemoteFailed failure)) (read code)
+    assertState
+        (Some (RemoteFailed (ServiceFailed (Some "The service failed."))))
+        (LexScholar.Client.SummaryStatus.parseRemote """{"status":"failed","code":"service_failed","detail":"The service failed."}""")
+
+[<Fact; Trait("Task", "T005")>]
+let ``a failure found on return is shown with its actions, and Summarize asks again`` () =
+    let away, _ = update (ReaderChanged (Some project, Some (Guid.NewGuid()))) reading
+    let back, _ = update (ReaderChanged (Some project, Some document)) away
+    let refreshed, effect = update Refresh back
+    let watch = match effect with Some (Fetch (w, _, _, false)) -> w | other -> failwithf "Expected an immediate Fetch, got %A" other
+    let failed, stop = update (Polled (watch, Some (RemoteFailed UsageLimitReached))) refreshed
+    assertState (Failed UsageLimitReached) failed.State
+    assertState None stop
+    assertState (failureText UsageLimitReached) "Usage limit reached. Review your plan or this app's limit in ChatGPT settings."
+    let signedOut, _ = update (Polled (watch, Some (RemoteFailed SignedOut))) refreshed
+    assertState true (offersSignIn SignedOut && reloadsDestinations SignedOut)
+    assertState (Failed SignedOut) signedOut.State
+    let again, send = update Summarize failed
+    assertState true (match again.State, send with Generating _, Some (Send _) -> true | _ -> false)

@@ -997,3 +997,26 @@ let ``an unexpected error in the plan job fails the job instead of leaving it ru
     let _, state = getState harness path
     Assert.Equal("failed", state.GetProperty("status").GetString())
     Assert.Equal("service_failed", state.GetProperty("code").GetString())
+
+// ---- F004 T005: plan failures are kept for her return ----
+
+[<Fact; Trait("Task", "T005")>]
+let ``a plan usage limit is kept as a failed state and asking again starts a new job`` () =
+    let fake = new FakeOpenAi(ResponsesScript.Status(429, "subscription_sharing_usage_limit_exceeded"))
+    use harness = TestHarness.Start(summaryHandler = fake)
+    let path = documentPath harness
+    signInThrough harness fake "" |> ignore
+    let status, _ = sendJson harness path confirmed
+    Assert.Equal(HttpStatusCode.Accepted, status)
+    settle harness path
+    let _, state = getState harness path
+    Assert.Equal("failed", state.GetProperty("status").GetString())
+    Assert.Equal("usage_limit_reached", state.GetProperty("code").GetString())
+    Assert.True(signedIn harness)
+    let first = fake.RequestsTo("api.openai.com", "/v1/responses").Length
+    let status, _ = sendJson harness path confirmed
+    Assert.Equal(HttpStatusCode.Accepted, status)
+    settle harness path
+    let _, again = getState harness path
+    Assert.Equal("usage_limit_reached", again.GetProperty("code").GetString())
+    Assert.Equal(first + 1, fake.RequestsTo("api.openai.com", "/v1/responses").Length)
