@@ -18,7 +18,9 @@ Decisions for [plan.md](plan.md). F003 (`specs/003-document-summary/research.md`
 ## 3. Stop, finish and removal races
 
 - **Decision**: every job has an id. `Complete`, `Fail` and `Progress` change state only if the registry still holds that id for its key, and `Complete` saves to the database inside the registry lock. `Stop` (and removal) take the same lock, cancel the token and remove the job; if a stored summary exists afterwards, `DELETE` removes it too.
-- **Guarantees**: after Stop returns, the token is cancelled, so no further service call starts (F003's chunk loop checks the token before each call); a stopped job can never be saved. If finishing won the race, Stop deletes the stored row: nothing stopped is ever shown (accepted risk 3).
+- **Service calls go through the registry**: the job's `Complete` capability is wrapped so each call starts inside the registry lock, after checking that the job id is still current and its token not cancelled; Stop cancels inside the same lock. A token check followed by an unlocked call would leave a window where Stop returns and the call still starts.
+- **Removal**: `RemoveAssociation` stops the job and deletes the association in one locked step, and `Start` checks the association inside that lock, so a POST that passed its early checks cannot start a job for a pair that was just removed (it gets `not_found`).
+- **Guarantees**: after Stop (or removal) returns, no new service call starts, and a call already in flight is aborted by the cancelled token; a stopped job can never be saved. If finishing won the race, Stop deletes the stored row: nothing stopped is ever shown (accepted risk 3).
 - **Alternatives**: optimistic "saved then check" — leaves a window where a stopped summary is visible.
 
 ## 4. Markers and state without reloading (FR-008, FR-002)
@@ -45,7 +47,7 @@ Decisions for [plan.md](plan.md). F003 (`specs/003-document-summary/research.md`
 
 ## 7. Contract changes
 
-- POST `.../summary`: same checks, same 4xx/409 answers; success is `202` (`SummaryState`, running) instead of a `200` NDJSON stream; `200` with the current state if one is already running or finished for the pair (FR-011). Plan-path outcomes that F005 sent as an immediate `failed` stream (`signed_out` from `SignInEnded`, `service_failed` from `RefreshUnreachable`) become a job created directly in the failed state, so the client shows them through the same path.
+- POST `.../summary`: after the association check, a running or finished summary for the pair is returned (`200`) before any destination, confirmation or sign-in check, so asking again never meets a confirmation or a sign-in error (FR-011). Otherwise same checks, same 4xx/409 answers; success is `202` (`SummaryState`, running) instead of a `200` NDJSON stream. Plan-path outcomes that F005 sent as an immediate `failed` stream (`signed_out` from `SignInEnded`, `service_failed` from `RefreshUnreachable`) become a job created directly in the failed state, so the client shows them through the same path.
 - New: `GET .../summary`, `DELETE .../summary`, `GET /api/summaries`. See [contracts/summary-api.yaml](contracts/summary-api.yaml).
 
 ## 8. Testing the riskiest assumption first

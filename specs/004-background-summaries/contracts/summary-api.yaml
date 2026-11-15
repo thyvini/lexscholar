@@ -28,7 +28,11 @@ paths:
         "200":
           description: A summary for the pair is already running or finished; its state is returned and nothing new starts (FR-011).
           content: { application/json: { schema: { $ref: "#/components/schemas/SummaryState" } } }
-        "4XX": { description: "As F003/F005 (400, 404, 409, 422, 503 problems)." }
+        "400": { description: "As F005 (`destination_required`)." }
+        "404": { description: "As F003 (`not_found`, `document_not_found`); checked before the registry." }
+        "409": { description: "As F003/F005 (`confirmation_required`); never for a pair already running or finished." }
+        "422": { description: "As F003 (`too_many_pages`, `no_text`, `not_enough_text`)." }
+        "503": { description: "As F003/F005 (`summary_service_not_configured`, `document_unavailable`, `chatgpt_signed_out`)." }
     get:
       summary: State of the pair's summary
       responses:
