@@ -54,10 +54,19 @@ type Destination =
 /// Which destinations the host offers right now, and the one she chose when there are two.
 type Available = { Plan: bool; Configured: bool }
 
+/// What the server's job registry holds for the open document (`SummaryState` of the contract).
+type Remote =
+    | RemoteRunning
+    | RemoteFinished of Generated
+    | RemoteFailed of Failure
+
 type State =
     | Idle
     | Confirming of ConfirmTarget
+    /// The POST is in flight (the plan's NDJSON stream is read until T003 replaces it).
     | Generating of request: int
+    /// The server runs the summary in the background; the client polls for it.
+    | Running
     | Shown of Generated
     | Failed of Failure
 
@@ -72,7 +81,9 @@ type Model =
       /// The latest progress of the running request, if any.
       Progress: Progress option
       /// The latest request; only its result is used.
-      Request: int }
+      Request: int
+      /// The latest watch of the open document's job; only its fetches are used.
+      Watch: int }
 
 type Message =
     | Summarize
@@ -83,6 +94,12 @@ type Message =
     | Choose of Destination
     | Progressed of request: int * Progress
     | Responded of request: int * Result<Generated, Failure>
+    /// The POST was answered with a job's state (202, or 200 when one already exists).
+    | Accepted of request: int * Remote
+    /// The open document's state was asked for after a view change (`Fetch` effect).
+    | Refresh
+    /// A state fetched for the open document by watch number; `None` is 404 (nothing there).
+    | Polled of watch: int * Remote option
     /// The reader's project and open document, after any change.
     | ReaderChanged of project: Guid option * document: Guid option
 
@@ -95,8 +112,10 @@ type Effect =
     | Send of request: int * project: Guid * document: Guid * destination: Destination option * confirmed: Confirmed option
     /// Abandon the running request: its fetch is aborted and the server stops (FR-009).
     | Cancel of request: int
+    /// Fetch the open document's state now (`delay` false) or after the polling interval (`delay` true).
+    | Fetch of watch: int * project: Guid * document: Guid * delay: bool
 
-let initial = { Project = None; Document = None; State = Idle; Available = { Plan = false; Configured = false }; Choice = None; Progress = None; Request = 0 }
+let initial = { Project = None; Document = None; State = Idle; Available = { Plan = false; Configured = false }; Choice = None; Progress = None; Request = 0; Watch = 0 }
 
 let update (message: Message) (model: Model) : Model * Effect option =
     // A late result is dropped because only `Generating request` accepts its own number,

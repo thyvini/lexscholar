@@ -305,6 +305,8 @@ let private mapBackground (app: WebApplication) (_jobs: SummaryJobs) =
 let map (app: WebApplication) (configuration: WorkspaceConfiguration) (vault: ChatGptAccess.Vault) (jobs: SummaryJobs) =
     let directory = configuration.DataDirectory
     mapBackground app jobs
+    // Published so tests can wait for a job to end (a handshake instead of polling).
+    (app :> IApplicationBuilder).Properties["LexScholar.SummaryJobs"] <- box jobs
     app.MapPost("/api/projects/{projectId:guid}/documents/{documentId:guid}/summary",
                 Func<Guid, Guid, HttpContext, Task<IResult>>(fun projectId documentId context -> task {
         let! body = readBody context

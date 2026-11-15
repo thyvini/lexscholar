@@ -336,6 +336,7 @@ module private Ui =
             | true, source -> source.Cancel()
             | _ -> ()
             Cmd.none
+        | Some (Summary.Fetch _) -> Cmd.none
         | None -> Cmd.none
 
     let chatGptCommand http (navigation: NavigationManager) (effect: ChatGpt.Effect option) : Cmd<Msg> =
@@ -716,7 +717,7 @@ module private Ui =
                 | true -> destinationChoice chatGpt summary dispatch
                 | false -> empty ()
             cond summary.State <| function
-                | Summary.Generating _ ->
+                | Summary.Generating _ | Summary.Running ->
                     span {
                         "role" => "status"
                         "Summarizing… "

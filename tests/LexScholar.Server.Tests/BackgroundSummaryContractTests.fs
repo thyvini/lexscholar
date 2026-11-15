@@ -4,7 +4,11 @@ module LexScholar.Server.Tests.BackgroundSummaryContractTests
 open System
 open System.Net
 open System.Net.Http
+open System.IO
+open System.Net.Http.Headers
+open System.Text
 open System.Text.Json
+open LexScholar.Infrastructure
 open Xunit
 
 let private token (client: HttpClient) =
@@ -23,9 +27,11 @@ let private summaryPath () = $"/api/projects/{Guid.NewGuid():D}/documents/{Guid.
 [<Fact; Trait("Task", "T001")>]
 let ``the summary state and status routes exist`` () =
     use harness = TestHarness.Start()
-    for path in [ summaryPath (); "/api/summaries" ] do
-        use response = send harness.Client HttpMethod.Get path None
-        Assert.Equal(HttpStatusCode.NotImplemented, response.StatusCode)
+    // The state route is live since T002: nothing is there for an unknown pair.
+    use state = send harness.Client HttpMethod.Get (summaryPath ()) None
+    Assert.Equal(HttpStatusCode.NotFound, state.StatusCode)
+    use statuses = send harness.Client HttpMethod.Get "/api/summaries" None
+    Assert.Equal(HttpStatusCode.NotImplemented, statuses.StatusCode)
 
 [<Fact; Trait("Task", "T001")>]
 let ``deleting a summary exists and needs the antiforgery token`` () =
@@ -35,3 +41,105 @@ let ``deleting a summary exists and needs the antiforgery token`` () =
     Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode)
     use answered = send harness.Client HttpMethod.Delete path (Some (token harness.Client))
     Assert.Equal(HttpStatusCode.NotImplemented, answered.StatusCode)
+
+let private settings = [ "LexScholar:Summary:Endpoint", "http://127.0.0.1:9/v1"; "LexScholar:Summary:Model", "m" ]
+
+let private seedProject directory =
+    use db = WorkspaceDb.create directory
+    let time = DateTimeOffset(2026, 5, 17, 12, 0, 0, TimeSpan.Zero)
+    let workspace = Guid.NewGuid()
+    let project = Guid.NewGuid()
+    db.Add(WorkspaceRow(Id = workspace, CreatedUtc = time)) |> ignore
+    db.SaveChanges() |> ignore
+    db.Add(ResearchProjectRow(Id = project, WorkspaceId = workspace, Name = "P", NormalizedName = "P", CreatedUtc = time)) |> ignore
+    db.SaveChanges() |> ignore
+    project
+
+let private sendWith (client: HttpClient) (method: HttpMethod) (path: string) (content: HttpContent option) =
+    use message = new HttpRequestMessage(method, path)
+    message.Headers.TryAddWithoutValidation("Origin", client.BaseAddress.GetLeftPart(UriPartial.Authority)) |> ignore
+    message.Headers.TryAddWithoutValidation("X-CSRF-TOKEN", token client) |> ignore
+    content |> Option.iter (fun body -> message.Content <- body)
+    let response = client.Send(message)
+    response.StatusCode, response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+
+/// Imports a summary fixture and associates it with the project; returns its document id.
+let private addDocument (client: HttpClient) (project: Guid) (name: string) =
+    let part = new ByteArrayContent(File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "Fixtures", "summary", name)))
+    part.Headers.ContentType <- MediaTypeHeaderValue("application/pdf")
+    let form = new MultipartFormDataContent()
+    form.Add(part, "file", name)
+    let status, text = sendWith client HttpMethod.Post "/api/documents" (Some (form :> HttpContent))
+    Assert.True(status = HttpStatusCode.Created || status = HttpStatusCode.OK, text)
+    let document = (use json = JsonDocument.Parse text in json.RootElement.GetProperty("id").GetGuid())
+    let body = JsonSerializer.Serialize({| documentId = string document; role = "FocusedSource" |})
+    let status, _ = sendWith client HttpMethod.Post $"/api/projects/{project}/documents" (Some (new StringContent(body, Encoding.UTF8, "application/json")))
+    Assert.Equal(HttpStatusCode.Created, status)
+    document
+
+let private path (project: Guid) (document: Guid) = $"/api/projects/{project}/documents/{document}/summary"
+
+let private ask (client: HttpClient) project document =
+    sendWith client HttpMethod.Post (path project document) (Some (new StringContent("""{"confirmSend":false}""", Encoding.UTF8, "application/json")))
+
+let private answer = """{"points":[{"text":"Main idea","pages":[1,2]}]}"""
+
+[<Fact; Trait("Task", "T002")>]
+let ``a configured-service summary answers 202 while the service is still working`` () =
+    let fake = new FakeChatService(Hold answer)
+    use harness = TestHarness.Start(settings = settings, summaryHandler = fake)
+    let project = seedProject harness.Root
+    let document = addDocument harness.Client project "article-en.pdf"
+    let status, text = ask harness.Client project document
+    Assert.Equal(HttpStatusCode.Accepted, status)
+    use json = JsonDocument.Parse text
+    Assert.Equal("running", json.RootElement.GetProperty("status").GetString())
+    fake.Waiting.WaitAsync(TimeSpan.FromSeconds 30.).GetAwaiter().GetResult()
+    let status, state = sendWith harness.Client HttpMethod.Get (path project document) None
+    Assert.Equal(HttpStatusCode.OK, status)
+    Assert.Contains("\"running\"", state)
+    fake.Release()
+    SummaryJobsAccess.settled harness.App project document |> fun task -> task.WaitAsync(TimeSpan.FromSeconds 30.).GetAwaiter().GetResult()
+
+[<Fact; Trait("Task", "T002")>]
+let ``closing the POST's connection does not stop the job and the finished summary is found afterwards`` () =
+    let fake = new FakeChatService(Hold answer)
+    use harness = TestHarness.Start(settings = settings, summaryHandler = fake)
+    let project = seedProject harness.Root
+    let document = addDocument harness.Client project "article-en.pdf"
+    // The request is abandoned as soon as the headers arrive, as when the researcher leaves the document.
+    use abandon = new Threading.CancellationTokenSource()
+    use message = new HttpRequestMessage(HttpMethod.Post, path project document)
+    message.Headers.TryAddWithoutValidation("Origin", harness.Client.BaseAddress.GetLeftPart(UriPartial.Authority)) |> ignore
+    message.Headers.TryAddWithoutValidation("X-CSRF-TOKEN", token harness.Client) |> ignore
+    message.Content <- new StringContent("""{"confirmSend":false}""", Encoding.UTF8, "application/json")
+    let response = harness.Client.Send(message, HttpCompletionOption.ResponseHeadersRead, abandon.Token)
+    Assert.Equal(HttpStatusCode.Accepted, response.StatusCode)
+    abandon.Cancel()
+    response.Dispose()
+    fake.Waiting.WaitAsync(TimeSpan.FromSeconds 30.).GetAwaiter().GetResult()
+    Assert.False(fake.Cancelled.IsCompleted, "the job's service call is not tied to the request")
+    fake.Release()
+    SummaryJobsAccess.settled harness.App project document |> fun task -> task.WaitAsync(TimeSpan.FromSeconds 30.).GetAwaiter().GetResult()
+    Assert.False(fake.Cancelled.IsCompleted)
+    let status, text = sendWith harness.Client HttpMethod.Get (path project document) None
+    Assert.Equal(HttpStatusCode.OK, status)
+    use json = JsonDocument.Parse text
+    Assert.Equal("finished", json.RootElement.GetProperty("status").GetString())
+    let summary = json.RootElement.GetProperty("summary")
+    Assert.Equal(document, summary.GetProperty("documentId").GetGuid())
+    let point = summary.GetProperty("points").[0]
+    Assert.Equal("Main idea", point.GetProperty("text").GetString())
+    Assert.Equal<int list>([ 1; 2 ], [ for p in point.GetProperty("pages").EnumerateArray() -> p.GetInt32() ])
+    Assert.Equal(1, fake.Requests.Length)
+
+[<Fact; Trait("Task", "T002")>]
+let ``a pair with no summary has no state`` () =
+    let fake = new FakeChatService(Reply answer)
+    use harness = TestHarness.Start(settings = settings, summaryHandler = fake)
+    let project = seedProject harness.Root
+    let document = addDocument harness.Client project "article-en.pdf"
+    let status, text = sendWith harness.Client HttpMethod.Get (path project document) None
+    Assert.Equal(HttpStatusCode.NotFound, status)
+    use json = JsonDocument.Parse text
+    Assert.Equal("no_summary", json.RootElement.GetProperty("code").GetString())

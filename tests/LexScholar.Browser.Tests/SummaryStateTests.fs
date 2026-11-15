@@ -322,3 +322,62 @@ let ``choosing another destination clears a failure so she can ask again`` () =
     assertState Idle chosen.State
     let _, effect = update Summarize chosen
     assertState (Some (Send (2, project, document, Some UseConfigured, None))) effect
+
+// F004 T002: the server owns the summary job; the client follows it by polling.
+
+let private asked = update Summarize reading |> fst
+
+[<Fact; Trait("Task", "T002")>]
+let ``a 202 with a running job keeps waiting and polls after the interval`` () =
+    let model, effect = update (Accepted (1, RemoteRunning)) asked
+    assertState Running model.State
+    match effect with
+    | Some (Fetch (watch, p, d, true)) ->
+        assertState project p
+        assertState document d
+        let again, next = update (Polled (watch, Some RemoteRunning)) model
+        assertState Running again.State
+        assertState (Some (Fetch (watch, project, document, true))) next
+    | other -> failwithf "Expected a delayed Fetch, got %A" other
+
+[<Fact; Trait("Task", "T002")>]
+let ``a job answered while the POST was open is shown, or its failure`` () =
+    let shown, effect = update (Accepted (1, RemoteFinished generated)) asked
+    assertState (Shown generated) shown.State
+    assertState None effect
+    let failed, _ = update (Accepted (1, RemoteFailed UsageLimitReached)) asked
+    assertState (Failed UsageLimitReached) failed.State
+    let stale, _ = update (Accepted (9, RemoteFinished generated)) asked
+    assertState asked.State stale.State
+
+[<Fact; Trait("Task", "T002")>]
+let ``leaving a document with a running job cancels nothing and returning asks the server`` () =
+    let running, _ = update (Accepted (1, RemoteRunning)) asked
+    let away, cancel = update (ReaderChanged (Some project, Some (Guid.NewGuid()))) running
+    assertState Idle away.State
+    assertState None cancel
+    let back, _ = update (ReaderChanged (Some project, Some document)) away
+    let refreshed, effect = update Refresh back
+    match effect with
+    | Some (Fetch (watch, p, d, false)) ->
+        assertState (project, document) (p, d)
+        let shown, _ = update (Polled (watch, Some (RemoteFinished generated))) refreshed
+        assertState (Shown generated) shown.State
+        let none, noEffect = update (Polled (watch, None)) refreshed
+        assertState Idle none.State
+        assertState None noEffect
+    | other -> failwithf "Expected an immediate Fetch, got %A" other
+
+[<Fact; Trait("Task", "T002")>]
+let ``a fetched state for a document she has left is dropped`` () =
+    let refreshed, effect = update Refresh reading
+    let watch = match effect with Some (Fetch (w, _, _, _)) -> w | other -> failwithf "Expected Fetch, got %A" other
+    let moved, _ = update (ReaderChanged (Some project, Some (Guid.NewGuid()))) refreshed
+    let late, lateEffect = update (Polled (watch, Some (RemoteFinished generated))) moved
+    assertState Idle late.State
+    assertState None lateEffect
+    let dismissed, _ = update (Accepted (1, RemoteRunning)) asked
+    let hidden, _ = update Dismiss dismissed
+    let stale, staleEffect = update (Polled (dismissed.Watch, Some RemoteRunning)) hidden
+    assertState Idle stale.State
+    assertState None staleEffect
