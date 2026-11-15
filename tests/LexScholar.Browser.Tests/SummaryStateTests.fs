@@ -643,3 +643,21 @@ let ``leaving after dismissing an ask still deletes the job when the POST answer
     let back, _ = update Refresh back
     assertState (Dismissing Idle) back.State
     ignore backEffect
+
+[<Fact; Trait("Task", "T013")>]
+let ``a delete that fails while she is away is reported when she is back`` () =
+    let waiting, _ = dismissedAsking
+    let answered, _ = update (Accepted (1, project, document, RemoteRunning None)) waiting
+    let away, _ = update (ReaderChanged (Some project, None)) answered
+    let first, _ = update (Dismissed (project, document, true)) away
+    let second, _ = update (Dismissed (project, document, false)) first
+    let back, _ = update (ReaderChanged (Some project, Some document)) second
+    let refreshed, effect = update Refresh back
+    assertState true refreshed.DismissFailed
+    assertState true (match effect with Some (Fetch (_, p, d, false)) -> (p, d) = (project, document) | _ -> false)
+    // Failure first, success last, while away: the same.
+    let away2, _ = update (ReaderChanged (Some project, None)) answered
+    let failedFirst, _ = update (Dismissed (project, document, false)) away2
+    let last, _ = update (Dismissed (project, document, true)) failedFirst
+    let back2, _ = update (ReaderChanged (Some project, Some document)) last
+    assertState true (fst (update Refresh back2)).DismissFailed

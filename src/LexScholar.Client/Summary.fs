@@ -93,7 +93,10 @@ type Model =
       /// Pairs whose DELETE has not answered yet, also after she left the document: coming back waits for the answer.
       Pending: (Guid * Guid) list
       /// Requests dismissed while their POST was in flight: when the POST answers, the job it may have created is deleted too.
-      Draining: (int * Guid * Guid) list }
+      Draining: (int * Guid * Guid) list
+      /// Pairs with a failed DELETE not reported yet: the job may still run, so the dismissal ends as a failure however the other answers
+      /// arrive, also after she left the document (reported when she is back).
+      Failures: (Guid * Guid) list }
 
 type Message =
     | Summarize
@@ -128,7 +131,7 @@ type Effect =
     /// Dismissing a finished or failed summary deletes it on the server (F004 FR-010): otherwise asking again returns the old one.
     | DeleteSummary of project: Guid * document: Guid
 
-let initial = { Project = None; Document = None; State = Idle; Available = { Plan = false; Configured = false }; Choice = None; Progress = None; Request = 0; Watch = 0; Claim = 0; DismissFailed = false; Pending = []; Draining = [] }
+let initial = { Project = None; Document = None; State = Idle; Available = { Plan = false; Configured = false }; Choice = None; Progress = None; Request = 0; Watch = 0; Claim = 0; DismissFailed = false; Pending = []; Draining = []; Failures = [] }
 
 let update (message: Message) (model: Model) : Model * Effect option =
     // A late result is dropped because only `Generating request` accepts its own number,
@@ -187,14 +190,17 @@ let update (message: Message) (model: Model) : Model * Effect option =
             { abandoned with State = Dismissing model.State; Claim = 0; DismissFailed = false; Pending = (project, document) :: model.Pending; Draining = (request, project, document) :: model.Draining }, Some (DeleteSummary (project, document))
         | _ -> { abandoned with Claim = 0 }, effect
     | Dismissed (project, document, succeeded) ->
-        let model = { model with Pending = removeOne (project, document) model.Pending }
+        let model =
+            { model with
+                Pending = removeOne (project, document) model.Pending
+                Failures = if succeeded || List.contains (project, document) model.Failures then model.Failures else (project, document) :: model.Failures }
+        let failed = List.contains (project, document) model.Failures
         match model.State with
         // Another DELETE or the POST answer of this document is still to come: keep waiting.
-        // A failure of one of them is remembered: the job may still run, so the end is a failure whatever the later answers say.
-        | Dismissing _ when (model.Project, model.Document) = (Some project, Some document) && outstanding model project document ->
-            { model with DismissFailed = model.DismissFailed || not succeeded }, None
+        | Dismissing _ when (model.Project, model.Document) = (Some project, Some document) && outstanding model project document -> model, None
         | Dismissing previous when (model.Project, model.Document) = (Some project, Some document) ->
-            if succeeded && not model.DismissFailed then { model with State = Idle; DismissFailed = false }, None
+            let model = { model with Failures = model.Failures |> List.filter (fun pair -> pair <> (project, document)) }
+            if not failed then { model with State = Idle; DismissFailed = false }, None
             else
                 match previous with
                 // She left and came back meanwhile (or stopped a running or requested summary): ask the server what is there, which also resumes polling.
@@ -245,6 +251,10 @@ let update (message: Message) (model: Model) : Model * Effect option =
         // Her delete of this summary has not answered yet: wait for it rather than fetch what is being deleted.
         | Some project, Some document, Idle when outstanding model project document ->
             { model with State = Dismissing Idle }, None
+        // A delete failed while she was away: the job may still run, so say so and ask what is there.
+        | Some project, Some document, Idle when List.contains (project, document) model.Failures ->
+            let watch = model.Watch + 1
+            { model with Watch = watch; DismissFailed = true; Failures = model.Failures |> List.filter (fun pair -> pair <> (project, document)) }, Some (Fetch (watch, project, document, false))
         | Some project, Some document, Idle ->
             let watch = model.Watch + 1
             { model with Watch = watch }, Some (Fetch (watch, project, document, false))

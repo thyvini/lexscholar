@@ -28,4 +28,8 @@ The first CI run failed three older state tests (T002 x2, T010) that asserted th
 ## GPT review round 1 (two P1, fixed)
 
 - A failed POST does not prove no job exists (the answer can be lost after the server started it): a dismissed ask is now deleted again after any POST answer, failure included.
-- A failed DELETE while another answer was outstanding was forgotten: `DismissFailed` now keeps it, and the dismissal ends as a failure (restore and fetch) whatever order the answers arrive. Tests added for both. Limit: leaving the document during the dismissal clears the remembered failure.
+- A failed DELETE while another answer was outstanding was forgotten: `DismissFailed` now keeps it, and the dismissal ends as a failure (restore and fetch) whatever order the answers arrive. Tests added for both.
+
+## GPT review round 2 (one P1, fixed)
+
+A failed DELETE while she was away was dropped. Failures are now kept per pair (`Failures`, replacing the in-state flag), and the dismissal ends as a failure however the answers are ordered; away, it is reported on return (`Refresh` sets `DismissFailed` and fetches the job). The earlier "Limit" note is obsolete. Test added.
