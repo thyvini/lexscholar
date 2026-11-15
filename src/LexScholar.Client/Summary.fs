@@ -83,7 +83,10 @@ type Model =
       /// The latest request; only its result is used.
       Request: int
       /// The latest watch of the open document's job; only its fetches are used.
-      Watch: int }
+      Watch: int
+      /// Whether the request in flight is read as a stream (anything but the configured service, whose job is the server's):
+      /// only a stream is aborted when she leaves, so the POST of a background job always reaches the server.
+      Streaming: bool }
 
 type Message =
     | Summarize
@@ -115,7 +118,7 @@ type Effect =
     /// Fetch the open document's state now (`delay` false) or after the polling interval (`delay` true).
     | Fetch of watch: int * project: Guid * document: Guid * delay: bool
 
-let initial = { Project = None; Document = None; State = Idle; Available = { Plan = false; Configured = false }; Choice = None; Progress = None; Request = 0; Watch = 0 }
+let initial = { Project = None; Document = None; State = Idle; Available = { Plan = false; Configured = false }; Choice = None; Progress = None; Request = 0; Watch = 0; Streaming = true }
 
 let update (message: Message) (model: Model) : Model * Effect option =
     // A late result is dropped because only `Generating request` accepts its own number,
@@ -124,11 +127,11 @@ let update (message: Message) (model: Model) : Model * Effect option =
     let reset model = { model with State = Idle; Progress = None; Watch = model.Watch + 1 }
     // Leaving a running request aborts it (FR-009); other states have nothing in flight.
     let abandon model =
-        reset model, (match model.State with Generating request -> Some (Cancel request) | _ -> None)
+        reset model, (match model.State with Generating request when model.Streaming -> Some (Cancel request) | _ -> None)
     // Every request takes a fresh number.
     let start project document destination confirmed =
         let request = model.Request + 1
-        { model with State = Generating request; Progress = None; Request = request }, Some (Send (request, project, document, destination, confirmed))
+        { model with State = Generating request; Progress = None; Request = request; Streaming = (destination <> Some UseConfigured) }, Some (Send (request, project, document, destination, confirmed))
     // One available destination is used; with two, only her choice (none: nothing can be sent yet).
     let destination =
         match model.Available with

@@ -381,3 +381,15 @@ let ``a fetched state for a document she has left is dropped`` () =
     let stale, staleEffect = update (Polled (dismissed.Watch, Some RemoteRunning)) hidden
     assertState Idle stale.State
     assertState None staleEffect
+
+[<Fact; Trait("Task", "T002")>]
+let ``leaving while the POST of a configured-service summary is in flight does not abort it`` () =
+    let configured, _ = update (DestinationsChanged { Plan = false; Configured = true }) reading
+    let asking, sent = update Summarize configured
+    assertState (Some (Send (1, project, document, Some UseConfigured, None))) sent
+    let away, cancel = update (ReaderChanged (Some project, Some (Guid.NewGuid()))) asking
+    assertState Idle away.State
+    assertState None cancel
+    let dismissed, dismissCancel = update Dismiss asking
+    assertState Idle dismissed.State
+    assertState None dismissCancel
