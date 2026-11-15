@@ -69,7 +69,7 @@ type State =
     | Running
     | Shown of Generated
     | Failed of Failure
-    /// The DELETE of a finished or failed summary (the previous state) is in flight: nothing can be asked until it answers.
+    /// The DELETE of a finished, failed, running or still-requested summary (the previous state) is in flight: nothing can be asked until it answers.
     | Dismissing of previous: State
 
 type Model =
@@ -91,7 +91,9 @@ type Model =
       /// The last dismissal was refused or failed: the summary is still there and she is told.
       DismissFailed: bool
       /// Pairs whose DELETE has not answered yet, also after she left the document: coming back waits for the answer.
-      Pending: (Guid * Guid) list }
+      Pending: (Guid * Guid) list
+      /// Requests dismissed while their POST was in flight: when the POST answers, the job it may have created is deleted too.
+      Draining: (int * Guid * Guid) list }
 
 type Message =
     | Summarize
@@ -104,7 +106,6 @@ type Message =
     | CancelSend
     | DestinationsChanged of Available
     | Choose of Destination
-    | Progressed of request: int * Progress
     | Responded of request: int * Result<Generated, Failure>
     /// The POST was answered with a job's state (202, or 200 when one already exists).
     | Accepted of request: int * project: Guid * document: Guid * Remote
@@ -127,7 +128,7 @@ type Effect =
     /// Dismissing a finished or failed summary deletes it on the server (F004 FR-010): otherwise asking again returns the old one.
     | DeleteSummary of project: Guid * document: Guid
 
-let initial = { Project = None; Document = None; State = Idle; Available = { Plan = false; Configured = false }; Choice = None; Progress = None; Request = 0; Watch = 0; Claim = 0; DismissFailed = false; Pending = [] }
+let initial = { Project = None; Document = None; State = Idle; Available = { Plan = false; Configured = false }; Choice = None; Progress = None; Request = 0; Watch = 0; Claim = 0; DismissFailed = false; Pending = []; Draining = [] }
 
 let update (message: Message) (model: Model) : Model * Effect option =
     // A late result is dropped because only `Generating request` accepts its own number,
@@ -136,6 +137,14 @@ let update (message: Message) (model: Model) : Model * Effect option =
     let reset model = { model with State = Idle; Progress = None; Watch = model.Watch + 1 }
     // Leaving never aborts the POST: the job is the server's (F004), and the answer is kept for `Claim`.
     let abandon model = reset model, None
+    // A DELETE or a POST answer of the pair is still outstanding: she cannot ask again until both have answered.
+    let outstanding (model: Model) project document =
+        List.contains (project, document) model.Pending
+        || model.Draining |> List.exists (fun (_, p, d) -> (p, d) = (project, document))
+    let removeOne pair pending =
+        match List.tryFindIndex ((=) pair) pending with
+        | Some index -> List.removeAt index pending
+        | None -> pending
     // Every request takes a fresh number.
     let start project document destination confirmed =
         let request = model.Request + 1
@@ -171,16 +180,21 @@ let update (message: Message) (model: Model) : Model * Effect option =
         // deleted after a new one; a failed DELETE restores the summary and says so.
         | Some project, Some document, (Shown _ | Failed _) ->
             { abandoned with State = Dismissing model.State; Claim = 0; DismissFailed = false; Pending = (project, document) :: model.Pending }, Some (DeleteSummary (project, document))
+        // The POST is in flight and the job may not exist yet: the DELETE goes now, and again when the POST answers (`Draining`).
+        | Some project, Some document, Generating request ->
+            { abandoned with State = Dismissing model.State; Claim = 0; DismissFailed = false; Pending = (project, document) :: model.Pending; Draining = (request, project, document) :: model.Draining }, Some (DeleteSummary (project, document))
         | _ -> { abandoned with Claim = 0 }, effect
     | Dismissed (project, document, succeeded) ->
-        let model = { model with Pending = model.Pending |> List.filter (fun pair -> pair <> (project, document)) }
+        let model = { model with Pending = removeOne (project, document) model.Pending }
         match model.State with
+        // Another DELETE or the POST answer of this document is still to come: keep waiting.
+        | Dismissing _ when (model.Project, model.Document) = (Some project, Some document) && outstanding model project document -> model, None
         | Dismissing previous when (model.Project, model.Document) = (Some project, Some document) ->
             if succeeded then { model with State = Idle; DismissFailed = false }, None
             else
                 match previous with
-                // She left and came back meanwhile (or stopped a running summary): ask the server what is there, which also resumes polling.
-                | Idle | Running ->
+                // She left and came back meanwhile (or stopped a running or requested summary): ask the server what is there, which also resumes polling.
+                | Idle | Running | Generating _ ->
                     let watch = model.Watch + 1
                     { model with State = Idle; DismissFailed = true; Watch = watch }, Some (Fetch (watch, project, document, false))
                 | _ -> { model with State = previous; DismissFailed = true }, None
@@ -207,8 +221,15 @@ let update (message: Message) (model: Model) : Model * Effect option =
     | Choose choice ->
         let state = match model.State with Failed _ -> Idle | state -> state
         { model with Choice = Some choice; State = state }, None
-    | Progressed (request, progress) when model.State = Generating request -> { model with Progress = Some progress }, None
-    | Progressed _ -> model, None
+    // The POST of a dismissed request answered: the job it created (or found) is deleted again, so none is left running.
+    | Accepted (request, project, document, _) when model.Draining |> List.exists (fun (r, _, _) -> r = request) ->
+        { model with Draining = model.Draining |> List.filter (fun (r, _, _) -> r <> request); Pending = (project, document) :: model.Pending }, Some (DeleteSummary (project, document))
+    // It failed: no job exists, and the dismissal ends once its DELETE has answered too.
+    | Responded (request, Error _) when model.Draining |> List.exists (fun (r, _, _) -> r = request) ->
+        let model = { model with Draining = model.Draining |> List.filter (fun (r, _, _) -> r <> request) }
+        match model.State, model.Project, model.Document with
+        | Dismissing _, Some project, Some document when not (outstanding model project document) -> { model with State = Idle }, None
+        | _ -> model, None
     // The POST was answered with the job's state: show it, or wait for it by polling (the job is the server's).
     // Also when she left and came back meanwhile (state Idle): the answer is for the document now open, so it is kept.
     | Accepted (request, project, document, remote) when (model.Project, model.Document) = (Some project, Some document) && (model.State = Generating request || (model.State = Idle && model.Claim = request)) ->
@@ -222,7 +243,7 @@ let update (message: Message) (model: Model) : Model * Effect option =
     | Refresh ->
         match model.Project, model.Document, model.State with
         // Her delete of this summary has not answered yet: wait for it rather than fetch what is being deleted.
-        | Some project, Some document, Idle when List.contains (project, document) model.Pending ->
+        | Some project, Some document, Idle when outstanding model project document ->
             { model with State = Dismissing Idle }, None
         | Some project, Some document, Idle ->
             let watch = model.Watch + 1

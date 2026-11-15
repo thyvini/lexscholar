@@ -69,9 +69,9 @@ let ``dismissing returns to idle and drops a late result`` () =
     assertState Idle dismissed.State
     let generating, _ = update Summarize dismissed
     let dismissedWhileGenerating, _ = update Dismiss generating
-    assertState Idle dismissedWhileGenerating.State
+    assertState (Dismissing (Generating 2)) dismissedWhileGenerating.State
     let late, _ = update (Responded (2, Ok generated)) dismissedWhileGenerating
-    assertState Idle late.State
+    assertState (Dismissing (Generating 2)) late.State
 
 [<Fact; Trait("Task", "T004")>]
 let ``a document or project change resets the summary and drops late results`` () =
@@ -86,29 +86,6 @@ let ``a document or project change resets the summary and drops late results`` (
     // The same project and document reported again keeps the summary.
     let same, _ = update (ReaderChanged (Some project, Some document)) shown
     assertState (Shown generated) same.State
-
-[<Fact; Trait("Task", "T006")>]
-let ``progress of the current request is kept and cleared when it ends`` () =
-    let generating, _ = update Summarize reading
-    let counted, _ = update (Progressed (1, PagesProcessed (12, 40))) generating
-    assertState (Some (PagesProcessed (12, 40))) counted.Progress
-    let combining, _ = update (Progressed (1, Combining)) counted
-    assertState (Some Combining) combining.Progress
-    assertState (Generating 1) combining.State
-    let shown, _ = update (Responded (1, Ok generated)) combining
-    assertState None shown.Progress
-    let dismissed, _ = update Dismiss combining
-    assertState None dismissed.Progress
-
-[<Fact; Trait("Task", "T006")>]
-let ``progress of an older or ended request is dropped`` () =
-    let generating, _ = update Summarize reading
-    let failed, _ = update (Responded (1, Error (ServiceFailed None))) generating
-    let late, _ = update (Progressed (1, PagesProcessed (5, 40))) failed
-    assertState None late.Progress
-    let again, _ = update Summarize failed
-    let old, _ = update (Progressed (1, PagesProcessed (5, 40))) again
-    assertState None old.Progress
 
 let private confirming =
     let generating, _ = update Summarize reading
@@ -152,18 +129,6 @@ let ``confirm and cancel do nothing unless a confirmation is open, and a reader 
     assertState None movedEffect
 
 let private generating = update Summarize reading |> fst
-
-[<Fact; Trait("Task", "T008")>]
-let ``dismissing a running request aborts nothing and drops its late events`` () =
-    let model, effect = update Dismiss generating
-    assertState Idle model.State
-    // Every summary is a server job (F004 T003): there is no stream left to abort.
-    assertState None effect
-    let late, lateEffect = update (Responded (1, Ok generated)) model
-    assertState Idle late.State
-    assertState None lateEffect
-    let progressed, _ = update (Progressed (1, Combining)) model
-    assertState None progressed.Progress
 
 [<Fact; Trait("Task", "T008")>]
 let ``changing document or project aborts nothing and leaves the request to the server`` () =
@@ -515,9 +480,10 @@ let ``dismissing a shown or failed summary sends the delete, anything else sends
     assertState (Some (DeleteSummary (project, document))) shownEffect
     let failed, _ = update (Responded (1, Error (ServiceFailed None))) asked
     assertState (Some (DeleteSummary (project, document))) (snd (update Dismiss failed))
-    // Nothing finished or failed: nothing to delete.
+    // Nothing asked, finished or failed: nothing to delete.
     assertState None (snd (update Dismiss reading))
-    assertState None (snd (update Dismiss asked))
+    // An ask in flight is deleted too (T013).
+    assertState (Some (DeleteSummary (project, document))) (snd (update Dismiss asked))
     let confirming, _ = update (Responded (1, Error (ConfirmationRequired (Plan "me")))) asked
     assertState None (snd (update Dismiss confirming))
 
@@ -596,3 +562,66 @@ let ``a failed stop asks the server what is there so polling resumes, and Stop d
     assertState None (snd (update Stop asked))
     let shown, _ = update (Responded (1, Ok generated)) asked
     assertState None (snd (update Stop shown))
+
+// F004 T013: dismissing while the POST is in flight stops the server job (FR-012).
+
+let private dismissedAsking = update Dismiss generating
+
+[<Fact; Trait("Task", "T013")>]
+let ``dismissing while the ask is in flight sends the delete and waits`` () =
+    let model, effect = dismissedAsking
+    assertState (Dismissing (Generating 1)) model.State
+    assertState (Some (DeleteSummary (project, document))) effect
+    assertState (model, None) (update Summarize model)
+    assertState (model, None) (update Dismiss model)
+
+[<Fact; Trait("Task", "T013")>]
+let ``the answer of a dismissed ask deletes the job again and shows nothing`` () =
+    let waiting, _ = dismissedAsking
+    // The delete answered first: still waiting for the POST.
+    let deleted, deletedEffect = update (Dismissed (project, document, true)) waiting
+    assertState (Dismissing (Generating 1)) deleted.State
+    assertState None deletedEffect
+    for remote in [ RemoteRunning None; RemoteFinished generated; RemoteFailed NoText ] do
+        let answered, effect = update (Accepted (1, project, document, remote)) deleted
+        assertState (Some (DeleteSummary (project, document))) effect
+        assertState (Dismissing (Generating 1)) answered.State
+        let done', doneEffect = update (Dismissed (project, document, true)) answered
+        assertState Idle done'.State
+        assertState None doneEffect
+        // No poll is started and a poll of the earlier watch is dropped.
+        assertState Idle (fst (update (Polled (generating.Watch, Some (RemoteRunning None))) done')).State
+
+[<Fact; Trait("Task", "T013")>]
+let ``the POST answering before the delete still deletes again and waits for both`` () =
+    let waiting, _ = dismissedAsking
+    let answered, effect = update (Accepted (1, project, document, RemoteRunning None)) waiting
+    assertState (Some (DeleteSummary (project, document))) effect
+    let first, _ = update (Dismissed (project, document, true)) answered
+    assertState (Dismissing (Generating 1)) first.State
+    let second, _ = update (Dismissed (project, document, true)) first
+    assertState Idle second.State
+
+[<Fact; Trait("Task", "T013")>]
+let ``a failed POST of a dismissed ask creates no job and ends the dismissal once the delete answered`` () =
+    let waiting, _ = dismissedAsking
+    let failed, effect = update (Responded (1, Error (ServiceFailed None))) waiting
+    assertState None effect
+    assertState (Dismissing (Generating 1)) failed.State
+    let deleted, _ = update (Dismissed (project, document, true)) failed
+    assertState Idle deleted.State
+    // Delete answered first, then the failure.
+    let deletedFirst, _ = update (Dismissed (project, document, true)) waiting
+    let ended, _ = update (Responded (1, Error RequestFailed)) deletedFirst
+    assertState Idle ended.State
+
+[<Fact; Trait("Task", "T013")>]
+let ``leaving after dismissing an ask still deletes the job when the POST answers, and coming back waits`` () =
+    let waiting, _ = dismissedAsking
+    let away, _ = update (ReaderChanged (Some project, None)) waiting
+    let answered, effect = update (Accepted (1, project, document, RemoteRunning None)) away
+    assertState (Some (DeleteSummary (project, document))) effect
+    let back, backEffect = update (ReaderChanged (Some project, Some document)) answered
+    let back, _ = update Refresh back
+    assertState (Dismissing Idle) back.State
+    ignore backEffect

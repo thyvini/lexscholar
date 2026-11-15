@@ -25,13 +25,15 @@ Locks and tokens follow research §3 exactly: one registry lock; every service c
 - [x] T010 [US1] Markers in the document and project lists (research §4, data-model "Status"). **Files**: `src/LexScholar.Domain/Summaries.fs` (status projection and project roll-up: any running → running; else any failed → failed; else any finished → finished), `src/LexScholar.Application/SummaryJobs.fs` (`Snapshot`), `src/LexScholar.Server/SummaryEndpoints.fs` (`GET /api/summaries` from the registry plus `listKeys`), `src/LexScholar.Client/SummaryStatus.fs` (fetched once at start, on every document or project view change (AR 4), after a POST and a DELETE, and every 2 s while any is running; stops when none is), `src/LexScholar.Client/App.fs` (marker next to each document and on each project). **Tests**: `BackgroundSummaryTests.fs` (roll-up rules), `BackgroundSummaryContractTests.fs` (statuses for running, finished (stored) and failed), `SummaryStatusStateTests.fs` (a view change fetches statuses; polling starts and stops; roll-up shown on the project), `BackgroundSummaryJourneyTests.fs` (viewing B, A's marker shows running, release, it shows finished without reload). AR 4 and AR 5 apply. Covers FR-008, SC-008. Depends on T009. Evidence: [`evidence/t010-markers.md`](evidence/t010-markers.md).
 - [x] T011 [P] [US1] Pre-send rules unchanged (FR-006): regression checks with zero fake requests. **Files**: `tests/LexScholar.Server.Tests/PreSendRegressionTests.fs` (each refusal — no text, too little text, over 100 pages — answers as F003 and creates no job (`GET` → `404`, no status); elsewhere service without `confirmSend` → `409 confirmation_required`; plan without confirmation → `409`; local service needs none; in every refusal `FakeChatService` and `FakeOpenAi` recorded zero requests), `tests/LexScholar.Browser.Tests/PreSendJourneyTests.fs` (leaving during confirmation): open confirmation on A, open B, return: idle, zero fake requests. Behavior exists, so a **sensitivity check** instead of RED: skip the confirmation check, uncommitted, and see the tests fail. Covers FR-006, scenario 7. Depends on T003 (may run beside T004–T010: test files only). Evidence: [`evidence/t011-pre-send-regression.md`](evidence/t011-pre-send-regression.md).
 
+- [x] T013 [US1] Dismiss while the ask is in flight stops the job (defect from speckit-analyze C1, FR-012; card `$14f`). **Files**: `src/LexScholar.Client/Summary.fs` (Dismiss in `Generating` sends the DELETE and keeps `Dismissing (Generating r)` with `Draining`; the POST answer deletes the job again; remove the dead `Progressed`), `tests/LexScholar.Browser.Tests/SummaryStateTests.fs`, `tests/LexScholar.Browser.Tests/BackgroundSummaryJourneyTests.fs` (the POST is held in the browser, Dismiss, then released: the fake's held call is cancelled). Behavior was wrong, fix written with its tests: **sensitivity check** instead of RED. Depends on: none (T012 depends on it). Evidence: [`evidence/t013-dismiss-while-generating.md`](evidence/t013-dismiss-while-generating.md).
+
 ## Phase 3: Release gate
 
 - [ ] T012 Manual validation of SC-001–SC-008 (quickstart "Manual validation") in Firefox and Chromium on the owner's real setup (her ChatGPT plan and her configured service). **Files**: `specs/004-background-summaries/evidence/t012-manual-validation.md`. Depends on all. Evidence: `evidence/t012-manual-validation.md`.
 
 ## Dependencies
 
-T001 → T002 (stop-and-re-plan gate) → T003 → T004 → T005 → T006 → T007 → T008 → T009 → T010 ; T003 → T011 ; all → T012.
+T001 → T002 (stop-and-re-plan gate) → T003 → T004 → T005 → T006 → T007 → T008 → T009 → T010 ; T003 → T011 ; T013 (defect fix, no predecessor) ; all → T012.
 
 Parallel: only T011 (its own test files) beside T004–T010. T002–T010 all change `SummaryJobs.fs`, `SummaryEndpoints.fs` or `Summary.fs`, so they run in order.
 
@@ -52,6 +54,6 @@ Parallel: only T011 (its own test files) beside T004–T010. T002–T010 all cha
 | FR-009 | T006 |
 | FR-010 | T006 (dismiss), T009 (removal); export deferred to F002 `$12y` |
 | FR-011 | T007 |
-| FR-012 | T008 |
+| FR-012 | T008, T013 (dismiss while the ask is in flight) |
 | FR-013 | T009 |
 | SC-001–SC-008 | T012 (SC-005: T003; SC-007: T006; SC-008: T010 automated) |
