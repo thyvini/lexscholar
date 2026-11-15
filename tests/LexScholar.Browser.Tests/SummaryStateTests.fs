@@ -170,6 +170,7 @@ let ``abandoning a request is never shown as a failure, even when its fetch ends
     let late, _ = update (Responded (1, Error RequestFailed)) dismissed
     assertState (Dismissing (Generating 1)) late.State
     let settled, _ = update (Dismissed (project, document, true)) late
+    let settled, _ = update (Dismissed (project, document, true)) settled
     assertState Idle settled.State
     let moved, _ = update (ReaderChanged (Some project, None)) generating
     let lateMoved, _ = update (Responded (1, Error (ServiceFailed None))) moved
@@ -610,17 +611,27 @@ let ``the POST answering before the delete still deletes again and waits for bot
     assertState Idle second.State
 
 [<Fact; Trait("Task", "T013")>]
-let ``a failed POST of a dismissed ask creates no job and ends the dismissal once the delete answered`` () =
+let ``a failed POST of a dismissed ask deletes again, since the job may exist, and ends when both deletes answered`` () =
     let waiting, _ = dismissedAsking
-    let failed, effect = update (Responded (1, Error (ServiceFailed None))) waiting
-    assertState None effect
+    let failed, effect = update (Responded (1, Error RequestFailed)) waiting
+    assertState (Some (DeleteSummary (project, document))) effect
     assertState (Dismissing (Generating 1)) failed.State
-    let deleted, _ = update (Dismissed (project, document, true)) failed
-    assertState Idle deleted.State
-    // Delete answered first, then the failure.
-    let deletedFirst, _ = update (Dismissed (project, document, true)) waiting
-    let ended, _ = update (Responded (1, Error RequestFailed)) deletedFirst
+    let first, _ = update (Dismissed (project, document, true)) failed
+    assertState (Dismissing (Generating 1)) first.State
+    let second, _ = update (Dismissed (project, document, true)) first
+    assertState Idle second.State
+
+[<Fact; Trait("Task", "T013")>]
+let ``a failed delete is not forgotten when the other answer arrives last`` () =
+    let waiting, _ = dismissedAsking
+    let answered, _ = update (Accepted (1, project, document, RemoteRunning None)) waiting
+    // The second delete fails first, then the first delete succeeds: the job may still run.
+    let secondFailed, _ = update (Dismissed (project, document, false)) answered
+    assertState (Dismissing (Generating 1)) secondFailed.State
+    let ended, effect = update (Dismissed (project, document, true)) secondFailed
+    assertState true ended.DismissFailed
     assertState Idle ended.State
+    assertState true (match effect with Some (Fetch (_, p, d, false)) -> (p, d) = (project, document) | _ -> false)
 
 [<Fact; Trait("Task", "T013")>]
 let ``leaving after dismissing an ask still deletes the job when the POST answers, and coming back waits`` () =

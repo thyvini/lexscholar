@@ -24,3 +24,8 @@ The journey forces the ordering DELETE-before-POST (the harder case). POST-befor
 ## CI correction
 
 The first CI run failed three older state tests (T002 x2, T010) that asserted the old behavior (Dismiss in flight goes straight to Idle, no effect). They now assert `Dismissing (Generating 1)` with the delete, then Idle once answered. The whole `SummaryStateTests` class passes (50).
+
+## GPT review round 1 (two P1, fixed)
+
+- A failed POST does not prove no job exists (the answer can be lost after the server started it): a dismissed ask is now deleted again after any POST answer, failure included.
+- A failed DELETE while another answer was outstanding was forgotten: `DismissFailed` now keeps it, and the dismissal ends as a failure (restore and fetch) whatever order the answers arrive. Tests added for both. Limit: leaving the document during the dismissal clears the remembered failure.

@@ -141,6 +141,8 @@ let update (message: Message) (model: Model) : Model * Effect option =
     let outstanding (model: Model) project document =
         List.contains (project, document) model.Pending
         || model.Draining |> List.exists (fun (_, p, d) -> (p, d) = (project, document))
+    let drainingOf (model: Model) request =
+        model.Draining |> List.tryPick (fun (r, p, d) -> if r = request then Some (p, d) else None)
     let removeOne pair pending =
         match List.tryFindIndex ((=) pair) pending with
         | Some index -> List.removeAt index pending
@@ -188,9 +190,11 @@ let update (message: Message) (model: Model) : Model * Effect option =
         let model = { model with Pending = removeOne (project, document) model.Pending }
         match model.State with
         // Another DELETE or the POST answer of this document is still to come: keep waiting.
-        | Dismissing _ when (model.Project, model.Document) = (Some project, Some document) && outstanding model project document -> model, None
+        // A failure of one of them is remembered: the job may still run, so the end is a failure whatever the later answers say.
+        | Dismissing _ when (model.Project, model.Document) = (Some project, Some document) && outstanding model project document ->
+            { model with DismissFailed = model.DismissFailed || not succeeded }, None
         | Dismissing previous when (model.Project, model.Document) = (Some project, Some document) ->
-            if succeeded then { model with State = Idle; DismissFailed = false }, None
+            if succeeded && not model.DismissFailed then { model with State = Idle; DismissFailed = false }, None
             else
                 match previous with
                 // She left and came back meanwhile (or stopped a running or requested summary): ask the server what is there, which also resumes polling.
@@ -221,15 +225,11 @@ let update (message: Message) (model: Model) : Model * Effect option =
     | Choose choice ->
         let state = match model.State with Failed _ -> Idle | state -> state
         { model with Choice = Some choice; State = state }, None
-    // The POST of a dismissed request answered: the job it created (or found) is deleted again, so none is left running.
-    | Accepted (request, project, document, _) when model.Draining |> List.exists (fun (r, _, _) -> r = request) ->
+    // The POST of a dismissed request answered, with a job or with a failure: a failure does not prove that no job
+    // was created (the answer may be lost after the server started it), so the pair is deleted again either way.
+    | Accepted (request, _, _, _) | Responded (request, Error _) when drainingOf model request |> Option.isSome ->
+        let project, document = drainingOf model request |> Option.get
         { model with Draining = model.Draining |> List.filter (fun (r, _, _) -> r <> request); Pending = (project, document) :: model.Pending }, Some (DeleteSummary (project, document))
-    // It failed: no job exists, and the dismissal ends once its DELETE has answered too.
-    | Responded (request, Error _) when model.Draining |> List.exists (fun (r, _, _) -> r = request) ->
-        let model = { model with Draining = model.Draining |> List.filter (fun (r, _, _) -> r <> request) }
-        match model.State, model.Project, model.Document with
-        | Dismissing _, Some project, Some document when not (outstanding model project document) -> { model with State = Idle }, None
-        | _ -> model, None
     // The POST was answered with the job's state: show it, or wait for it by polling (the job is the server's).
     // Also when she left and came back meanwhile (state Idle): the answer is for the document now open, so it is kept.
     | Accepted (request, project, document, remote) when (model.Project, model.Document) = (Some project, Some document) && (model.State = Generating request || (model.State = Idle && model.Claim = request)) ->
