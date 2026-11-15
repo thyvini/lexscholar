@@ -409,3 +409,14 @@ let ``a POST answered after she left and came back still shows the job`` () =
     // The answer for another document is not shown here.
     let other, _ = update (Accepted (1, project, Guid.NewGuid(), RemoteFinished generated)) none
     assertState Idle other.State
+
+[<Fact; Trait("Task", "T002")>]
+let ``a POST answered after she dismissed is not shown`` () =
+    let dismissed, _ = update Dismiss asked
+    let late, effect = update (Accepted (1, project, document, RemoteFinished generated)) dismissed
+    assertState Idle late.State
+    assertState None effect
+    // A later request is not claimed by an older answer.
+    let again, _ = update Summarize dismissed
+    let old, _ = update (Accepted (1, project, document, RemoteFinished generated)) again
+    assertState again.State old.State

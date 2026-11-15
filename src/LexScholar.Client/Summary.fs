@@ -86,7 +86,9 @@ type Model =
       Watch: int
       /// Whether the request in flight is read as a stream (anything but the configured service, whose job is the server's):
       /// only a stream is aborted when she leaves, so the POST of a background job always reaches the server.
-      Streaming: bool }
+      Streaming: bool
+      /// The request whose job answer may still be shown after she left and came back; dismissing voids it (0).
+      Claim: int }
 
 type Message =
     | Summarize
@@ -118,7 +120,7 @@ type Effect =
     /// Fetch the open document's state now (`delay` false) or after the polling interval (`delay` true).
     | Fetch of watch: int * project: Guid * document: Guid * delay: bool
 
-let initial = { Project = None; Document = None; State = Idle; Available = { Plan = false; Configured = false }; Choice = None; Progress = None; Request = 0; Watch = 0; Streaming = true }
+let initial = { Project = None; Document = None; State = Idle; Available = { Plan = false; Configured = false }; Choice = None; Progress = None; Request = 0; Watch = 0; Streaming = true; Claim = 0 }
 
 let update (message: Message) (model: Model) : Model * Effect option =
     // A late result is dropped because only `Generating request` accepts its own number,
@@ -131,7 +133,7 @@ let update (message: Message) (model: Model) : Model * Effect option =
     // Every request takes a fresh number.
     let start project document destination confirmed =
         let request = model.Request + 1
-        { model with State = Generating request; Progress = None; Request = request; Streaming = (destination <> Some UseConfigured) }, Some (Send (request, project, document, destination, confirmed))
+        { model with State = Generating request; Progress = None; Request = request; Streaming = (destination <> Some UseConfigured); Claim = request }, Some (Send (request, project, document, destination, confirmed))
     // One available destination is used; with two, only her choice (none: nothing can be sent yet).
     let destination =
         match model.Available with
@@ -147,7 +149,9 @@ let update (message: Message) (model: Model) : Model * Effect option =
             | Some destination -> start project document destination None
             | None -> model, None
         | _ -> model, None
-    | Dismiss -> abandon model
+    | Dismiss ->
+        let abandoned, effect = abandon model
+        { abandoned with Claim = 0 }, effect
     | ConfirmSend ->
         match model.Project, model.Document, model.State with
         | Some project, Some document, Confirming (Service (host, name)) -> start project document (Some UseConfigured) (Some (ConfirmedService (host, name)))
@@ -174,13 +178,13 @@ let update (message: Message) (model: Model) : Model * Effect option =
     | Progressed _ -> model, None
     // The POST was answered with the job's state: show it, or wait for it by polling (the job is the server's).
     // Also when she left and came back meanwhile (state Idle): the answer is for the document now open, so it is kept.
-    | Accepted (request, project, document, remote) when (model.Project, model.Document) = (Some project, Some document) && (model.State = Generating request || model.State = Idle) ->
+    | Accepted (request, project, document, remote) when (model.Project, model.Document) = (Some project, Some document) && (model.State = Generating request || (model.State = Idle && model.Claim = request)) ->
         match remote with
-        | RemoteFinished generated -> { model with State = Shown generated; Progress = None }, None
-        | RemoteFailed failure -> { model with State = Failed failure; Progress = None }, None
+        | RemoteFinished generated -> { model with State = Shown generated; Progress = None; Claim = 0 }, None
+        | RemoteFailed failure -> { model with State = Failed failure; Progress = None; Claim = 0 }, None
         | RemoteRunning ->
             let watch = model.Watch + 1
-            { model with State = Running; Progress = None; Watch = watch }, Some (Fetch (watch, project, document, true))
+            { model with State = Running; Progress = None; Watch = watch; Claim = 0 }, Some (Fetch (watch, project, document, true))
     // Back on a document (or asked after a view change): the state of its job, if the server has one.
     | Refresh ->
         match model.Project, model.Document, model.State with
