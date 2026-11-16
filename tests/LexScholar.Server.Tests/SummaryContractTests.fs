@@ -128,22 +128,48 @@ let ``documents that cannot be summarized are 422 and nothing is sent`` (fixture
     withDocument fixtureName (fun harness fake project document ->
         expectProblem fake harness.Root (enum<HttpStatusCode> 422) code (summarize harness.Client project document))
 
-/// Runs the endpoint against the fake with the given settings; returns status, parsed NDJSON lines and the fake.
+/// The configured path runs in the background (F004): the POST answers 202. Waits for the job to end (a handshake,
+/// no polling) and returns the POST's status and the job's state as `GET .../summary` reports it.
+let settledState (harness: TestHarness) (project: Guid) (document: Guid) (postStatus: HttpStatusCode, postText: string) =
+    if postStatus <> HttpStatusCode.Accepted then postStatus, postText
+    else
+        SummaryJobsAccess.settled harness.App project document |> fun task -> task.WaitAsync(TimeSpan.FromSeconds 30.).GetAwaiter().GetResult()
+        let status, state = send harness.Client HttpMethod.Get $"/api/projects/{project}/documents/{document}/summary" None
+        Assert.Equal(HttpStatusCode.OK, status)
+        postStatus, state
+
+/// A job state as the F003 event it replaced (`summary` or `failed`), so the same assertions apply.
+let asEvent (state: string) : JsonElement =
+    use document = JsonDocument.Parse state
+    let root = document.RootElement
+    use stream = new MemoryStream()
+    (
+        use writer = new Utf8JsonWriter(stream)
+        writer.WriteStartObject()
+        let source =
+            match root.GetProperty("status").GetString() with
+            | "finished" -> writer.WriteString("type", "summary"); root.GetProperty "summary"
+            | _ -> writer.WriteString("type", "failed"); root
+        for property in source.EnumerateObject() do
+            if property.Name <> "status" then property.WriteTo writer
+        writer.WriteEndObject())
+    JsonDocument.Parse(stream.ToArray()).RootElement.Clone()
+
+/// Runs the endpoint against the fake with the given settings; returns the POST's status, the job's final state as one event and the fake.
 let private summarizeWith fixtureName (script: ChatScript) extra =
     let fake = new FakeChatService(script)
     use harness = TestHarness.Start(settings = settings @ extra, summaryHandler = fake)
     let project = seedProject harness.Root
     let document = import harness.Client fixtureName
     associate harness.Client project document
-    let status, text = summarize harness.Client project document
-    let events = text.Split('\n', StringSplitOptions.RemoveEmptyEntries) |> Array.map (fun line -> JsonDocument.Parse(line).RootElement.Clone())
-    status, events, fake, document
+    let status, state = summarize harness.Client project document |> settledState harness project document
+    status, [| asEvent state |], fake, document
 
 [<Fact; Trait("Task", "T003")>]
 let ``a summary event has the contract shape and the default request body has only model and messages`` () =
     let answer = """{"points":[{"text":"Main idea","pages":[1,2]}]}"""
     let status, events, fake, document = summarizeWith "article-en.pdf" (Reply answer) []
-    Assert.Equal(HttpStatusCode.OK, status)
+    Assert.Equal(HttpStatusCode.Accepted, status)
     let event = Assert.Single(events)
     Assert.Equal("summary", event.GetProperty("type").GetString())
     Assert.Equal(document, event.GetProperty("documentId").GetGuid())
@@ -238,36 +264,40 @@ let ``a response that breaks while its body is read is a service_failed event`` 
     let project = seedProject harness.Root
     let document = import harness.Client "article-en.pdf"
     associate harness.Client project document
-    let status, text = summarize harness.Client project document
-    Assert.Equal(HttpStatusCode.OK, status)
-    use json = JsonDocument.Parse(text.Trim())
-    Assert.Equal("service_failed", json.RootElement.GetProperty("code").GetString())
+    let status, state = summarize harness.Client project document |> settledState harness project document
+    Assert.Equal(HttpStatusCode.Accepted, status)
+    Assert.Equal("service_failed", (asEvent state).GetProperty("code").GetString())
 
 [<Fact; Trait("Task", "T006")>]
-let ``a 40-page document streams progress to 40 of 40, then combining, then one summary`` () =
+let ``a 40-page document is summarized in several calls, then combined, into one summary`` () =
     // Later map calls cite page 1, which is not in their chunk, so only the first chunk yields a point;
-    // the combine call may cite page 1.
-    let script n = Reply """{"points":[{"text":"Main idea","pages":[1]}]}"""
-    let status, events, fake, _ = summarizeWith "long-40.pdf" (script 0) []
-    Assert.Equal(HttpStatusCode.OK, status)
-    let kinds = events |> Array.map (fun e -> e.GetProperty("type").GetString()) |> Array.toList
-    Assert.Equal("summary", List.last kinds)
-    Assert.Equal(1, kinds |> List.filter ((=) "summary") |> List.length)
-    Assert.Contains("combining", kinds)
-    let progress = events |> Array.filter (fun e -> e.GetProperty("type").GetString() = "progress")
-    Assert.True(progress.Length >= 3, "several chunks mean several progress events")
-    let counts = progress |> Array.map (fun e -> e.GetProperty("pagesProcessed").GetInt32())
-    Assert.Equal<int[]>(Array.sort counts, counts)
-    Assert.Equal(40, counts |> Array.last)
-    Assert.All(progress, fun e -> Assert.Equal(40, e.GetProperty("totalPages").GetInt32()))
-    // Progress precedes the combine step and the combine call is the last request.
-    Assert.True(List.findIndex ((=) "combining") kinds > (List.rev kinds |> List.findIndex ((=) "progress") |> fun i -> kinds.Length - 1 - i))
-    Assert.Equal(progress.Length, fake.Requests.Length) // one map call per chunk (progress has an extra opening event)
+    // the combine call may cite page 1. The first call answers and the second is held, so the job's progress is visible.
+    let reply = """{"points":[{"text":"Main idea","pages":[1]}]}"""
+    let fake = new FakeChatService(fun n -> if n = 2 then Hold reply else Reply reply)
+    use harness = TestHarness.Start(settings = settings, summaryHandler = fake)
+    let project = seedProject harness.Root
+    let document = import harness.Client "long-40.pdf"
+    associate harness.Client project document
+    let status, text = summarize harness.Client project document
+    Assert.Equal(HttpStatusCode.Accepted, status)
+    fake.Waiting.WaitAsync(TimeSpan.FromSeconds 30.).GetAwaiter().GetResult()
+    let path = $"/api/projects/{project}/documents/{document}/summary"
+    let progress () =
+        let _, state = send harness.Client HttpMethod.Get path None
+        use json = JsonDocument.Parse state
+        match json.RootElement.TryGetProperty "pagesProcessed" with
+        | true, value -> value.GetInt32()
+        | _ -> -1
+    Assert.True(progress () >= 1, "the first chunk's pages are reported while the second call is held")
+    fake.Release()
+    let status, state = (status, text) |> settledState harness project document
+    Assert.Equal("summary", (asEvent state).GetProperty("type").GetString())
+    Assert.True(fake.Requests.Length >= 3, "several chunks mean several map calls, then a combine call")
 
 let private elsewhere = [ "LexScholar:Summary:Endpoint", "http://summary.example.test:8080/v1"; "LexScholar:Summary:Model", "gpt" ]
 let private answer = """{"points":[{"text":"Main idea","pages":[1,2]}]}"""
 
-/// Posts `body` to the summary endpoint of an imported fixture; returns status, body text and the fake.
+/// Posts `body` to the summary endpoint of an imported fixture; returns the POST's status, the answer (the job's final state for a 202) and the fake.
 let private summarizeBody fixtureName endpointSettings (body: string) =
     let fake = new FakeChatService(Reply answer)
     use harness = TestHarness.Start(settings = endpointSettings, summaryHandler = fake)
@@ -277,6 +307,7 @@ let private summarizeBody fixtureName endpointSettings (body: string) =
     let status, text =
         send harness.Client HttpMethod.Post $"/api/projects/{project}/documents/{document}/summary"
             (Some (new StringContent(body, Encoding.UTF8, "application/json")))
+        |> settledState harness project document
     status, text, fake
 
 [<Theory; Trait("Task", "T007")>]
@@ -315,10 +346,10 @@ let ``local checks come before the confirmation`` () =
 let ``a service elsewhere with confirmation of that host and model gets the text and answers with a summary`` () =
     let status, text, fake =
         summarizeBody "article-en.pdf" elsewhere """{"confirmSend":true,"confirmedHost":"summary.example.test:8080","confirmedModel":"gpt"}"""
-    Assert.Equal(HttpStatusCode.OK, status)
-    use json = JsonDocument.Parse(text.Split('\n', StringSplitOptions.RemoveEmptyEntries).[0])
-    Assert.Equal("summary", json.RootElement.GetProperty("type").GetString())
-    Assert.Equal("summary.example.test:8080", json.RootElement.GetProperty("serviceHost").GetString())
+    Assert.Equal(HttpStatusCode.Accepted, status)
+    let event = asEvent text
+    Assert.Equal("summary", event.GetProperty("type").GetString())
+    Assert.Equal("summary.example.test:8080", event.GetProperty("serviceHost").GetString())
     let request = Assert.Single(fake.Requests)
     Assert.Equal(Uri("http://summary.example.test:8080/v1/chat/completions"), request.Uri)
 
@@ -329,32 +360,9 @@ let ``a service elsewhere with confirmation of that host and model gets the text
 [<InlineData("""[]""")>]
 let ``a local service ignores confirmSend`` (body: string) =
     let status, text, fake = summarizeBody "article-en.pdf" settings body
-    Assert.Equal(HttpStatusCode.OK, status)
-    Assert.Contains("\"type\":\"summary\"", text)
+    Assert.Equal(HttpStatusCode.Accepted, status)
+    Assert.Equal("summary", (asEvent text).GetProperty("type").GetString())
     Assert.Single(fake.Requests) |> ignore
-
-[<Fact; Trait("Task", "T008")>]
-let ``an aborted request cancels the service call and sends no further request`` () =
-    // First map call answers, the second waits; the client then abandons the request.
-    let fake = new FakeChatService(fun n -> if n = 1 then Reply """{"points":[{"text":"Main idea","pages":[1]}]}""" else WaitUntilCancelled)
-    let run () =
-        use harness = TestHarness.Start(settings = settings, summaryHandler = fake)
-        let project = seedProject harness.Root
-        let document = import harness.Client "long-40.pdf"
-        associate harness.Client project document
-        use abandon = new Threading.CancellationTokenSource()
-        use message = new HttpRequestMessage(HttpMethod.Post, $"/api/projects/{project}/documents/{document}/summary")
-        message.Headers.TryAddWithoutValidation("Origin", harness.Client.BaseAddress.GetLeftPart(UriPartial.Authority)) |> ignore
-        message.Headers.TryAddWithoutValidation("X-CSRF-TOKEN", token harness.Client) |> ignore
-        message.Content <- new StringContent("""{"confirmSend":false}""", Encoding.UTF8, "application/json")
-        let response = harness.Client.Send(message, HttpCompletionOption.ResponseHeadersRead, abandon.Token)
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode)
-        fake.Waiting.WaitAsync(TimeSpan.FromSeconds 30.).GetAwaiter().GetResult()
-        abandon.Cancel()
-        response.Dispose()
-        fake.Cancelled.WaitAsync(TimeSpan.FromSeconds 30.).GetAwaiter().GetResult()
-    run () // disposing the host waits for the request to end
-    Assert.Equal(2, fake.Requests.Length)
 
 type private FailingHandler(failure: exn) =
     inherit HttpMessageHandler()
@@ -365,12 +373,12 @@ let private failedEventFor (handler: HttpMessageHandler) =
     let project = seedProject harness.Root
     let document = import harness.Client "article-en.pdf"
     associate harness.Client project document
-    let status, text = summarize harness.Client project document
-    Assert.Equal(HttpStatusCode.OK, status)
-    use json = JsonDocument.Parse(text.Trim())
-    Assert.Equal("failed", json.RootElement.GetProperty("type").GetString())
-    Assert.Equal("service_failed", json.RootElement.GetProperty("code").GetString())
-    json.RootElement.GetProperty("detail").GetString()
+    let status, state = summarize harness.Client project document |> settledState harness project document
+    Assert.Equal(HttpStatusCode.Accepted, status)
+    let event = asEvent state
+    Assert.Equal("failed", event.GetProperty("type").GetString())
+    Assert.Equal("service_failed", event.GetProperty("code").GetString())
+    event.GetProperty("detail").GetString()
 
 [<Fact; Trait("Task", "T010")>]
 let ``an unreachable service and a timeout are service_failed events in their own words`` () =

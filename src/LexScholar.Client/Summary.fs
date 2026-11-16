@@ -54,12 +54,23 @@ type Destination =
 /// Which destinations the host offers right now, and the one she chose when there are two.
 type Available = { Plan: bool; Configured: bool }
 
+/// What the server's job registry holds for the open document (`SummaryState` of the contract).
+type Remote =
+    | RemoteRunning of Progress option
+    | RemoteFinished of Generated
+    | RemoteFailed of Failure
+
 type State =
     | Idle
     | Confirming of ConfirmTarget
+    /// The POST is in flight.
     | Generating of request: int
+    /// The server runs the summary in the background; the client polls for it.
+    | Running
     | Shown of Generated
     | Failed of Failure
+    /// The DELETE of a finished, failed, running or still-requested summary (the previous state) is in flight: nothing can be asked until it answers.
+    | Dismissing of previous: State
 
 type Model =
     { /// The open document the summary belongs to.
@@ -72,17 +83,39 @@ type Model =
       /// The latest progress of the running request, if any.
       Progress: Progress option
       /// The latest request; only its result is used.
-      Request: int }
+      Request: int
+      /// The latest watch of the open document's job; only its fetches are used.
+      Watch: int
+      /// The request whose job answer may still be shown after she left and came back; dismissing voids it (0).
+      Claim: int
+      /// The last dismissal was refused or failed: the summary is still there and she is told.
+      DismissFailed: bool
+      /// Pairs whose DELETE has not answered yet, also after she left the document: coming back waits for the answer.
+      Pending: (Guid * Guid) list
+      /// Requests dismissed while their POST was in flight: when the POST answers, the job it may have created is deleted too.
+      Draining: (int * Guid * Guid) list
+      /// Pairs with a failed DELETE not reported yet: the job may still run, so the dismissal ends as a failure however the other answers
+      /// arrive, also after she left the document (reported when she is back).
+      Failures: (Guid * Guid) list }
 
 type Message =
     | Summarize
     | Dismiss
+    /// Stops the running summary on the server.
+    | Stop
+    /// The answer to the DELETE of the pair's summary (`DeleteSummary`).
+    | Dismissed of project: Guid * document: Guid * succeeded: bool
     | ConfirmSend
     | CancelSend
     | DestinationsChanged of Available
     | Choose of Destination
-    | Progressed of request: int * Progress
     | Responded of request: int * Result<Generated, Failure>
+    /// The POST was answered with a job's state (202, or 200 when one already exists).
+    | Accepted of request: int * project: Guid * document: Guid * Remote
+    /// The open document's state was asked for after a view change (`Fetch` effect).
+    | Refresh
+    /// A state fetched for the open document by watch number; `None` is 404 (nothing there).
+    | Polled of watch: int * Remote option
     /// The reader's project and open document, after any change.
     | ReaderChanged of project: Guid option * document: Guid option
 
@@ -93,22 +126,34 @@ type Confirmed =
 
 type Effect =
     | Send of request: int * project: Guid * document: Guid * destination: Destination option * confirmed: Confirmed option
-    /// Abandon the running request: its fetch is aborted and the server stops (FR-009).
-    | Cancel of request: int
+    /// Fetch the open document's state now (`delay` false) or after the polling interval (`delay` true).
+    | Fetch of watch: int * project: Guid * document: Guid * delay: bool
+    /// Dismissing a finished or failed summary deletes it on the server (F004 FR-010): otherwise asking again returns the old one.
+    | DeleteSummary of project: Guid * document: Guid
 
-let initial = { Project = None; Document = None; State = Idle; Available = { Plan = false; Configured = false }; Choice = None; Progress = None; Request = 0 }
+let initial = { Project = None; Document = None; State = Idle; Available = { Plan = false; Configured = false }; Choice = None; Progress = None; Request = 0; Watch = 0; Claim = 0; DismissFailed = false; Pending = []; Draining = []; Failures = [] }
 
 let update (message: Message) (model: Model) : Model * Effect option =
     // A late result is dropped because only `Generating request` accepts its own number,
     // and every new request takes a fresh one.
-    let reset model = { model with State = Idle; Progress = None }
-    // Leaving a running request aborts it (FR-009); other states have nothing in flight.
-    let abandon model =
-        reset model, (match model.State with Generating request -> Some (Cancel request) | _ -> None)
+    // Any change of view or dismissal also ends the watch of the server's job: its late fetches are dropped.
+    let reset model = { model with State = Idle; Progress = None; Watch = model.Watch + 1 }
+    // Leaving never aborts the POST: the job is the server's (F004), and the answer is kept for `Claim`.
+    let abandon model = reset model, None
+    // A DELETE or a POST answer of the pair is still outstanding: she cannot ask again until both have answered.
+    let outstanding (model: Model) project document =
+        List.contains (project, document) model.Pending
+        || model.Draining |> List.exists (fun (_, p, d) -> (p, d) = (project, document))
+    let drainingOf (model: Model) request =
+        model.Draining |> List.tryPick (fun (r, p, d) -> if r = request then Some (p, d) else None)
+    let removeOne pair pending =
+        match List.tryFindIndex ((=) pair) pending with
+        | Some index -> List.removeAt index pending
+        | None -> pending
     // Every request takes a fresh number.
     let start project document destination confirmed =
         let request = model.Request + 1
-        { model with State = Generating request; Progress = None; Request = request }, Some (Send (request, project, document, destination, confirmed))
+        { model with State = Generating request; Progress = None; Request = request; Claim = request }, Some (Send (request, project, document, destination, confirmed))
     // One available destination is used; with two, only her choice (none: nothing can be sent yet).
     let destination =
         match model.Available with
@@ -124,7 +169,46 @@ let update (message: Message) (model: Model) : Model * Effect option =
             | Some destination -> start project document destination None
             | None -> model, None
         | _ -> model, None
-    | Dismiss -> abandon model
+    // Stopping a running summary is a DELETE like dismissing; she waits for its answer and cannot ask meanwhile.
+    | Stop ->
+        match model.Project, model.Document, model.State with
+        | Some project, Some document, Running ->
+            let abandoned, _ = abandon model
+            { abandoned with State = Dismissing Running; Claim = 0; DismissFailed = false; Pending = (project, document) :: model.Pending }, Some (DeleteSummary (project, document))
+        | _ -> model, None
+    | Dismiss when (match model.State with Dismissing _ -> true | _ -> false) -> model, None
+    | Dismiss ->
+        let abandoned, effect = abandon model
+        match model.Project, model.Document, model.State with
+        // A finished or failed summary is the server's too: dismissing deletes it there, or asking again returns the old one.
+        // Until the server answers she sees "Dismissing" and cannot ask, so the old summary can never come back or be
+        // deleted after a new one; a failed DELETE restores the summary and says so.
+        | Some project, Some document, (Shown _ | Failed _) ->
+            { abandoned with State = Dismissing model.State; Claim = 0; DismissFailed = false; Pending = (project, document) :: model.Pending }, Some (DeleteSummary (project, document))
+        // The POST is in flight and the job may not exist yet: the DELETE goes now, and again when the POST answers (`Draining`).
+        | Some project, Some document, Generating request ->
+            { abandoned with State = Dismissing model.State; Claim = 0; DismissFailed = false; Pending = (project, document) :: model.Pending; Draining = (request, project, document) :: model.Draining }, Some (DeleteSummary (project, document))
+        | _ -> { abandoned with Claim = 0 }, effect
+    | Dismissed (project, document, succeeded) ->
+        let model =
+            { model with
+                Pending = removeOne (project, document) model.Pending
+                Failures = if succeeded || List.contains (project, document) model.Failures then model.Failures else (project, document) :: model.Failures }
+        let failed = List.contains (project, document) model.Failures
+        match model.State with
+        // Another DELETE or the POST answer of this document is still to come: keep waiting.
+        | Dismissing _ when (model.Project, model.Document) = (Some project, Some document) && outstanding model project document -> model, None
+        | Dismissing previous when (model.Project, model.Document) = (Some project, Some document) ->
+            let model = { model with Failures = model.Failures |> List.filter (fun pair -> pair <> (project, document)) }
+            if not failed then { model with State = Idle; DismissFailed = false }, None
+            else
+                match previous with
+                // She left and came back meanwhile (or stopped a running or requested summary): ask the server what is there, which also resumes polling.
+                | Idle | Running | Generating _ ->
+                    let watch = model.Watch + 1
+                    { model with State = Idle; DismissFailed = true; Watch = watch }, Some (Fetch (watch, project, document, false))
+                | _ -> { model with State = previous; DismissFailed = true }, None
+        | _ -> model, None
     | ConfirmSend ->
         match model.Project, model.Document, model.State with
         | Some project, Some document, Confirming (Service (host, name)) -> start project document (Some UseConfigured) (Some (ConfirmedService (host, name)))
@@ -147,8 +231,42 @@ let update (message: Message) (model: Model) : Model * Effect option =
     | Choose choice ->
         let state = match model.State with Failed _ -> Idle | state -> state
         { model with Choice = Some choice; State = state }, None
-    | Progressed (request, progress) when model.State = Generating request -> { model with Progress = Some progress }, None
-    | Progressed _ -> model, None
+    // The POST of a dismissed request answered, with a job or with a failure: a failure does not prove that no job
+    // was created (the answer may be lost after the server started it), so the pair is deleted again either way.
+    | Accepted (request, _, _, _) | Responded (request, Error _) when drainingOf model request |> Option.isSome ->
+        let project, document = drainingOf model request |> Option.get
+        { model with Draining = model.Draining |> List.filter (fun (r, _, _) -> r <> request); Pending = (project, document) :: model.Pending }, Some (DeleteSummary (project, document))
+    // The POST was answered with the job's state: show it, or wait for it by polling (the job is the server's).
+    // Also when she left and came back meanwhile (state Idle): the answer is for the document now open, so it is kept.
+    | Accepted (request, project, document, remote) when (model.Project, model.Document) = (Some project, Some document) && (model.State = Generating request || (model.State = Idle && model.Claim = request)) ->
+        match remote with
+        | RemoteFinished generated -> { model with State = Shown generated; Progress = None; Claim = 0 }, None
+        | RemoteFailed failure -> { model with State = Failed failure; Progress = None; Claim = 0 }, None
+        | RemoteRunning progress ->
+            let watch = model.Watch + 1
+            { model with State = Running; Progress = progress; Watch = watch; Claim = 0 }, Some (Fetch (watch, project, document, true))
+    // Back on a document (or asked after a view change): the state of its job, if the server has one.
+    | Refresh ->
+        match model.Project, model.Document, model.State with
+        // Her delete of this summary has not answered yet: wait for it rather than fetch what is being deleted.
+        | Some project, Some document, Idle when outstanding model project document ->
+            { model with State = Dismissing Idle }, None
+        // A delete failed while she was away: the job may still run, so say so and ask what is there.
+        | Some project, Some document, Idle when List.contains (project, document) model.Failures ->
+            let watch = model.Watch + 1
+            { model with Watch = watch; DismissFailed = true; Failures = model.Failures |> List.filter (fun pair -> pair <> (project, document)) }, Some (Fetch (watch, project, document, false))
+        | Some project, Some document, Idle ->
+            let watch = model.Watch + 1
+            { model with Watch = watch }, Some (Fetch (watch, project, document, false))
+        | _ -> model, None
+    | Polled (watch, remote) when watch = model.Watch && (model.State = Idle || model.State = Running) ->
+        match remote, model.Project, model.Document with
+        | Some (RemoteRunning progress), Some project, Some document -> { model with State = Running; Progress = progress }, Some (Fetch (watch, project, document, true))
+        | Some (RemoteFinished generated), _, _ -> { model with State = Shown generated; Progress = None }, None
+        | Some (RemoteFailed failure), _, _ -> { model with State = Failed failure; Progress = None }, None
+        | _ -> { model with State = Idle; Progress = None }, None
+    | Polled _ -> model, None
+    | Accepted _ -> model, None
     | Responded (request, result) when model.State = Generating request ->
         match result with
         | Ok generated -> { model with State = Shown generated; Progress = None }, None
@@ -156,12 +274,14 @@ let update (message: Message) (model: Model) : Model * Effect option =
         | Error failure -> { model with State = Failed failure; Progress = None }, None
     | ReaderChanged (project, document) when (project, document) <> (model.Project, model.Document) ->
         let abandoned, effect = abandon model
-        { abandoned with Project = project; Document = document }, effect
+        { abandoned with Project = project; Document = document; DismissFailed = false }, effect
     | _ -> model, None
 
-/// Follows the reader's project and open document; leaving a running request's document cancels it.
-let followReader (reader: Reader.Model) (model: Model) : Model * Effect option =
-    update (ReaderChanged (reader.Project, reader.Open |> Option.map (fun document -> document.Id))) model
+/// Follows the reader's project and open document; a newly opened document asks the server for the state of its summary job.
+let followReader (reader: Reader.Model) (model: Model) : Model * Effect list =
+    let moved, cancel = update (ReaderChanged (reader.Project, reader.Open |> Option.map (fun document -> document.Id))) model
+    let refreshed, fetch = if moved = model then moved, None else update Refresh moved
+    refreshed, List.choose id [ cancel; fetch ]
 
 /// Page numbers as ranges for the context line: "pages 1–3, 5" (a single page is "page 5").
 let pageRanges (pages: int list) : string =

@@ -23,14 +23,6 @@ let private notAssociated directory projectId documentId =
     | Ok associations -> not (associations |> List.exists (fun (item, _) -> item.DocumentId = documentId))
     | Error _ -> true
 
-/// Writes one NDJSON event and flushes it, so progress reaches the client as it happens.
-let private write (context: HttpContext) (event: obj) : Task<unit> = task {
-    do! context.Response.WriteAsync(JsonSerializer.Serialize(event, JsonSerializerOptions.Web) + "\n", context.RequestAborted)
-    do! context.Response.Body.FlushAsync(context.RequestAborted) }
-
-let private failed context code detail (omitted: int option) : Task<unit> =
-    write context (box {| ``type`` = "failed"; code = code; detail = detail; omittedPoints = omitted |})
-
 /// The `failed` code of a service error (contract: F003's `service_failed` plus the plan's three).
 let private failureCode : Summarize.ServiceError -> string = function
     | Summarize.ServiceError.UsageLimitReached -> "usage_limit_reached"
@@ -49,55 +41,79 @@ let private serviceClient (context: HttpContext) (summary: SummaryConfiguration)
     | null -> new HttpClient(ChatCompletions.createHandler summary.Endpoint, true)
     | injected -> new HttpClient(injected, false)
 
-let private summaryEvent documentId (serviceHost: string) (model: string) (pages: ReadablePages) (validated: ValidatedPoints) : obj =
-    box {| ``type`` = "summary"
-           documentId = documentId
-           points = validated.Points |> List.map (fun point -> {| text = point.Text; pages = point.Pages |})
-           pagesCovered = pages.Readable |> List.map (fun page -> page.Number)
-           unreadablePages = pages.Unreadable
-           omittedPoints = validated.Omitted
-           generatedAt = DateTimeOffset.UtcNow
-           serviceHost = serviceHost
-           model = model |}
+/// `SummaryState` of the contract for a job's state.
+let private stateJson (state: JobState) : obj =
+    match state with
+    | JobState.Running None -> box {| status = "running" |}
+    | JobState.Running (Some (Progress.Pages (processed, total))) -> box {| status = "running"; pagesProcessed = processed; totalPages = total |}
+    | JobState.Running (Some Progress.Combining) -> box {| status = "running"; combining = true |}
+    | JobState.Finished summary ->
+        box {| status = "finished"
+               summary =
+                {| documentId = summary.DocumentId
+                   points = summary.Points |> List.map (fun point -> {| text = point.Text; pages = point.Pages |})
+                   pagesCovered = summary.PagesCovered
+                   unreadablePages = summary.UnreadablePages
+                   omittedPoints = summary.OmittedPoints
+                   generatedAt = summary.GeneratedAt
+                   serviceHost = summary.ServiceHost
+                   model = summary.Model |} |}
+    | JobState.Failed (code, detail, omitted) ->
+        box {| status = "failed"; code = code; detail = detail; omittedPoints = (match omitted with Some count -> Nullable count | None -> Nullable()) |}
 
-/// Runs the summary through `complete` and writes the NDJSON events. The caller has passed every check.
-let private summarizeOnce (context: HttpContext) (token: System.Threading.CancellationToken) (ended: Summarize.ServiceError -> Task<unit>) (maxChunkCharacters: int) (complete: Summarize.ChatMessage list -> System.Threading.CancellationToken -> Task<Result<string, Summarize.ServiceError>>) (serviceHost: string) (model: string) documentId (pages: ReadablePages) : Task<IResult> = task {
-    let logger = summaryLogger context
-    context.Response.ContentType <- "application/x-ndjson"
+let private stateResult (status: int) (state: JobState) : IResult = Results.Json(stateJson state, statusCode = Nullable status)
+
+/// The job's body (research §1, §3): runs the summary on the job's own token and reports into the registry.
+/// Nothing here touches the request, which is long gone. A change of state is ignored when the job was replaced or stopped.
+let private runJob (logger: ILogger) (jobs: SummaryJobs) (key: SummaryKey) (job: JobHandle) (ended: Summarize.ServiceError -> Task<unit>) (maxChunkCharacters: int) (complete: Summarize.ChatMessage list -> System.Threading.CancellationToken -> Task<Result<string, Summarize.ServiceError>>) (serviceHost: string) (model: string) (pages: ReadablePages) : Task<unit> = task {
     let capabilities : Summarize.Capabilities =
         { ExtractPages = fun _ -> failwith "pages are extracted by the endpoint"
           Complete = complete
-          Report = function
-              | Summarize.Progress.PagesProcessed (processed, total) ->
-                  write context (box {| ``type`` = "progress"; pagesProcessed = processed; totalPages = total |})
-              | Summarize.Progress.Combining -> write context (box {| ``type`` = "combining"  |}) }
+          // A report after the job was replaced or stopped changes nothing (the registry checks the id).
+          Report = fun progress ->
+              let progress =
+                  match progress with
+                  | Summarize.Progress.PagesProcessed (processed, total) -> Progress.Pages (processed, total)
+                  | Summarize.Progress.Combining -> Progress.Combining
+              jobs.Progress(key, job.Id, progress) |> ignore
+              Task.FromResult() }
     logger.LogInformation("Summarizing document {DocumentId}: {Readable} readable pages, {Unreadable} unreadable",
-                          box documentId, pages.Readable.Length, pages.Unreadable.Length)
+                          box key.Document, pages.Readable.Length, pages.Unreadable.Length)
     try
-      let! result = Summarize.summarize capabilities maxChunkCharacters pages token
-      // A sign-out that came after the last call still ends the run, whatever the result: no summary and no
-      // service error is reported once she is signed out, so the client reloads the signed-out state.
-      if token.IsCancellationRequested && not context.RequestAborted.IsCancellationRequested then
-          do! failed context "signed_out" signedOutDetail None
-      else
-      match result with
-      | Ok validated -> do! write context (summaryEvent documentId serviceHost model pages validated)
-      | Error (Summarize.SummaryFailure.NotEnoughText omitted) ->
-          do! failed context "not_enough_text" "The service returned no point with valid citations." (Some omitted)
-      | Error (Summarize.SummaryFailure.ServiceFailed error) ->
-          // Nothing was written but progress: a failure mid-run (usage limit included) never leaves a partial summary.
-          do! ended error
-          do! failed context (failureCode error) (Summarize.failureDetail error) None
+        let! result = Summarize.summarize capabilities maxChunkCharacters pages job.Token
+        // Checked before `ended`, which cancels a plan run's own token: a sign-out that came after the last call still ends
+        // the run, whatever the result, so no service error is reported once she is signed out (FR-007, as F005).
+        // A finished summary is checked by `Complete` itself, inside the registry lock.
+        let signedOut = job.Token.IsCancellationRequested
+        match result with
+        | Error _ when signedOut -> jobs.Fail(key, job.Id, "signed_out", signedOutDetail, None) |> ignore
+        | Ok validated ->
+            let summary : StoredSummary =
+                { DocumentId = key.Document
+                  Points = validated.Points
+                  PagesCovered = pages.Readable |> List.map (fun page -> page.Number)
+                  UnreadablePages = pages.Unreadable
+                  OmittedPoints = validated.Omitted
+                  GeneratedAt = DateTimeOffset.UtcNow
+                  ServiceHost = serviceHost
+                  Model = model }
+            jobs.Complete(key, job.Id, summary) |> ignore
+        | Error (Summarize.SummaryFailure.NotEnoughText omitted) ->
+            jobs.Fail(key, job.Id, "not_enough_text", "The service returned no point with valid citations.", Some omitted) |> ignore
+        | Error (Summarize.SummaryFailure.ServiceFailed error) ->
+            // A failure mid-run (usage limit included) never leaves a partial summary.
+            do! ended error
+            jobs.Fail(key, job.Id, failureCode error, Summarize.failureDetail error, None) |> ignore
     with
-    | :? OperationCanceledException when context.RequestAborted.IsCancellationRequested ->
-        // The researcher abandoned the request: the service call was cancelled and nothing more is sent.
-        // Only the document id is logged, never its text or the service's answer (FR-009, FR-014).
-        logger.LogInformation("Summary of document {DocumentId} abandoned", box documentId)
-    | :? OperationCanceledException when token.IsCancellationRequested ->
-        // She signed out (or the sign-in ended) while the summary ran: the call was cancelled, nothing more is sent.
-        logger.LogInformation("Summary of document {DocumentId} ended by sign-out", box documentId)
-        do! failed context "signed_out" signedOutDetail None
-    return Results.Empty }
+    | :? OperationCanceledException when job.Token.IsCancellationRequested ->
+        // The app is stopping, the job was stopped, or (plan) she signed out: the call was cancelled, nothing more is
+        // sent and nothing is kept (AR 2). The failure only shows when the job is still the current one.
+        logger.LogInformation("Summary of document {DocumentId} ended by cancellation", box key.Document)
+        jobs.Fail(key, job.Id, "signed_out", signedOutDetail, None) |> ignore
+    | error ->
+        // Only the document id and the error type are logged, never text or the service's answer (FR-009, FR-014).
+        logger.LogError("Summary of document {DocumentId} failed unexpectedly: {Error}", box key.Document, error.GetType().Name)
+        jobs.Fail(key, job.Id, "service_failed", Summarize.failureDetail Summarize.ServiceError.UnusableOutput, None) |> ignore }
 
 /// The request body when it is at most `limit` bytes, else None (an oversized body is never parsed).
 let private readBoundedBody (context: HttpContext) (limit: int) : Task<ReadOnlyMemory<byte> option> = task {
@@ -207,61 +223,89 @@ let private chatgptSignedOut () =
 /// Chunk size for the plan: F003's default.
 let private chatgptChunkCharacters = 12_000
 
-/// A failure before any summary event: the stream starts with one `failed` event.
-let private streamFailed (context: HttpContext) code detail : Task<IResult> = task {
-    context.Response.ContentType <- "application/x-ndjson"
-    do! failed context code detail None
-    return Results.Empty }
-
 /// The outgoing client for the ChatGPT API and the sign-in service: the injected handler (tests) or a real one.
-let private chatgptClient (context: HttpContext) (real: unit -> HttpMessageHandler) =
-    match context.RequestServices.GetService<HttpMessageHandler>() with
+let private chatgptClient (injected: HttpMessageHandler) (real: unit -> HttpMessageHandler) =
+    match injected with
     | null -> new HttpClient(real (), true)
-    | injected -> new HttpClient(injected, false)
+    | handler -> new HttpClient(handler, false)
 
-/// The summary through her plan. `prepareSend` is the only way to a token: confirmation, refresh
-/// and save happen there under one lock, and nothing is sent before it returns `Prepared`.
-let private summarizeViaPlan (context: HttpContext) (vault: ChatGptAccess.Vault) (body: Body) documentId (pages: ReadablePages) : Task<IResult> = task {
+/// The answer to a `Start`: the new job's state (202), or the one that already exists (200).
+let private startAnswer (jobs: SummaryJobs) (key: SummaryKey) (outcome: StartOutcome) : IResult =
+    match outcome with
+    | Started -> stateResult 202 (jobs.State key |> Option.defaultValue (JobState.Running None))
+    | AlreadyRunning | AlreadyFinished -> stateResult 200 (jobs.State key |> Option.defaultValue (JobState.Running None))
+    | NotAssociated -> problem 404 "not_found" "Association not found" null
+
+/// The summary through her plan, as a background job. `prepareSend` is the only way to a token: confirmation, refresh
+/// and save happen there under one lock, and nothing is sent before it returns `Prepared`. The job's token source exists
+/// before it and is handed to the registry after, so the run it registers ends with the job and with sign-out (research §2).
+let private summarizeViaPlan (context: HttpContext) (vault: ChatGptAccess.Vault) (jobs: SummaryJobs) (body: Body) projectId documentId (pages: ReadablePages) : Task<IResult> = task {
     let clock () = DateTimeOffset.UtcNow
-    use authHttp = chatgptClient context (fun () -> OpenAiAuth.createHandler ())
-    match! ChatGptAccess.prepareSend vault (ChatGptEndpoints.authClient authHttp clock) clock body.ConfirmSend context.RequestAborted with
-    | ChatGptAccess.AwaitingConfirmation account ->
-        (summaryLogger context).LogInformation "Summary needs confirmation to use the ChatGPT plan"
-        return chatgptConfirmationRequired account
-    | ChatGptAccess.NoSignIn -> return chatgptSignedOut ()
-    | ChatGptAccess.SignInEnded -> return! streamFailed context "signed_out" signedOutDetail
-    | ChatGptAccess.RefreshUnreachable ->
-        return! streamFailed context "service_failed" "ChatGPT could not be reached to renew your sign-in. Try again."
-    | ChatGptAccess.Prepared (credentials, run) ->
-        use _ = run
-        let token = run.Token
-        // A refusal ends the sign-in (record deleted, other runs cancelled) before the failure is reported.
-        let ended (error: Summarize.ServiceError) : Task<unit> =
-            match error with
-            | Summarize.ServiceError.SignedOut | Summarize.ServiceError.NoPlanAccess -> ChatGptAccess.endSignIn vault credentials
-            | _ -> Task.FromResult()
-        use client = chatgptClient context (fun () -> ResponsesApi.createHandler ())
-        try
-            match! ResponsesApi.listModels client credentials.AccessToken token with
-            | Error error ->
-                // Checked before `ended`, which cancels this run's own token.
-                if token.IsCancellationRequested && not context.RequestAborted.IsCancellationRequested then
-                    return! streamFailed context "signed_out" signedOutDetail
-                else
-                    do! ended error
-                    return! streamFailed context (failureCode error) (Summarize.failureDetail error)
-            | Ok models ->
-                match ChatGptSignIn.pickModel models with
-                | None -> return! streamFailed context "service_failed" (Summarize.failureDetail Summarize.ServiceError.UnusableOutput)
-                | Some model ->
-                    let settings : ResponsesApi.Settings = { Model = model; AccessToken = credentials.AccessToken }
-                    return! summarizeOnce context token ended chatgptChunkCharacters (ResponsesApi.complete (summaryLogger context) client settings) "ChatGPT plan" model documentId pages
-        with :? OperationCanceledException when token.IsCancellationRequested && not context.RequestAborted.IsCancellationRequested ->
-            // Signed out while the model list was requested: nothing was sent.
-            return! streamFailed context "signed_out" signedOutDetail }
+    let logger = summaryLogger context
+    let injected = context.RequestServices.GetService<HttpMessageHandler>()
+    let stopping = context.RequestServices.GetRequiredService<Microsoft.Extensions.Hosting.IHostApplicationLifetime>().ApplicationStopping
+    let key = { Project = projectId; Document = documentId }
+    let source = System.Threading.CancellationTokenSource.CreateLinkedTokenSource stopping
+    let mutable handedOver = false
+    try
+        use authHttp = chatgptClient injected (fun () -> OpenAiAuth.createHandler ())
+        match! ChatGptAccess.prepareSend vault (ChatGptEndpoints.authClient authHttp clock) clock body.ConfirmSend context.RequestAborted source.Token with
+        | ChatGptAccess.AwaitingConfirmation account ->
+            logger.LogInformation "Summary needs confirmation to use the ChatGPT plan"
+            return chatgptConfirmationRequired account
+        | ChatGptAccess.NoSignIn -> return chatgptSignedOut ()
+        // Decided before anything was sent: the job is created already failed, so the client reads it like any other.
+        | ChatGptAccess.SignInEnded -> return startAnswer jobs key (jobs.StartFailed(key, "signed_out", signedOutDetail))
+        | ChatGptAccess.RefreshUnreachable ->
+            return startAnswer jobs key (jobs.StartFailed(key, "service_failed", "ChatGPT could not be reached to renew your sign-in. Try again."))
+        | ChatGptAccess.Prepared (credentials, run) ->
+            // A refusal ends the sign-in (record deleted, other runs cancelled) before the failure is reported.
+            let ended (error: Summarize.ServiceError) : Task<unit> =
+                match error with
+                | Summarize.ServiceError.SignedOut | Summarize.ServiceError.NoPlanAccess -> ChatGptAccess.endSignIn vault credentials
+                | _ -> Task.FromResult()
+            let work (job: JobHandle) : Task<unit> = task {
+                use _ = run
+                use client = chatgptClient injected (fun () -> ResponsesApi.createHandler ())
+                try
+                    match! ResponsesApi.listModels client credentials.AccessToken job.Token with
+                    | Error error ->
+                        // Checked before `ended`, which cancels this run's own token.
+                        if job.Token.IsCancellationRequested then
+                            jobs.Fail(key, job.Id, "signed_out", signedOutDetail, None) |> ignore
+                        else
+                            do! ended error
+                            jobs.Fail(key, job.Id, failureCode error, Summarize.failureDetail error, None) |> ignore
+                    | Ok models ->
+                        match ChatGptSignIn.pickModel models with
+                        // A sign-out that came while the list was being read wins over an unusable list.
+                        | None when job.Token.IsCancellationRequested -> jobs.Fail(key, job.Id, "signed_out", signedOutDetail, None) |> ignore
+                        | None -> jobs.Fail(key, job.Id, "service_failed", Summarize.failureDetail Summarize.ServiceError.UnusableOutput, None) |> ignore
+                        | Some model ->
+                            let settings : ResponsesApi.Settings = { Model = model; AccessToken = credentials.AccessToken }
+                            do! runJob logger jobs key job ended chatgptChunkCharacters (ResponsesApi.complete logger client settings) "ChatGPT plan" model pages
+                with
+                | :? OperationCanceledException when job.Token.IsCancellationRequested ->
+                    // Signed out (or stopped) while the model list was requested: nothing was sent.
+                    jobs.Fail(key, job.Id, "signed_out", signedOutDetail, None) |> ignore
+                | error ->
+                    // Anything else (a credential file that cannot be deleted, say) must not leave the job running for good.
+                    // Only the error type is logged, never text or the service's answer (FR-009, FR-014).
+                    logger.LogError("Summary of document {DocumentId} failed unexpectedly: {Error}", box key.Document, error.GetType().Name)
+                    jobs.Fail(key, job.Id, "service_failed", Summarize.failureDetail Summarize.ServiceError.UnusableOutput, None) |> ignore }
+            match jobs.StartWith(key, source, run.Token, work) with
+            | Started ->
+                handedOver <- true
+                return startAnswer jobs key Started
+            | refused ->
+                (run :> IDisposable).Dispose()
+                return startAnswer jobs key refused
+    finally
+        if not handedOver then source.Dispose() }
 
 /// The service from her settings file: F003's rule, unchanged. Elsewhere needs this request's confirmation.
-let private summarizeConfigured (context: HttpContext) (configured: SummaryConfiguration) (body: Body) documentId (pages: ReadablePages) : Task<IResult> = task {
+/// After the checks the summary runs as a background job (F004): the answer is immediate and closing the request does not stop it.
+let private summarizeConfigured (context: HttpContext) (jobs: SummaryJobs) (configured: SummaryConfiguration) (body: Body) projectId documentId (pages: ReadablePages) : Task<IResult> = task {
     // FR-014: for a service elsewhere nothing is sent without this request's confirmation
     // of the host and model currently configured.
     let current = configured.Endpoint.Authority, configured.Model
@@ -269,12 +313,19 @@ let private summarizeConfigured (context: HttpContext) (configured: SummaryConfi
         (summaryLogger context).LogInformation("Summary needs confirmation for {Host}, model {Model}", configured.Endpoint.Authority, configured.Model)
         return confirmationRequired configured
     else
-        use client = serviceClient context configured
-        let settings : ChatCompletions.Settings =
-            { Endpoint = configured.Endpoint; Model = configured.Model; ApiKey = configured.ApiKey
-              Temperature = configured.Temperature; MaxOutputTokens = configured.MaxOutputTokens }
-        return! summarizeOnce context context.RequestAborted (fun _ -> Task.FromResult()) configured.MaxChunkCharacters (ChatCompletions.complete (summaryLogger context) client settings)
-                    configured.Endpoint.Authority configured.Model documentId pages }
+        // Everything the job needs is taken from the request now: it outlives it.
+        let logger = summaryLogger context
+        let injected = context.RequestServices.GetService<HttpMessageHandler>()
+        let stopping = context.RequestServices.GetRequiredService<Microsoft.Extensions.Hosting.IHostApplicationLifetime>().ApplicationStopping
+        let key = { Project = projectId; Document = documentId }
+        let run (job: JobHandle) : Task<unit> = task {
+            use client = match injected with null -> new HttpClient(ChatCompletions.createHandler configured.Endpoint, true) | handler -> new HttpClient(handler, false)
+            let settings : ChatCompletions.Settings =
+                { Endpoint = configured.Endpoint; Model = configured.Model; ApiKey = configured.ApiKey
+                  Temperature = configured.Temperature; MaxOutputTokens = configured.MaxOutputTokens }
+            return! runJob logger jobs key job (fun _ -> Task.FromResult()) configured.MaxChunkCharacters (ChatCompletions.complete logger client settings)
+                        configured.Endpoint.Authority configured.Model pages }
+        return startAnswer jobs key (jobs.Start(key, stopping, run)) }
 
 /// Resolves the destination before anything else (research §10): `Error` is the answer to send.
 let private resolveDestination (configuration: WorkspaceConfiguration) (signedIn: bool) (requested: Requested) : Result<Destination, IResult> =
@@ -294,38 +345,75 @@ let private resolveDestination (configuration: WorkspaceConfiguration) (signedIn
     | _, true, Named Chatgpt -> Ok Chatgpt
     | false, _, Named Configured -> Error(notConfigured ())
 
-let map (app: WebApplication) (configuration: WorkspaceConfiguration) (vault: ChatGptAccess.Vault) =
+/// The state, stop/dismiss and status routes of F004.
+let private mapBackground (app: WebApplication) (jobs: SummaryJobs) (listStored: unit -> SummaryKey list) =
+    let path = "/api/projects/{projectId:guid}/documents/{documentId:guid}/summary"
+    app.MapGet(path, Func<Guid, Guid, IResult>(fun projectId documentId ->
+        match jobs.State { Project = projectId; Document = documentId } with
+        | Some state -> stateResult 200 state
+        | None -> problem 404 "no_summary" "No summary" "Nothing is running, finished or failed for this document in this project.")) |> ignore
+    // Stops a running summary, or dismisses a finished or failed one (and deletes the stored one); idempotent.
+    app.MapDelete(path, Func<Guid, Guid, IResult>(fun projectId documentId ->
+        jobs.Stop { Project = projectId; Document = documentId }
+        Results.NoContent())) |> ignore
+    // One entry per pair with a running, finished or failed summary, for the list markers.
+    app.MapGet("/api/summaries", Func<IResult>(fun () ->
+        let statusName (status: SummaryStatus) =
+            match status with
+            | SummaryStatus.Running -> "running"
+            | SummaryStatus.Finished -> "finished"
+            | SummaryStatus.Failed -> "failed"
+        let entries =
+            jobs.Snapshot listStored
+            |> List.map (fun (key, status) -> {| projectId = key.Project; documentId = key.Document; status = statusName status |})
+        Results.Json entries)) |> ignore
+
+let map (app: WebApplication) (configuration: WorkspaceConfiguration) (vault: ChatGptAccess.Vault) (jobs: SummaryJobs) =
     let directory = configuration.DataDirectory
+    mapBackground app jobs (fun () -> SummaryRepository.listKeys directory)
+    // Published so tests can wait for a job to end (a handshake instead of polling).
+    (app :> IApplicationBuilder).Properties["LexScholar.SummaryJobs"] <- box jobs
     app.MapPost("/api/projects/{projectId:guid}/documents/{documentId:guid}/summary",
                 Func<Guid, Guid, HttpContext, Task<IResult>>(fun projectId documentId context -> task {
         let! body = readBody context
-        // Reading the vault waits for a refresh in flight, so a request that explicitly names its
-        // configured service (which exists) never reads it: a local summary does not wait for ChatGPT.
-        let! signedIn =
-            task {
-                match body.Destination with
-                | Named Configured when configuration.Summary.IsSome -> return false
-                | _ ->
-                    let! record = vault.Read()
-                    return record.IsSome
-            }
-        match resolveDestination configuration signedIn body.Destination with
-        | Error answer -> return answer
-        | Ok destination ->
-            if notAssociated directory projectId documentId then
-                if LibraryRepository.list directory |> List.exists (fun document -> document.Id = documentId) then
-                    return problem 404 "not_found" "Association not found" null
+        // One summary per document in a project (FR-011): a running or finished (stored included) summary for a pair that is
+        // still in the project answers with its state before any destination, confirmation or sign-in check, since nothing
+        // new is sent. A failed one is not returned: asking again replaces it, through the checks below.
+        let key = { Project = projectId; Document = documentId }
+        let existing =
+            match jobs.State key with
+            | Some (JobState.Running _ | JobState.Finished _ as state) when not (notAssociated directory projectId documentId) -> Some state
+            | _ -> None
+        match existing with
+        | Some state -> return stateResult 200 state
+        | None ->
+            // Reading the vault waits for a refresh in flight, so a request that explicitly names its
+            // configured service (which exists) never reads it: a local summary does not wait for ChatGPT.
+            let! signedIn =
+                task {
+                    match body.Destination with
+                    | Named Configured when configuration.Summary.IsSome -> return false
+                    | _ ->
+                        let! record = vault.Read()
+                        return record.IsSome
+                }
+            match resolveDestination configuration signedIn body.Destination with
+            | Error answer -> return answer
+            | Ok destination ->
+                if notAssociated directory projectId documentId then
+                    if LibraryRepository.list directory |> List.exists (fun document -> document.Id = documentId) then
+                        return problem 404 "not_found" "Association not found" null
+                    else
+                        return problem 404 "document_not_found" "Document not found" null
                 else
-                    return problem 404 "document_not_found" "Document not found" null
-            else
-                match! PdfText.extractPages directory documentId context.RequestAborted with
-                | Error error -> return extractionProblem error
-                | Ok pages ->
-                    match Summaries.readability pages with
-                    | Error failure -> return readabilityProblem failure
-                    | Ok readable ->
-                        // These two calls are the only paths to `summarizeOnce`, and both run after the local checks
-                        // and after their own confirmation rule.
-                        match destination with
-                        | Chatgpt -> return! summarizeViaPlan context vault body documentId readable
-                        | Configured -> return! summarizeConfigured context configuration.Summary.Value body documentId readable })) |> ignore
+                    match! PdfText.extractPages directory documentId context.RequestAborted with
+                    | Error error -> return extractionProblem error
+                    | Ok pages ->
+                        match Summaries.readability pages with
+                        | Error failure -> return readabilityProblem failure
+                        | Ok readable ->
+                            // These two calls are the only paths to `summarizeOnce`, and both run after the local checks
+                            // and after their own confirmation rule.
+                            match destination with
+                            | Chatgpt -> return! summarizeViaPlan context vault jobs body projectId documentId readable
+                            | Configured -> return! summarizeConfigured context jobs configuration.Summary.Value body projectId documentId readable })) |> ignore

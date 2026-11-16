@@ -17,6 +17,8 @@ type ChatScript =
     | StatusWithBody of code: int * body: string
     /// Never answers until the request is cancelled.
     | WaitUntilCancelled
+    /// Waits for `Release()`, then replies like `Reply`; cancelling the request while held fires `Cancelled`.
+    | Hold of content: string
 
 /// One request the fake received, parsed enough to assert on.
 type RecordedChatRequest =
@@ -33,6 +35,7 @@ type FakeChatService(script: int -> ChatScript) =
     let mutable calls = 0
     let waiting = TaskCompletionSource()
     let cancelled = TaskCompletionSource()
+    let release = TaskCompletionSource()
 
     new(always: ChatScript) = new FakeChatService(fun _ -> always)
 
@@ -41,6 +44,9 @@ type FakeChatService(script: int -> ChatScript) =
     /// Completes when a `WaitUntilCancelled` request is waiting, and when it is then cancelled (handshakes, no polling).
     member _.Waiting : Task = waiting.Task
     member _.Cancelled : Task = cancelled.Task
+
+    /// Lets every held (`Hold`) request answer.
+    member _.Release() = release.TrySetResult() |> ignore
 
     override _.SendAsync(request, cancellation) = task {
         let! body = if isNull request.Content then Task.FromResult "" else request.Content.ReadAsStringAsync(cancellation)
@@ -55,9 +61,22 @@ type FakeChatService(script: int -> ChatScript) =
             return new HttpResponseMessage(enum<HttpStatusCode> code, Content = new StringContent("{\"error\":\"service detail\"}"))
         | StatusWithBody (code, body) ->
             return new HttpResponseMessage(enum<HttpStatusCode> code, Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json"))
+        | Hold content ->
+            waiting.TrySetResult() |> ignore
+            try do! release.Task.WaitAsync(cancellation)
+            with :? OperationCanceledException as error -> cancelled.TrySetResult() |> ignore; raise error
+            let json = System.Text.Json.JsonSerializer.Serialize({| choices = [| {| message = {| role = "assistant"; content = content |} |} |] |})
+            return new HttpResponseMessage(HttpStatusCode.OK, Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json"))
         | WaitUntilCancelled ->
             waiting.TrySetResult() |> ignore
             try do! Task.Delay(Timeout.Infinite, cancellation)
             with :? OperationCanceledException as error -> cancelled.TrySetResult() |> ignore; raise error
             return new HttpResponseMessage(HttpStatusCode.OK)
     }
+
+/// Reaches the host's job registry from a test (the host publishes it in the application's properties).
+module SummaryJobsAccess =
+    /// Completes when the job of the pair has ended; the handshake tests use instead of polling.
+    let settled (app: Microsoft.AspNetCore.Builder.WebApplication) (project: Guid) (document: Guid) : Task =
+        let jobs = (app :> Microsoft.AspNetCore.Builder.IApplicationBuilder).Properties["LexScholar.SummaryJobs"] :?> LexScholar.Application.SummaryJobs
+        jobs.Settled({ Project = project; Document = document } : LexScholar.Domain.SummaryKey)

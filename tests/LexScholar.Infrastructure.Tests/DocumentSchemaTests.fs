@@ -50,7 +50,7 @@ let ``fresh database applies the document migration and snapshot matches`` () =
     use connection = openConnection directory.Path
     requireSchema connection
     use db = WorkspaceDb.create directory.Path
-    Assert.Equal<string list>([ initial; projects; documents ], db.Database.GetAppliedMigrations() |> Seq.toList)
+    Assert.Equal<string list>([ initial; projects; documents; "20261112000000_DocumentSummaries" ], db.Database.GetAppliedMigrations() |> Seq.toList)
     Assert.Empty(db.Database.GetPendingMigrations())
     Assert.False(db.Database.HasPendingModelChanges())
 
@@ -70,7 +70,7 @@ let ``upgrade from the project schema preserves projects and initialization is i
     use connection = openConnection directory.Path
     requireSchema connection
     Assert.Equal(project.ToString("D"), scalar connection "SELECT Id FROM ResearchProjects" :?> string)
-    Assert.Equal(3L, count connection "__EFMigrationsHistory")
+    Assert.Equal(4L, count connection "__EFMigrationsHistory")
     use db = WorkspaceDb.create directory.Path
     Assert.Empty(db.Database.GetPendingMigrations())
     Assert.False(db.Database.HasPendingModelChanges())

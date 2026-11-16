@@ -9,6 +9,7 @@
     <Compile Include="Migrations/WorkspaceDbModelSnapshot.fs" />
     <Compile Include="Migrations/Projects.fs" />
     <Compile Include="Migrations/Documents.fs" />
+    <Compile Include="Migrations/DocumentSummaries.fs" />
     <Compile Include="ProjectRepository.fs" />
     <Compile Include="PdfValidator.fs" />
     <Compile Include="DocumentStore.fs" />
@@ -20,6 +21,7 @@
     <Compile Include="ChatGptCredentials.fs" />
     <Compile Include="OpenAiAuth.fs" />
     <Compile Include="ResponsesApi.fs" />
+    <Compile Include="SummaryRepository.fs" />
     <ProjectReference Include="../LexScholar.Domain/LexScholar.Domain.fsproj" />
     <ProjectReference Include="../LexScholar.Application/LexScholar.Application.fsproj" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />

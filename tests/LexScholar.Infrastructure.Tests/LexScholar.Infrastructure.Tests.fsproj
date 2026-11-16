@@ -13,6 +13,7 @@
     <Compile Include="ProjectSchemaTests.fs" />
     <Compile Include="ProjectPersistenceTests.fs" />
     <Compile Include="DocumentSchemaTests.fs" />
+    <Compile Include="SummarySchemaTests.fs" />
     <Compile Include="PdfValidationTests.fs" />
     <Compile Include="LibraryTests.fs" />
     <Compile Include="StorageCleanupTests.fs" />
@@ -23,6 +24,7 @@
     <Compile Include="../LexScholar.Server.Tests/FakeOpenAi.fs" Link="FakeOpenAi.fs" />
     <Compile Include="OpenAiAuthTests.fs" />
     <Compile Include="ResponsesApiTests.fs" />
+    <Compile Include="SummaryRepositoryTests.fs" />
     <ProjectReference Include="../../src/LexScholar.Infrastructure/LexScholar.Infrastructure.fsproj" />
     <PackageReference Include="xunit.v3" />
     <None Include="../Fixtures/*" LinkBase="Fixtures" CopyToOutputDirectory="PreserveNewest" />

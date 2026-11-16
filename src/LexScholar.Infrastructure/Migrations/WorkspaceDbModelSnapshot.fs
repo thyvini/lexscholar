@@ -54,3 +54,11 @@ type WorkspaceDbModelSnapshot() =
         association.HasIndex([| "DocumentId" |]) |> ignore
         association.HasOne("LexScholar.Infrastructure.ResearchProjectRow", null).WithMany().HasForeignKey("ProjectId").OnDelete(DeleteBehavior.Restrict) |> ignore
         association.HasOne("LexScholar.Infrastructure.LibraryDocumentRow", null).WithMany().HasForeignKey("DocumentId").OnDelete(DeleteBehavior.Restrict) |> ignore
+        let summary = model.Entity("LexScholar.Infrastructure.DocumentSummaryRow")
+        summary.ToTable("DocumentSummaries") |> ignore
+        summary.Property<System.Guid>("ProjectId").HasConversion<CanonicalGuidConverter>().HasColumnType("TEXT") |> ignore
+        summary.Property<System.Guid>("DocumentId").HasConversion<CanonicalGuidConverter>().HasColumnType("TEXT") |> ignore
+        summary.Property<string>("Content").IsRequired().HasColumnType("TEXT") |> ignore
+        summary.Property<System.DateTimeOffset>("GeneratedAt").HasConversion<UtcDateTimeOffsetConverter>().HasColumnType("TEXT") |> ignore
+        summary.HasKey("ProjectId", "DocumentId") |> ignore
+        summary.HasOne("LexScholar.Infrastructure.ProjectDocumentRow", null).WithMany().HasForeignKey("ProjectId", "DocumentId").OnDelete(DeleteBehavior.Cascade) |> ignore

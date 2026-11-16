@@ -163,9 +163,48 @@ module Api =
             | Library.InvalidRole -> Reader.InvalidRole
             | _ -> Reader.RequestFailed) }
 
-    /// Requests a summary and reads the NDJSON stream until its one `summary` or
-    /// `failed` event. Failures never show response details.
-    let summarize (http: HttpClient) (projectId: Guid) (documentId: Guid) (destination: Summary.Destination option) (confirmed: Summary.Confirmed option) (onProgress: Summary.Progress -> unit) (cancellation: Threading.CancellationToken) = async {
+    /// Requests a summary. The server answers with the job's state (202, or 200 when one exists); nothing is streamed and
+    /// leaving the document does not abort the request. Failures never show response details.
+    /// The state of the pair's summary job: None when the server has nothing (404); Error when it could not be asked.
+    let summaryState (http: HttpClient) (projectId: Guid) (documentId: Guid) : Async<Result<Summary.Remote option, unit>> = async {
+        try
+            use! response = http.GetAsync($"api/projects/{projectId:D}/documents/{documentId:D}/summary") |> Async.AwaitTask
+            if response.StatusCode = HttpStatusCode.NotFound then return Ok None
+            elif not response.IsSuccessStatusCode then return Error ()
+            else
+                let! body = response.Content.ReadAsStringAsync() |> Async.AwaitTask
+                match SummaryStatus.parseRemote body with
+                | Some remote -> return Ok (Some remote)
+                | None -> return Error ()
+        with _ -> return Error () }
+
+    /// The status of every summary, for the list markers; Error when it could not be read.
+    let summaryStatuses (http: HttpClient) : Async<Result<SummaryStatus.StatusEntry list, unit>> = async {
+        try
+            use! response = http.GetAsync("api/summaries") |> Async.AwaitTask
+            if not response.IsSuccessStatusCode then return Error ()
+            else
+                let! body = response.Content.ReadAsStringAsync() |> Async.AwaitTask
+                match SummaryStatus.parseStatuses body with
+                | Some entries -> return Ok entries
+                | None -> return Error ()
+        with _ -> return Error () }
+
+    /// Deletes the pair's finished or failed summary on the server (idempotent); false when it could not be deleted.
+    let dismissSummary (http: HttpClient) (projectId: Guid) (documentId: Guid) : Async<bool> = async {
+        try
+            use! tokenResponse = http.GetAsync("api/antiforgery") |> Async.AwaitTask
+            if not tokenResponse.IsSuccessStatusCode then return false
+            else
+                let! tokenBody = tokenResponse.Content.ReadAsStringAsync() |> Async.AwaitTask
+                use tokenJson = JsonDocument.Parse(tokenBody)
+                use request = new HttpRequestMessage(HttpMethod.Delete, $"api/projects/{projectId:D}/documents/{documentId:D}/summary")
+                request.Headers.Add("X-CSRF-TOKEN", tokenJson.RootElement.GetProperty("requestToken").GetString())
+                use! response = http.SendAsync request |> Async.AwaitTask
+                return response.IsSuccessStatusCode
+        with _ -> return false }
+
+    let summarize (http: HttpClient) (projectId: Guid) (documentId: Guid) (destination: Summary.Destination option) (confirmed: Summary.Confirmed option) (cancellation: Threading.CancellationToken) : Async<Result<Summary.Remote, Summary.Failure>> = async {
         try
             use! tokenResponse = http.GetAsync("api/antiforgery", cancellation) |> Async.AwaitTask
             if not tokenResponse.IsSuccessStatusCode then return Error Summary.RequestFailed
@@ -174,27 +213,15 @@ module Api =
                 use tokenJson = JsonDocument.Parse(tokenBody)
                 use request = new HttpRequestMessage(HttpMethod.Post, $"api/projects/{projectId:D}/documents/{documentId:D}/summary")
                 request.Headers.Add("X-CSRF-TOKEN", tokenJson.RootElement.GetProperty("requestToken").GetString())
-                request.Content <- new StringContent(SummaryStream.requestBody destination confirmed, Encoding.UTF8, "application/json")
-                request.SetBrowserResponseStreamingEnabled(true) |> ignore
-                use! response = http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellation) |> Async.AwaitTask
-                if not response.IsSuccessStatusCode then
-                    let! body = response.Content.ReadAsStringAsync() |> Async.AwaitTask
-                    return Error (SummaryStream.failureOfBody body)
+                request.Content <- new StringContent(SummaryStatus.requestBody destination confirmed, Encoding.UTF8, "application/json")
+                use! response = http.SendAsync(request, cancellation) |> Async.AwaitTask
+                let! body = response.Content.ReadAsStringAsync() |> Async.AwaitTask
+                if not response.IsSuccessStatusCode then return Error (SummaryStatus.failureOfBody body)
                 else
-                    use! stream = response.Content.ReadAsStreamAsync() |> Async.AwaitTask
-                    use reader = new IO.StreamReader(stream)
-                    let rec next () = async {
-                        match! reader.ReadLineAsync(cancellation).AsTask() |> Async.AwaitTask with
-                        | null -> return Error Summary.RequestFailed
-                        | line when String.IsNullOrWhiteSpace line -> return! next ()
-                        | line ->
-                            use json = JsonDocument.Parse(line)
-                            match SummaryStream.outcome json.RootElement with
-                            | Some outcome -> return outcome
-                            | None ->
-                                SummaryStream.progress json.RootElement |> Option.iter onProgress
-                                return! next () }
-                    return! next ()
+                    // 202, or 200 when the pair already has a summary: the job's state.
+                    match SummaryStatus.parseRemote body with
+                    | Some remote -> return Ok remote
+                    | None -> return Error Summary.RequestFailed
         with _ -> return Error Summary.RequestFailed }
 
 module ChatGptApi =
@@ -265,7 +292,7 @@ module ChatGptApi =
         return () }
 
 /// The whole page: projects, shared library, native reader and its summary.
-type State = { Projects: Model; Library: Library.Model; Reader: Reader.Model; Summary: Summary.Model; ChatGpt: ChatGpt.Model }
+type State = { Projects: Model; Library: Library.Model; Reader: Reader.Model; Summary: Summary.Model; ChatGpt: ChatGpt.Model; Statuses: SummaryStatus.Statuses }
 
 type Msg =
     | ProjectsMsg of Message
@@ -273,6 +300,7 @@ type Msg =
     | ReaderMsg of Reader.Message
     | SummaryMsg of Summary.Message
     | ChatGptMsg of ChatGpt.Message
+    | StatusMsg of SummaryStatus.StatusMessage
 
 module private Ui =
     let command http = function
@@ -317,25 +345,41 @@ module private Ui =
             state, Cmd.OfAsync.perform (fun () -> Api.changeRole http projectId documentId role) () (fun result -> ReaderMsg (Reader.RoleChanged (projectId, result)))
         | None -> state, Cmd.none
 
-    /// The requests in flight, by request number, so a `Cancel` effect can abort the fetch (FR-009).
-    let private running = Collections.Generic.Dictionary<int, Threading.CancellationTokenSource>()
+    /// How often the open document's running summary is asked for (research §4).
+    let private summaryPollMilliseconds = 2000
 
     let private summaryCommand http (effect: Summary.Effect option) : Cmd<Msg> =
         match effect with
         | Some (Summary.Send (request, projectId, documentId, destination, confirmed)) ->
-            let source = new Threading.CancellationTokenSource()
-            running[request] <- source
             Cmd.ofEffect (fun dispatch ->
                 Async.StartImmediate(async {
-                    let! result = Api.summarize http projectId documentId destination confirmed (fun progress -> dispatch (SummaryMsg (Summary.Progressed (request, progress)))) source.Token
-                    running.Remove request |> ignore
-                    source.Dispose()
-                    dispatch (SummaryMsg (Summary.Responded (request, result))) }))
-        | Some (Summary.Cancel request) ->
-            match running.TryGetValue request with
-            | true, source -> source.Cancel()
-            | _ -> ()
-            Cmd.none
+                    match! Api.summarize http projectId documentId destination confirmed Threading.CancellationToken.None with
+                    | Ok remote -> dispatch (SummaryMsg (Summary.Accepted (request, projectId, documentId, remote)))
+                    | Error failure -> dispatch (SummaryMsg (Summary.Responded (request, Error failure))) }))
+        | Some (Summary.Fetch (watch, projectId, documentId, delay)) ->
+            Cmd.ofEffect (fun dispatch ->
+                Async.StartImmediate(async {
+                    // While polling, a failed fetch keeps waiting; the first fetch on return shows nothing then.
+                    if delay then do! Async.Sleep summaryPollMilliseconds
+                    let! remote = Api.summaryState http projectId documentId
+                    let remote = match remote with Ok state -> state | Error () -> (if delay then Some (Summary.RemoteRunning None) else None)
+                    dispatch (SummaryMsg (Summary.Polled (watch, remote))) }))
+        | Some (Summary.DeleteSummary (projectId, documentId)) ->
+            Cmd.ofEffect (fun dispatch ->
+                Async.StartImmediate(async {
+                    let! succeeded = Api.dismissSummary http projectId documentId
+                    dispatch (SummaryMsg (Summary.Dismissed (projectId, documentId, succeeded))) }))
+        | None -> Cmd.none
+
+    /// Reads the status list, after the polling delay when the effect says so (a loop that runs while any summary does).
+    let statusCommand http (effect: SummaryStatus.StatusEffect option) : Cmd<Msg> =
+        match effect with
+        | Some (SummaryStatus.FetchStatuses (watch, delay)) ->
+            Cmd.ofEffect (fun dispatch ->
+                Async.StartImmediate(async {
+                    if delay then do! Async.Sleep summaryPollMilliseconds
+                    let! result = Api.summaryStatuses http
+                    dispatch (StatusMsg (SummaryStatus.StatusesLoaded (watch, result))) }))
         | None -> Cmd.none
 
     let chatGptCommand http (navigation: NavigationManager) (effect: ChatGpt.Effect option) : Cmd<Msg> =
@@ -355,12 +399,19 @@ module private Ui =
         | ChatGptMsg message ->
             let chatGpt, effect = ChatGpt.update message state.ChatGpt
             { state with ChatGpt = chatGpt }, chatGptCommand http navigation effect
+        | StatusMsg message ->
+            let statuses, effect = SummaryStatus.updateStatuses message state.Statuses
+            { state with Statuses = statuses }, statusCommand http effect
         | SummaryMsg message ->
             let summary, effect = Summary.update message state.Summary
-            // A failure that ended the sign-in (stream event or problem alike) reloads the destinations.
+            // A failure that ended the sign-in reloads the destinations: whether it came as a problem on the POST, or as the
+            // failed state of a background job (the POST's own answer, or a later poll).
             let reload =
                 match message with
                 | Summary.Responded (request, Error failure) when state.Summary.State = Summary.Generating request && Summary.reloadsDestinations failure -> true
+                | Summary.Accepted (_, _, _, Summary.RemoteFailed failure)
+                | Summary.Polled (_, Some (Summary.RemoteFailed failure)) ->
+                    summary.State = Summary.Failed failure && state.Summary.State <> summary.State && Summary.reloadsDestinations failure
                 | _ -> false
             let chatGpt, chatGptEffect = if reload then ChatGpt.update ChatGpt.Load state.ChatGpt else state.ChatGpt, None
             { state with Summary = summary; ChatGpt = chatGpt },
@@ -387,15 +438,27 @@ module private Ui =
 
     /// The summary follows the reader's project and open document after every message.
     let update http navigation msg state =
+        let viewOf (state: State) = state.Library.Project, state.Reader.Open |> Option.map (fun document -> document.Id)
+        let before = viewOf state
         let state, command = updateCore http navigation msg state
+        // The markers are read again on every project or document view change (AR 4) and once a summary was asked for or
+        // dismissed (its POST or DELETE has been answered) and once a document was removed from the project.
+        let statuses, statusEffect =
+            match msg with
+            // A removal from the project deletes the document's stored summary on the server; a POST whose answer failed may still have
+            // started the job.
+            | SummaryMsg (Summary.Accepted _ | Summary.Responded _ | Summary.Dismissed _) | LibraryMsg (Library.Removed _) -> SummaryStatus.updateStatuses SummaryStatus.Refresh state.Statuses
+            | _ -> SummaryStatus.followView before (viewOf state) state.Statuses
+        let state = { state with Statuses = statuses }
+        let command = Cmd.batch [ command; statusCommand http statusEffect ]
         // The summary knows which destinations exist from the sign-in state and the configured service.
         let available =
             { Summary.Plan = (match state.ChatGpt.Status with ChatGpt.SignedIn _ -> true | _ -> false)
               Summary.Configured = state.ChatGpt.Configured.IsSome }
         let summary, _ = Summary.update (Summary.DestinationsChanged available) state.Summary
         let state = { state with Summary = summary }
-        let summary, effect = Summary.followReader state.Reader state.Summary
-        { state with Summary = summary }, Cmd.batch [ command; summaryCommand http effect ]
+        let summary, effects = Summary.followReader state.Reader state.Summary
+        { state with Summary = summary }, Cmd.batch [ command; yield! effects |> List.map (Some >> summaryCommand http) ]
 
     let errorText = function
         | InvalidName -> "Enter a project name that is not blank."
@@ -421,7 +484,15 @@ module private Ui =
 
     let pages count = if count = 1 then "1 page" else $"{count} pages"
 
-    let libraryView (library: Library.Model) (reader: Reader.Model) readerDispatch dispatch =
+    /// The marker of a running, finished or failed summary (FR-008); nothing when there is none.
+    let summaryMarker (status: SummaryStatus.Status option) =
+        cond status <| function
+            | Some status ->
+                let word = match status with SummaryStatus.Status.Running -> "running" | SummaryStatus.Status.Finished -> "finished" | SummaryStatus.Status.Failed -> "failed"
+                small { attr.``class`` "summary-marker"; attr.title $"Summary {word}"; text $"Summary {word}" }
+            | None -> empty ()
+
+    let libraryView (library: Library.Model) (reader: Reader.Model) (statuses: SummaryStatus.StatusEntry list) readerDispatch dispatch =
         let busy = library.Busy.IsSome
         let associated = library.Associations |> List.map (fun item -> item.Document.Id) |> Set.ofList
         concat {
@@ -492,6 +563,9 @@ module private Ui =
                                 forEach library.Associations <| fun association ->
                                     li {
                                         span { text association.Document.FileName }
+                                        cond library.Project <| function
+                                            | Some project -> summaryMarker (SummaryStatus.documentStatus statuses project association.Document.Id)
+                                            | None -> empty ()
                                         strong { attr.``class`` "role"; text (roleLabel association.Role) }
                                         button {
                                             attr.``type`` "button"
@@ -712,7 +786,7 @@ module private Ui =
     let summaryView (document: Reader.Document) (summary: Summary.Model) (chatGpt: ChatGpt.Model) onCite dispatch dispatchChatGpt =
         let needsChoice = summary.Available.Plan && summary.Available.Configured
         concat {
-            cond (needsChoice && (match summary.State with Summary.Generating _ | Summary.Confirming _ -> false | _ -> true)) <| function
+            cond (needsChoice && (match summary.State with Summary.Generating _ | Summary.Running | Summary.Confirming _ -> false | _ -> true)) <| function
                 | true -> destinationChoice chatGpt summary dispatch
                 | false -> empty ()
             cond summary.State <| function
@@ -723,7 +797,16 @@ module private Ui =
                         progressText summary.Progress
                         plainButton "Dismiss" None (fun _ -> dispatch Summary.Dismiss)
                     }
+                | Summary.Running ->
+                    span {
+                        "role" => "status"
+                        "Summarizing… "
+                        progressText summary.Progress
+                        plainButton "Stop" None (fun _ -> dispatch Summary.Stop)
+                    }
                 | Summary.Shown _ -> empty ()
+                | Summary.Dismissing Summary.Running -> span { "role" => "status"; "Stopping… " }
+                | Summary.Dismissing _ -> span { "role" => "status"; "Dismissing… " }
                 | Summary.Confirming target -> confirmDialog document target dispatch
                 | Summary.Idle ->
                     button {
@@ -759,6 +842,9 @@ module private Ui =
                         span { attr.``class`` "secondary"; text (Summary.failureText Summary.NotConfigured) } }
                 | Summary.Failed failure -> p { attr.``class`` "error"; "role" => "alert"; text (Summary.failureText failure) }
                 | _ -> empty ()
+            cond summary.DismissFailed <| function
+                | true -> p { attr.``class`` "error"; "role" => "alert"; "The summary could not be dismissed. Please try again." }
+                | false -> empty ()
             cond summary.State <| function
                 | Summary.Shown generated -> summaryPanel document generated onCite dispatch
                 | _ -> empty ()
@@ -807,6 +893,7 @@ module private Ui =
                     forEach model.Snapshot.Projects <| fun project ->
                         li {
                             span { text project.Name }
+                            summaryMarker (SummaryStatus.projectStatus state.Statuses.Entries project.Id)
                             cond (model.Snapshot.Active = Some project.Id) <| function
                                 | true -> strong { attr.``class`` "active"; "Active" }
                                 | false -> button { attr.``type`` "button"; attr.disabled busy; on.click (fun _ -> dispatch (Select project.Id)); "Select" }
@@ -815,7 +902,7 @@ module private Ui =
                 button { attr.``type`` "button"; attr.disabled busy; on.click (fun _ -> dispatch Reload); "Refresh" }
             }
             chatGptBanner state.ChatGpt (ChatGptMsg >> dispatch')
-            libraryView state.Library state.Reader (ReaderMsg >> dispatch') (LibraryMsg >> dispatch')
+            libraryView state.Library state.Reader state.Statuses.Entries (ReaderMsg >> dispatch') (LibraryMsg >> dispatch')
             cond state.Reader.Error <| function
                 | Some error ->
                     p {
@@ -869,9 +956,11 @@ type App() =
             let returned = match query.["chatgpt"] with null -> None | value -> Some value
             if returned.IsSome then this.Navigation.NavigateTo(uri.GetLeftPart(UriPartial.Path), replace = true)
             let chatGpt, chatGptEffect = ChatGpt.update ChatGpt.Load ChatGpt.initial
+            let statuses, statusEffect = SummaryStatus.updateStatuses SummaryStatus.Refresh SummaryStatus.initialStatuses
             let chatGpt, _ = ChatGpt.update (ChatGpt.Returned returned) chatGpt
-            { Projects = { initial with Busy = Some Loading }; Library = library; Reader = Reader.initial; Summary = Summary.initial; ChatGpt = chatGpt },
+            { Projects = { initial with Busy = Some Loading }; Library = library; Reader = Reader.initial; Summary = Summary.initial; ChatGpt = chatGpt; Statuses = statuses },
             Cmd.batch [ Ui.command http Fetch |> Cmd.map ProjectsMsg
                         Ui.chatGptCommand http this.Navigation chatGptEffect
+                        Ui.statusCommand http statusEffect
                         libraryEffect |> Option.map (Ui.libraryCommand http) |> Option.defaultValue Cmd.none ]
         Program.mkProgram start (Ui.update http this.Navigation) Ui.view

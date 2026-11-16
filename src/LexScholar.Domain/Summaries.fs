@@ -57,7 +57,45 @@ type DocumentSummary =
 /// The service's answer could not be read as the requested JSON.
 type Unparseable = Unparseable
 
+/// A summary belongs to one document in one project (F004 FR-011).
+type SummaryKey = { Project: System.Guid; Document: System.Guid }
+
+/// A finished summary as kept after it was generated: the F003 summary itself.
+type StoredSummary = DocumentSummary
+
+/// How far a running background summary is (F004 data model "Progress").
+[<RequireQualifiedAccess>]
+type Progress =
+    | Pages of processed: int * total: int
+    | Combining
+
+/// The state of a background summary job (memory only until it finishes).
+[<RequireQualifiedAccess>]
+type JobState =
+    | Running of Progress option
+    | Finished of StoredSummary
+    | Failed of code: string * detail: string * omitted: int option
+
+/// What the list markers show.
+[<RequireQualifiedAccess>]
+type SummaryStatus =
+    | Running
+    | Finished
+    | Failed
+
 module Summaries =
+    /// The marker a job state shows.
+    let statusOf (state: JobState) : SummaryStatus =
+        match state with
+        | JobState.Running _ -> SummaryStatus.Running
+        | JobState.Finished _ -> SummaryStatus.Finished
+        | JobState.Failed _ -> SummaryStatus.Failed
+
+    /// A project's marker from its summaries' statuses: any running, else any failed, else any finished.
+    let rollUp (statuses: SummaryStatus list) : SummaryStatus option =
+        [ SummaryStatus.Running; SummaryStatus.Failed; SummaryStatus.Finished ]
+        |> List.tryFind (fun status -> List.contains status statuses)
+
     /// Fewer readable characters than this in total is not enough to summarize.
     let minimumReadableCharacters = 200
 

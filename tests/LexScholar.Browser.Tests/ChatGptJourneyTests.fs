@@ -36,8 +36,8 @@ let private click (control: ILocator) = task {
 let private answer = """{"points":[{"text":"Main idea","pages":[1,2]},{"text":"Second idea","pages":[3]}]}"""
 let private usageUrl = "https://chatgpt.com/settings/usage"
 
-let private openDocument (page: IPage) = task {
-    let row = page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))
+let private openDocument (page: IPage) (fileName: string) = task {
+    let row = page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = fileName))
     do! click (button row "Open")
     do! Assertions.Expect(page.GetByRole(AriaRole.Heading, PageGetByRoleOptions(Name = "Reader"))).ToBeVisibleAsync() }
 
@@ -54,7 +54,12 @@ let private arrange (page: IPage) = task {
     do! Assertions.Expect(page.GetByText("Imported article-en.pdf.")).ToBeVisibleAsync()
     do! click (button (page.Locator("ul.documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))) "Add as Focused Source")
     do! Assertions.Expect(page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))).ToContainTextAsync("Focused Source")
-    do! openDocument page }
+    // A second document: a finished summary answers a repeated ask of the same document (F004), so the usage limit needs its own.
+    do! input.SetInputFilesAsync(Path.Combine(AppContext.BaseDirectory, "Fixtures", "summary", "article-pt.pdf"))
+    do! Assertions.Expect(page.GetByText("Imported article-pt.pdf.")).ToBeVisibleAsync()
+    do! click (button (page.Locator("ul.documents li").Filter(LocatorFilterOptions(HasText = "article-pt.pdf"))) "Add as Focused Source")
+    do! Assertions.Expect(page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = "article-pt.pdf"))).ToContainTextAsync("Focused Source")
+    do! openDocument page "article-en.pdf" }
 
 let private summarize (page: IPage) = click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = "Summarize", Exact = true)))
 let private panel (page: IPage) = page.Locator("section.summary")
@@ -104,7 +109,7 @@ let ``she signs in, summarizes on her plan, meets the usage limit and signs out`
         let! _ = page.ReloadAsync()
         do! Assertions.Expect(page.GetByRole(AriaRole.Heading, PageGetByRoleOptions(Name = "Your projects"))).ToBeVisibleAsync()
         do! Assertions.Expect(welcome).ToHaveCountAsync(0)
-        do! openDocument page
+        do! openDocument page "article-en.pdf"
         do! Assertions.Expect(page.Locator(".chatgpt-account")).ToContainTextAsync("Signed in to ChatGPT as researcher@example.test")
 
         // The first summary asks, naming the plan and her account.
@@ -122,15 +127,16 @@ let ``she signs in, summarizes on her plan, meets the usage limit and signs out`
         do! Assertions.Expect(using).ToContainTextAsync("Using ChatGPT plan")
         do! Assertions.Expect(using.GetByRole(AriaRole.Link, LocatorGetByRoleOptions(Name = "Manage usage"))).ToHaveAttributeAsync("href", usageUrl)
 
-        // The second summary goes straight through.
+        // Asking again after dismissing (which deletes the stored summary, F004) goes straight through, with no confirmation.
         do! click (button (panel page) "Dismiss")
         do! summarize page
         do! Assertions.Expect(panel page).ToContainTextAsync("Generated summary")
         do! Assertions.Expect(dialog).ToHaveCountAsync(0)
         Assert.Equal(2, (fake.RequestsTo("api.openai.com", "/v1/responses")).Length)
 
-        // The usage limit points at her usage settings and keeps her signed in.
+        // The usage limit, on the other document, points at her usage settings and keeps her signed in.
         do! click (button (panel page) "Dismiss")
+        do! openDocument page "article-pt.pdf"
         do! summarize page
         let alert = page.GetByRole(AriaRole.Alert).Filter(LocatorFilterOptions(HasText = "Usage limit reached"))
         do! Assertions.Expect(alert).ToBeVisibleAsync()

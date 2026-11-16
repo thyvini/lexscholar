@@ -12,6 +12,7 @@
     <Compile Include="DocumentRoles.fs" />
     <Compile Include="Summarize.fs" />
     <Compile Include="ChatGptAccess.fs" />
+    <Compile Include="SummaryJobs.fs" />
     <ProjectReference Include="../LexScholar.Domain/LexScholar.Domain.fsproj" />
   </ItemGroup>
 </Project>
