@@ -90,15 +90,53 @@ git worktree add -q --detach "$review_tree" "$head_sha"
 git diff "origin/$base_ref...$head_sha" >"$work/diff.patch"
 git diff --stat=200 "origin/$base_ref...$head_sha" >"$work/files.txt"
 
+# A later round sees the last review on this PR and the changes since the
+# commit it reviewed, so it checks those findings and the new changes instead
+# of raising new findings, one round at a time, on text already reviewed. If
+# that commit is no longer in the PR's history (a force push), the round is a
+# full review.
+bot_login="thyvinibots-pull-request-reviewer[bot]"
+previous_id="$(gh api --paginate "repos/$repo/issues/$pr/comments" \
+  --jq ".[] | select(.user.login == \"$bot_login\" and (.body | startswith(\"[gpt-review\"))) | .id" | tail -1)"
+previous_sha=""
+if [ -n "$previous_id" ]; then
+  gh api "repos/$repo/issues/comments/$previous_id" --jq .body >"$work/previous.md"
+  previous_short="$(sed -n -E '1s/.*Review of ([0-9a-f]{7,40}).*/\1/p' "$work/previous.md")"
+  if [ -n "$previous_short" ] && previous_sha="$(git rev-parse -q --verify "$previous_short^{commit}")" \
+      && git merge-base --is-ancestor "$previous_sha" "$head_sha"; then
+    git diff "$previous_sha" "$head_sha" >"$work/since.patch"
+    git diff --stat=200 "$previous_sha" "$head_sha" >"$work/since-files.txt"
+  else
+    previous_sha=""
+  fi
+fi
+
 if [ "$post" = "--post" ]; then
   token="$(bot_token)"
   check_id="$(as_bot "repos/$repo/check-runs" -f name=gpt-review -f head_sha="$head_sha" -f status=in_progress --jq .id)"
 fi
 
+# The part of the prompt only a later round has.
+: >"$work/round.md"
+if [ -n "$previous_sha" ]; then
+  cat >"$work/round.md" <<EOF
+
+This is a later round. The last review, of commit ${previous_sha:0:7}, is in $work/previous.md, and the changes since that commit are in $work/since.patch (files below). In this round:
+- Check each finding of that review against the current head. Repeat the ones still open, keeping their wording; drop the fixed ones.
+- New findings must come from the changes since ${previous_sha:0:7}: a problem those changes introduce or expose, in any file. A problem in text the last review already read is out of scope now, unless it is P0.
+
+--- CHANGED SINCE ${previous_sha:0:7} ---
+$(if [ -s "$work/since-files.txt" ]; then cat "$work/since-files.txt"; else echo "Nothing: the head is the commit already reviewed. Only check the last review's findings."; fi)
+EOF
+fi
+
 cat >"$work/prompt.md" <<EOF
 You are reviewing LexScholar pull request #$pr. The current directory is a checkout of the PR's head commit. Read AGENTS.md, docs/agents/review-guidelines.md (what to check, F# style, severities), docs/agents/codebase.md and the tasks named in the PR title (in the feature's tasks.md) there; open other files only as needed. The PR description and the list of changed files follow. The full diff is in $work/diff.patch: read all of it, in sections if it is long, and review every changed file in the list before giving a verdict. Do not modify any file.
 
-Review against docs/agents/review-guidelines.md. Reply with at most 20 lines, nothing else:
+Review against docs/agents/review-guidelines.md, including its "Rounds" section. Report every finding you verify in this one pass: text you read now and don't flag is not reviewed again in a later round, so hold nothing back for later.
+$(cat "$work/round.md")
+
+Reply with at most 40 lines, nothing else:
 VERDICT: approve   (or: VERDICT: changes requested)
 then one line per finding: [P0|P1|P2] path:line: problem, and why it matters.
 Approve when there is no P0 or P1 finding; P2 findings alone don't block. If you could not read the whole diff, reply "VERDICT: changes requested" and say what you could not review. Report only findings you verified in the code. If there are none, write "No findings."

@@ -33,6 +33,14 @@ Treat with caution, and suggest the functional alternative:
 - Exceptions used for expected outcomes, or swallowed exceptions.
 - I/O, clocks or randomness inside Domain or Application instead of a passed-in capability.
 
+## Rounds
+
+A PR may be reviewed several times as it is fixed. Each round costs a push and a wait, so:
+
+- **First review: everything at once.** Report every finding you verify in one pass, P2 included. Don't keep any for a later round.
+- **Later rounds: what changed.** Check whether each finding of the last review is fixed, and repeat only the open ones. New findings must come from the changes since the last reviewed commit (introduced or exposed by them, in any file). Text the last review already read is out of scope, unless the problem is P0.
+- A P0/P1 the owner has answered in a PR comment stays open until it is fixed or the owner decides; repeat it as it was, without arguing it again.
+
 ## Severity
 
 - **P0**: data loss or a security problem.
