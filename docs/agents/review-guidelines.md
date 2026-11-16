@@ -33,6 +33,15 @@ Treat with caution, and suggest the functional alternative:
 - Exceptions used for expected outcomes, or swallowed exceptions.
 - I/O, clocks or randomness inside Domain or Application instead of a passed-in capability.
 
+## Rounds
+
+A PR may be reviewed several times as it is fixed. Each round costs a push and a wait, so:
+
+- **First review: everything at once.** Report every finding you verify in one pass, P2 included. Don't keep any for a later round.
+- **Coverage:** report `COVERAGE: complete` only after reviewing the entire required scope, or `COVERAGE: incomplete` with what remains unread. An incomplete review cannot approve. Only a complete review may establish the next incremental baseline; missing coverage markers (including older reviews), incomplete coverage or a non-ancestor commit require a full review.
+- **Later rounds: what changed.** Read the incremental diff and previous findings; open the full diff or other files only as needed for context. Check whether each finding of the last review is fixed, and repeat only the open ones. New findings must come from the changes since the last reviewed commit (introduced or exposed by them, in any file). Text the last review already read is out of scope, unless the problem is P0.
+- A P0/P1 the owner has answered in a PR comment stays open until it is fixed or the owner decides; repeat it as it was, without arguing it again.
+
 ## Severity
 
 - **P0**: data loss or a security problem.
