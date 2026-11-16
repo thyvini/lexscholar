@@ -64,7 +64,8 @@ specs/006-summary-first-portuguese/
 
 ```text
 src/LexScholar.Client/
-├── Texts.fs              # NEW, compiled first: every interface text, citation and date formats, failure messages
+├── Texts.fs              # NEW, compiled first: every interface text, citation and date formats; no client types
+├── FailureTexts.fs       # NEW, after SummaryStatus.fs, before App.fs: Portuguese message per failure case (R3)
 ├── Projects.fs           # texts only
 ├── Library.fs            # + Opened document, + role change (from Reader.fs)
 ├── Reader.fs             # REMOVED
@@ -112,7 +113,7 @@ docs/agents/codebase.md   # updated: Texts, Library opened/role, DocumentEndpoin
 | T012 | `docs/agents/codebase.md` updated; quickstart manual validation in Firefox and Chromium (citation shows the page) | — | codebase.md, evidence |
 | T013 | Owner smoke check with her real ChatGPT plan, recorded | — | evidence |
 
-T002 blocks T003–T011 (same `App.fs` view), except T005, which needs only T001 (server and its own test files). T009 and T010 touch different views and can run in parallel after T008.
+T002 blocks T003–T011 (same `App.fs` view), except T005, which needs only T001 (server and its own test files). T010 follows T009, which creates `FailureTexts.fs`.
 
 ## Complexity Tracking
 
