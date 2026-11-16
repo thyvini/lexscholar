@@ -178,6 +178,45 @@ let ``Stop clears a running summary, the held call is cancelled and she can ask 
 
 let private documentRow (page: IPage) (fileName: string) = page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = fileName))
 
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T013"); Trait("Category", "Browser")>]
+let ``dismissing while the ask is still in flight stops the job that the late POST creates`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use fake = new FakeChatService(fun call -> if call = 1 then Hold answer else Reply answer)
+        use harness = TestHarness.Start(serveClient = true, settings = settings, summaryHandler = fake)
+        let! page = openApp browser harness
+        do! createProject page "Alpha"
+        do! importAndAdd page "article-en.pdf"
+        do! openDocument page "article-en.pdf"
+        // Hold the POST in the browser: the DELETE reaches the server before any job exists, then the POST lands.
+        let intercepted = TaskCompletionSource<IRoute>(TaskCreationOptions.RunContinuationsAsynchronously)
+        let handler (route: IRoute) : Task =
+            if route.Request.Method = "POST" then
+                intercepted.TrySetResult route |> ignore
+                Task.CompletedTask
+            else route.ContinueAsync()
+        let! _ = page.RouteAsync("**/summary", Func<IRoute, Task>(handler))
+        let deleted = TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)
+        let secondDeleted = TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)
+        let deletes = ref 0
+        page.Response.Add(fun response ->
+            if response.Request.Method = "DELETE" then
+                deletes.Value <- deletes.Value + 1
+                (if deletes.Value = 1 then deleted else secondDeleted).TrySetResult() |> ignore)
+        do! click (summarizeButton page)
+        let! route = intercepted.Task.WaitAsync(TimeSpan.FromSeconds 30.)
+        do! click (button (page.GetByRole(AriaRole.Status).Filter(LocatorFilterOptions(HasText = "Summarizing"))) "Dismiss")
+        do! deleted.Task.WaitAsync(TimeSpan.FromSeconds 30.)
+        Assert.Equal(0, fake.Requests.Length)
+        do! route.ContinueAsync()
+        // The POST creates the job after the first DELETE; the second DELETE stops it (whether or not its call reached the fake yet).
+        do! secondDeleted.Task.WaitAsync(TimeSpan.FromSeconds 30.)
+        do! Assertions.Expect(summarizeButton page).ToBeVisibleAsync()
+        do! Assertions.Expect(page.GetByRole(AriaRole.Status).Filter(LocatorFilterOptions(HasText = "Summarizing"))).ToHaveCountAsync(0)
+        // The server holds nothing: the status list read after the last DELETE has no marker for the document or the project.
+        do! Assertions.Expect((documentRow page "article-en.pdf").Locator(".summary-marker")).ToHaveCountAsync(0)
+        do! Assertions.Expect((projectRow page "Alpha").Locator(".summary-marker")).ToHaveCountAsync(0) })
+
+
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T010"); Trait("Category", "Browser")>]
 let ``while viewing another document the marker of a running summary turns to finished without a reload`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
