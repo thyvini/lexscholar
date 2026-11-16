@@ -21,6 +21,7 @@ Run `dotnet run --project src/LexScholar.Server`, open http://127.0.0.1:5000, wi
 5. **Missing file (FR-007)**: stop the app, rename the document's stored file in the data directory's originals folder, and start it again. "Abrir PDF" and a citation open a tab with "Documento indisponível" in Portuguese; the document is still in the library and the project. Restore the file.
 6. **Roles (FR-008)**: in the document list, change a document from Fonte principal to Fonte de referência; it moves section.
 7. **Excluir (FR-006)**: "Excluir", then "Cancelar": the summary stays. "Excluir", then "Excluir": the request is shown again, also after a restart.
+7b. **Fechar**: on a failed summary, "Fechar" removes the failure at once, with no confirmation.
 8. **Only ChatGPT (FR-005)**: with a summary service in the settings file, no screen offers or mentions it.
 9. **No English (SC-003)**: walk every screen and provoke an import failure (a non-PDF file) and a signed-out failure. Every text is Portuguese.
 

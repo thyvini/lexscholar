@@ -15,7 +15,8 @@ Every visible text comes from `src/LexScholar.Client/Texts.fs`, in Brazilian Por
 | Request | Resumir este documento; button Resumir |
 | Ready marker | Resumo pronto |
 | Stop | Parar |
-| Delete | Excluir (confirmation: "Excluir este resumo?", buttons Excluir / Cancelar) |
+| Delete | Excluir, on a finished summary (confirmation: "Excluir este resumo?", buttons Excluir / Cancelar) |
+| Close a failed summary | Fechar (immediate, no confirmation) |
 | Open PDF | Abrir PDF |
 | Cancel | Cancelar |
 | Generated label | Gerado para sua revisão. Não verificado. |

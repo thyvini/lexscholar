@@ -21,7 +21,8 @@ Removed with `Reader.fs`: `Opening`, `Open`, `Page`, `Navigation`, `CheckRequest
 
 - `followReader` becomes `followOpened (library: Library.Model)`, with the same effects on a view change (cancel, refresh).
 - Destination: the client always asks with `Destination.Plan`; a configured service is not offered (R7). `NotConfigured` stays as a case the client can receive, shown as the generic failure, and not described.
-- Delete confirmation: `Delete` (was `Dismiss`) on a shown or failed summary moves to `ConfirmingDelete`. `ConfirmDelete` then emits `DeleteSummary`, as `Dismiss` did. `CancelDelete` returns to the shown summary with nothing sent. `Stop` while a summary is generating stays immediate (F004 Stop, not a delete).
+- Delete confirmation, finished summary only: `Delete` (was `Dismiss`) on a shown summary moves to `ConfirmingDelete`. `ConfirmDelete` then emits `DeleteSummary`, as `Dismiss` did. `CancelDelete` returns to the shown summary with nothing sent.
+- A failed summary keeps an immediate action, "Fechar": it removes the failure at once, as `Dismiss` does today (emits `DeleteSummary`), with no confirmation. `Stop` while a summary is generating stays immediate (F004 Stop, not a delete).
 
 ### Texts (`src/LexScholar.Client/Texts.fs`, new)
 

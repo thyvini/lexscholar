@@ -35,7 +35,7 @@ The client is reorganized around the summary. Three columns (projects, the activ
 | Principle | How the design meets it |
 |---|---|
 | I. Integrity, verifiable evidence | A citation link's document is the opened document and its page is the first page of the citation's validated pages; nothing else builds the URL (R1). The journey tests check both the `href` and the request of the opened tab in both browsers; citation checks and omitted points are unchanged (FR-014). |
-| II. Privacy and control | No new data leaves the machine; fonts are served locally rather than from a CDN (R8). The confirmation before sending is unchanged except its language and the Portuguese help link (FR-013). Deleting a summary now asks first (FR-006) and still deletes it from storage; F002 tracking (`$12y`) unchanged. |
+| II. Privacy and control | No new data leaves the machine; fonts are served locally rather than from a CDN (R8). The confirmation before sending is unchanged except its language and the Portuguese help link (FR-013). Deleting a finished summary now asks first (FR-006); closing a failed one ("Fechar") stays immediate and still deletes it from storage; F002 tracking (`$12y`) unchanged. |
 | III. Human oversight | The label "Gerado para sua revisão. Não verificado." stays at the top of every summary; the summary stays visible in the app while she checks pages in browser tabs (FR-004). |
 | IV. Testability, reproducibility | Every behavior has a state, contract or journey test in both browsers; the visual page check is manual in both browsers and recorded as evidence (R1). The summary's context (service, model, date) stays, with the Brazilian date format. |
 | V. Simplicity | Removes a module (`Reader.fs`) and the content pre-check; one texts module instead of a localization framework (R3); no new packages; the server changes in one endpoint. |
@@ -98,17 +98,17 @@ docs/agents/codebase.md   # updated: Texts, Library opened/role, DocumentEndpoin
 
 | # | Slice | Story | Main files |
 |---|---|---|---|
-| T001 | Shared pieces: `Texts.fs` (glossary, `pages`/`pageRange`, `dateTime`), `Ui.fs` test helpers, tokens and fonts in `app.css`/`fonts/`, `lang="pt-BR"`, rename `ReaderEndpoints` → `DocumentEndpoints` | — | Texts.fs, Ui.fs, TextsTests.fs, app.css, index.html, fonts/, Server fsproj |
+| T001 | Shared pieces: `Texts.fs` (glossary, `pages`/`pageRange`, `dateTime`), `Ui.fs` test helpers, tokens and fonts in `app.css`/`fonts/`, `lang="pt-BR"` | — | Texts.fs, Ui.fs, TextsTests.fs, app.css, index.html, fonts/ |
 | T002 | Three-column layout and top bar (screen 06 frame): projects sidebar, project document list with sections "Fontes principais"/"Fontes de referência" and status markers, main area empty state | US1 | App.fs (layout), app.css |
 | T003 | Opening a document fills the main area with its summary, request or progress; `Opened` in `Library.fs`; `Reader.fs` and its tests removed | US1 | Library.fs, Summary.fs, App.fs, LibraryStateTests, WorkspaceJourneyTests |
 | T004 | "Abrir PDF" and citations as `p. N`/`pp. N–M` links in a new tab at the page; both browsers | US1 | App.fs, WorkspaceJourneyTests |
-| T005 | Missing file: Portuguese page in the new tab (navigation answer) | US1 | DocumentEndpoints.fs, DocumentContentContractTests, WorkspaceJourneyTests |
+| T005 | Missing file: Portuguese page in the new tab (navigation answer); rename `ReaderEndpoints` → `DocumentEndpoints` | US1 | DocumentEndpoints.fs, Endpoints.fs, Server fsproj, DocumentContentContractTests, WorkspaceJourneyTests |
 | T006 | Role change in the document list | US1 | Library.fs, App.fs, LibraryStateTests, WorkspaceJourneyTests |
 | T007 | Only her ChatGPT plan offered; settings-file texts and choice gone | US1 | Summary.fs, App.fs, SummaryStateTests, PreSend/Summary journeys |
-| T008 | "Excluir" with confirmation ("Excluir"/"Cancelar") | US1 | Summary.fs, App.fs, SummaryStateTests, BackgroundSummaryJourneyTests |
+| T008 | "Excluir" with confirmation ("Excluir"/"Cancelar") on a finished summary; "Fechar" stays immediate on a failed one | US1 | Summary.fs, App.fs, SummaryStateTests, BackgroundSummaryJourneyTests |
 | T009 | Projects, library and import in Portuguese, first-run screen (05) layout and texts, their failures | US2 | Texts.fs, App.fs, Project/Library journeys |
 | T010 | Summary and ChatGPT texts: request (08, without the instruction), confirmation (04) with the pt-BR help link, progress, ready, failures with generic fallback, "Usando seu plano ChatGPT · Gerenciar uso" | US2 | Texts.fs, App.fs, ChatGpt journeys |
-| T011 | Dates in `dd/MM/yyyy HH:mm` wherever shown; sweep for remaining English (journey that walks every screen and checks no English text) | US2 | App.fs, a journey sweep |
+| T011 | Dates in `dd/MM/yyyy HH:mm` wherever shown; the remaining texts moved to `Texts`. SC-003 (no English) is checked by hand, quickstart step 9 | US2 | Texts.fs, App.fs, TextsTests.fs |
 | T012 | `docs/agents/codebase.md` updated; quickstart manual validation in Firefox and Chromium (citation shows the page) | — | codebase.md, evidence |
 | T013 | Owner smoke check with her real ChatGPT plan, recorded | — | evidence |
 
