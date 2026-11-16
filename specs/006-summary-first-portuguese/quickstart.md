@@ -12,7 +12,7 @@ All journeys run in Chromium and Firefox. CI runs the full suite.
 
 ## Manual, in Firefox and then Chromium
 
-Run `dotnet run --project src/LexScholar.Server`, open http://127.0.0.1:5000, with a fresh data directory.
+Use a throwaway data directory, never your real workspace: `LexScholar__DataDirectory=$(mktemp -d /tmp/lexscholar-f006.XXXX) dotnet run --project src/LexScholar.Server`, then open http://127.0.0.1:5000. Every step below, including moving a stored file in step 5, happens in that directory only.
 
 1. **First run (screen 05)**: the welcome shows the three steps in Portuguese. Create the project "Dissertação" and import `tests/Fixtures/summary/` PDFs. The project list shows "Projetos", "Biblioteca", "Fontes principais", "Fontes de referência".
 2. **Summary first**: open a document. The main area shows "Resumir este documento" and "Resumir", and there is no page view. Sign in with "Continuar com o ChatGPT" and summarize. The confirmation reads "Enviar documentos ao ChatGPT?", and its link opens the pt-BR help article. Progress shows, then the summary with "Gerado para sua revisão. Não verificado." and the date as dd/mm/aaaa, hh:mm.
