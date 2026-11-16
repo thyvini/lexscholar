@@ -95,25 +95,25 @@ docs/agents/codebase.md   # updated: Texts, Library opened/role, DocumentEndpoin
 
 ## Task outline (for /speckit-tasks)
 
-13 tasks, in the 10–15 budget, so no split (R9). US1 slices write their texts straight into `Texts.fs` in Portuguese; US2 slices cover the screens and messages US1 doesn't touch.
+13 tasks, in the 10–15 budget, so no split (R9). US1 slices write their texts straight into `Texts.fs` in Portuguese; US2 slices cover the screens and messages US1 doesn't touch. Every slice introducing or changing a module or pattern updates `docs/agents/codebase.md` in the same PR; T012 audits those updates.
 
 | # | Slice | Story | Main files |
 |---|---|---|---|
-| T001 | Shared pieces: `Texts.fs` (glossary, `pages`/`pageRange`, `dateTime`), `Ui.fs` test helpers, tokens and fonts in `app.css`/`fonts/`, `lang="pt-BR"` | — | Texts.fs, Ui.fs, TextsTests.fs, app.css, index.html, fonts/ |
+| T001 | Shared pieces: `Texts.fs` (glossary, `pages`/`pageRange`, `dateTime`), `Ui.fs` test helpers, tokens and fonts in `app.css`/`fonts/`, `lang="pt-BR"` | — | Texts.fs, Ui.fs, TextsTests.fs, app.css, index.html, fonts/, codebase.md |
 | T002 | Three-column layout and top bar (screen 06 frame): projects sidebar, project document list with sections "Fontes principais"/"Fontes de referência" and status markers, main area empty state | US1 | App.fs (layout), app.css |
-| T003 | "Abrir PDF" and citations as `p. N`/`pp. N–M` links in a new tab at the page, before the reader goes, so citations stay checkable; both browsers | US1 | App.fs, WorkspaceJourneyTests |
-| T004 | Opening a document fills the main area with its summary, request or progress; `Opened` and the role-change state in `Library.fs`; `Reader.fs` and its tests removed | US1 | Library.fs, Summary.fs, App.fs, LibraryStateTests, WorkspaceJourneyTests |
-| T005 | Missing file: Portuguese page in the new tab (navigation answer); rename `ReaderEndpoints` → `DocumentEndpoints` | US1 | DocumentEndpoints.fs, Endpoints.fs, Server fsproj, DocumentContentContractTests, WorkspaceJourneyTests |
+| T003 | "Abrir PDF" and citations as `p. N`/`pp. N–M` links in a new tab at the page, before the reader goes, so citations stay checkable; both browsers | US1 | App.fs, WorkspaceJourneyTests, codebase.md |
+| T004 | Opening a document fills the main area with its summary, request or progress; `Opened` and the role-change state in `Library.fs`; `Reader.fs` and its tests removed | US1 | Library.fs, Summary.fs, App.fs, LibraryStateTests, WorkspaceJourneyTests, codebase.md |
+| T005 | Missing file: Portuguese page in the new tab (navigation answer); rename `ReaderEndpoints` → `DocumentEndpoints` | US1 | DocumentEndpoints.fs, Endpoints.fs, Server fsproj, DocumentContentContractTests, MissingFileJourneyTests, codebase.md |
 | T006 | Role change in the document list (state moved into Library.fs by T004) | US1 | App.fs, WorkspaceJourneyTests |
-| T007 | Only her ChatGPT plan offered; settings-file texts and choice gone | US1 | Summary.fs, App.fs, SummaryStateTests, PreSend/Summary journeys |
-| T008 | "Excluir" with confirmation ("Excluir"/"Cancelar") on a finished summary; "Fechar" stays immediate on a failed one | US1 | Summary.fs, App.fs, SummaryStateTests, BackgroundSummaryJourneyTests |
-| T009 | Projects, library and import in Portuguese, first-run screen (05) layout and texts, their failures | US2 | Texts.fs, App.fs, Project/Library journeys |
-| T010 | Summary and ChatGPT texts: request (08, without the instruction), confirmation (04) with the pt-BR help link, progress, ready, failures with generic fallback, "Usando seu plano ChatGPT · Gerenciar uso" | US2 | Texts.fs, App.fs, ChatGpt journeys |
+| T007 | Only her ChatGPT plan offered for new requests; settings-file explanation and choice gone; historical host/model/date/context retained, never given plan attribution | US1 | Summary.fs, App.fs, SummaryStateTests, PreSend/Summary journeys, codebase.md |
+| T008 | "Excluir" with confirmation ("Excluir"/"Cancelar") on a finished summary; "Fechar" stays immediate on a failed one | US1 | Summary.fs, App.fs, SummaryStateTests, BackgroundSummaryJourneyTests, codebase.md |
+| T009 | Projects, library and import in Portuguese, first-run screen (05) layout and texts, their failures | US2 | Texts.fs, FailureTexts.fs, App.fs, Project/Library journeys, codebase.md |
+| T010 | Summary and ChatGPT texts: request (08, without the instruction), confirmation (04) with the pt-BR help link, progress, ready, failures with generic fallback, "Usando seu plano ChatGPT · Gerenciar uso" | US2 | Texts.fs, FailureTexts.fs, App.fs, ChatGpt journeys, codebase.md |
 | T011 | Dates in `dd/MM/yyyy HH:mm` wherever shown; the remaining texts moved to `Texts`. SC-003 (no English) is checked by hand, quickstart step 9 | US2 | Texts.fs, App.fs, TextsTests.fs |
-| T012 | `docs/agents/codebase.md` updated; quickstart manual validation in Firefox and Chromium (citation shows the page) | — | codebase.md, evidence |
+| T012 | Audit incremental code-map updates; quickstart manual validation in Firefox and Chromium (citation shows the page; historical provenance retained) | — | codebase.md, evidence |
 | T013 | Owner smoke check with her real ChatGPT plan, recorded | — | evidence |
 
-T002 blocks T003–T011 (same `App.fs` view), except T005, which needs only T001 (server and its own test files). T010 follows T009, which creates `FailureTexts.fs`.
+Schedule T001–T013 in numeric order: client slices share `App.fs`, and code-map writers share `docs/agents/codebase.md`. T005's behavior needs only T001, but its code-map update is serialized after T004, before T006; it is not `[P]`. T010 follows T009, which creates `FailureTexts.fs`. T001, T003, T004, T005, T007, T008, T009 and T010 own code-map updates as listed; other slices update it if they change a module or pattern. T012 audits rather than defers this documentation.
 
 ## Complexity Tracking
 

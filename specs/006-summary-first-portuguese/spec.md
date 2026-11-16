@@ -33,7 +33,7 @@ When the researcher opens a document in a project, the main area shows its summa
 3. **Given** a summary of the document is generating, **When** she opens it, **Then** the main area shows its progress and Stop (F004).
 4. **Given** she has opened a document, **When** she selects "Open PDF", **Then** the document opens in a new browser tab and the summary stays where it was in the app.
 5. **Given** a summary point cites page 3, **When** she selects its citation *p. 3*, **Then** a new tab shows page 3 of that same document; for a range *pp. 4–6* the tab opens at page 4.
-6. **Given** the settings file configures a summary service, **When** she uses any part of the interface, **Then** that service is neither offered nor mentioned, and summaries go through her ChatGPT plan only.
+6. **Given** the settings file configures a summary service, **When** she requests a new summary, **Then** only her ChatGPT plan is offered. Historical summaries retain their recorded service host, model, date and context, without ChatGPT-plan attribution for configured-service summaries.
 7. **Given** a stored summary is shown, **When** she selects "Delete" and confirms, **Then** the summary is deleted from storage as F004 FR-009 describes, and the request to summarize the document is shown again.
 8. **Given** a summary failed, **When** she selects "Fechar", **Then** the failure is removed at once, with no confirmation, and the request is shown again.
 
@@ -66,7 +66,7 @@ Every text she sees is in Brazilian Portuguese, with Brazilian dates and times (
 - A summary is generating when she opens "Open PDF": generation continues (F004).
 - Her browser blocks new tabs: the browser's own notice applies; the app does not work around it.
 - A summary stored before this feature, with points and omitted points: shown with the new citation links, unchanged otherwise.
-- A summary stored before this feature through the settings-file service: its context shows "Serviço configurado" in place of the service's address, then the model and the date; no other text names the settings file.
+- A summary stored before this feature through the settings-file service: its context retains the recorded service host (`generated.ServiceHost`), model and date, alongside the existing context. This historical provenance is an exception to hiding configured-service UI; it never receives ChatGPT-plan attribution.
 - A server message with no Portuguese text (an unforeseen failure): she sees a generic Portuguese failure message, never English or technical text.
 - The document's own text and the summary's content are not translated: summaries in Portuguese whatever the document's language are F007.
 
@@ -78,7 +78,7 @@ Every text she sees is in Brazilian Portuguese, with Brazilian dates and times (
 - **FR-002**: An "Open PDF" action MUST open the opened document in a new browser tab.
 - **FR-003**: Replaces F003 FR-005. Each page citation MUST be a link written like a reference: *p. N* for one page, *pp. N–M* for a range. Selecting it MUST open the same document in a new browser tab at page N. A citation MUST NOT open another document or another page (constitution Principle I).
 - **FR-004**: The summary, its generated-content label and its context MUST stay visible in the app while she checks citations in browser tabs (constitution Principle III).
-- **FR-005**: Replaces F003 FR-010 and F005 FR-002 as far as the interface goes. The interface MUST offer her ChatGPT plan as the only summary service and MUST NOT offer or mention the settings-file service anywhere. The settings file and the backend's support for it are unchanged.
+- **FR-005**: Replaces F003 FR-010 and F005 FR-002 as far as new requests in the interface go. The interface MUST offer only her ChatGPT plan for new summaries and MUST hide configured-service choices and settings-file explanations. Historical summary provenance is an explicit exception: retain the recorded service host, model, date and existing context (FR-014), without attributing configured-service summaries to her ChatGPT plan. The settings file and the backend's support for it are unchanged.
 - **FR-006**: Replaces F003 FR-006's "dismiss" wording. On a finished summary, the action that removes it MUST be called "Excluir" (Delete) and MUST delete it from storage as F004 FR-009 describes. Before deleting it MUST ask her to confirm, offering "Excluir" and "Cancelar"; "Cancelar" MUST leave the summary unchanged. On a failed summary, "Fechar" MUST remove the failure at once, with no confirmation, as F004's dismissal does.
 - **FR-007**: When the stored file of a document is missing or unreadable (F001 FR-017) and she selects "Open PDF" or a citation, the app MUST inform her and MUST NOT change the library record or project associations. The new tab MUST show a short Portuguese page saying the document's file was not found or cannot be read, and no technical error.
 - **FR-008**: She MUST be able to change a document's role in the active project (Fonte principal / Fonte de referência) from that document's entry in the project's document list, with the same rules as before; the action moves there from the removed reader.
@@ -103,7 +103,7 @@ Every text she sees is in Brazilian Portuguese, with Brazilian dates and times (
 - **SC-002**: Opening a document with a stored summary shows the summary with no further action, in one step.
 - **SC-003**: A walk through every screen, state and provocable server failure in both browsers finds no English text and no glossary term used inconsistently.
 - **SC-004**: Every date and time shown follows dd/mm/aaaa and hh:mm.
-- **SC-005**: With a settings-file service configured, no screen offers or mentions it.
+- **SC-005**: With a settings-file service configured, new requests offer only her ChatGPT plan, with no configured-service choice or settings-file explanation. Historical configured-service summaries still show their recorded host, model, date and context, never ChatGPT-plan attribution.
 - **SC-006**: All F003, F004 and F005 acceptance scenarios not replaced here still pass, with the Portuguese texts.
 
 ## Assumptions

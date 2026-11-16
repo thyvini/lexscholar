@@ -22,7 +22,7 @@ Use a throwaway data directory, never your real workspace: create a new one at t
 6. **Roles (FR-008)**: in the document list, change a document from Fonte principal to Fonte de referência; it moves section.
 7. **Excluir (FR-006)**: "Excluir", then "Cancelar": the summary stays. "Excluir", then "Excluir": the request is shown again, also after a restart.
 7b. **Fechar**: on a failed summary, "Fechar" removes the failure at once, with no confirmation.
-8. **Only ChatGPT (FR-005)**: with a summary service in the settings file, no screen offers or mentions it.
+8. **Only ChatGPT for new requests (FR-005)**: with a summary service in the settings file, new requests offer only her ChatGPT plan, with no configured-service choice or settings-file explanation. Open a stored configured-service summary: its recorded host, model, date and existing context remain visible, and it never shows "Usando seu plano ChatGPT · Gerenciar uso". Historical provenance is the explicit exception to hiding configured-service UI.
 9. **No English (SC-003)**: walk every screen and provoke an import failure (a non-PDF file) and a signed-out failure. Every text is Portuguese.
 
 Record the results in `evidence/` (T012, T013).
