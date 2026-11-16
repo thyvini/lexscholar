@@ -9,7 +9,7 @@ No storage change: no migration, no new table, column or file. Stored summaries 
 | Field | Type | Rule |
 |---|---|---|
 | `Opened` | `Guid option` | The document of the active project shown in the main area. Set by opening a row. Cleared when the active project changes or the document leaves the project's associations (the rules of `Reader.followLibrary`). |
-| `ChangingRole` | `Guid option` | Moved from `Reader`: one role change at a time; other changes are ignored while one runs. |
+| `ChangingRole` | `Guid option` | Moved from `Reader` in T003: one role change at a time; other changes are ignored while one runs. |
 | `RoleStale` | `bool` | Moved from `Reader`: a role change answered after the project changed doesn't show its error on the new visit. |
 | `RoleError` | failure option | Moved from `Reader.Error` (role cases only). |
 

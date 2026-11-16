@@ -48,7 +48,7 @@ Decisions for [plan.md](plan.md). Each has the decision, why, and the alternativ
 
 ## R7. Only her ChatGPT plan in the interface (FR-005)
 
-- **Decision**: The client stops offering a destination choice. `Summary.fs` keeps the `Destination` type, but the client asks only for `Destination.Plan` and treats a configured service in `GET /api/summary/destinations` as absent. When she isn't signed in, the request to summarize offers "Continuar com o ChatGPT" and nothing else, with no settings-file explanation. The texts for `NotConfigured` and the settings file are removed. Server code, contract and settings file are unchanged.
+- **Decision**: The client stops offering a destination choice. `Summary.fs` keeps the `Destination` type, but the client asks only for `Destination.Plan` and treats a configured service in `GET /api/summary/destinations` as absent. When she isn't signed in, the request to summarize offers "Continuar com o ChatGPT" and nothing else, with no settings-file explanation. The texts for `NotConfigured` and the settings file are removed. A summary stored earlier through the settings-file service shows "Serviço configurado" in its context in place of the service's address, so its context still says how it was made (Principle IV) without naming the settings file. Server code, contract and settings file are unchanged.
 - **Why**: It is the smallest change that meets FR-005: the server still accepts both destinations, and only the client's request and texts change. If the server has a summary for the pair from either destination, it is still shown (F004).
 - **Alternatives**: removing the configured destination from the server response (it changes the backend, which the spec keeps).
 

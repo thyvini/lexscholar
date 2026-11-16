@@ -27,6 +27,7 @@ Every visible text comes from `src/LexScholar.Client/Texts.fs`, in Brazilian Por
 | Sign-in button | Continuar com o ChatGPT |
 | Role change actions | Tornar fonte principal / Tornar fonte de referência |
 | Generic failure | Algo deu errado. Tente novamente. |
+| Service of an older summary made through the settings file (in its context) | Serviço configurado |
 
 The other texts follow the mockups (screens 04, 05, 06, 08) where they show them, for example the confirmation body and its info note, the first-run steps, "8 páginas · Fonte principal em Dissertação", and "2 sem texto".
 

@@ -35,12 +35,13 @@ When the researcher opens a document in a project, the main area shows its summa
 5. **Given** a summary point cites page 3, **When** she selects its citation *p. 3*, **Then** a new tab shows page 3 of that same document; for a range *pp. 4–6* the tab opens at page 4.
 6. **Given** the settings file configures a summary service, **When** she uses any part of the interface, **Then** that service is neither offered nor mentioned, and summaries go through her ChatGPT plan only.
 7. **Given** a stored summary is shown, **When** she selects "Delete" and confirms, **Then** the summary is deleted from storage as F004 FR-009 describes, and the request to summarize the document is shown again.
+8. **Given** a summary failed, **When** she selects "Fechar", **Then** the failure is removed at once, with no confirmation, and the request is shown again.
 
 ---
 
 ### User Story 2 - The interface in Brazilian Portuguese (Priority: P1)
 
-Every text she sees is in Brazilian Portuguese, with Brazilian dates and times (14/11/2026, 18:54): labels, buttons, statuses, confirmations, empty states, errors and failure messages, including messages that come from the server. There is no language choice. The terms in FR-012 are used consistently.
+Every text she sees is in Brazilian Portuguese, with Brazilian dates and times (14/11/2026 18:54): labels, buttons, statuses, confirmations, empty states, errors and failure messages, including messages that come from the server. There is no language choice. The terms in FR-012 are used consistently.
 
 **Why this priority**: She works in Portuguese; an English interface slows her down and makes failure messages harder to act on.
 
@@ -50,7 +51,7 @@ Every text she sees is in Brazilian Portuguese, with Brazilian dates and times (
 
 1. **Given** any screen or state of the app, **When** she views it, **Then** every visible text is in Brazilian Portuguese.
 2. **Given** an operation fails on the server (for example an invalid PDF on import, or a summary that cannot be completed), **When** the failure is shown, **Then** its message is in Brazilian Portuguese and says what happened and what she can do.
-3. **Given** a date or time is shown (for example when a summary was made), **When** she reads it, **Then** it uses the Brazilian format, 14/11/2026 and 18:54 (24-hour).
+3. **Given** a date or time is shown (for example when a summary was made), **When** she reads it, **Then** it reads as 14/11/2026 18:54: dd/mm/aaaa, a space, then 24-hour hh:mm, with no comma.
 4. **Given** she is not signed in, **When** she is offered sign-in, **Then** the button reads "Continuar com o ChatGPT", and the confirmation's help link opens the Portuguese version of OpenAI's help article.
 5. **Given** a summary is shown, **When** she reads its label, **Then** it reads "Gerado para sua revisão. Não verificado."
 
@@ -65,6 +66,7 @@ Every text she sees is in Brazilian Portuguese, with Brazilian dates and times (
 - A summary is generating when she opens "Open PDF": generation continues (F004).
 - Her browser blocks new tabs: the browser's own notice applies; the app does not work around it.
 - A summary stored before this feature, with points and omitted points: shown with the new citation links, unchanged otherwise.
+- A summary stored before this feature through the settings-file service: its context shows "Serviço configurado" in place of the service's address, then the model and the date; no other text names the settings file.
 - A server message with no Portuguese text (an unforeseen failure): she sees a generic Portuguese failure message, never English or technical text.
 - The document's own text and the summary's content are not translated: summaries in Portuguese whatever the document's language are F007.
 
@@ -77,11 +79,11 @@ Every text she sees is in Brazilian Portuguese, with Brazilian dates and times (
 - **FR-003**: Replaces F003 FR-005. Each page citation MUST be a link written like a reference: *p. N* for one page, *pp. N–M* for a range. Selecting it MUST open the same document in a new browser tab at page N. A citation MUST NOT open another document or another page (constitution Principle I).
 - **FR-004**: The summary, its generated-content label and its context MUST stay visible in the app while she checks citations in browser tabs (constitution Principle III).
 - **FR-005**: Replaces F003 FR-010 and F005 FR-002 as far as the interface goes. The interface MUST offer her ChatGPT plan as the only summary service and MUST NOT offer or mention the settings-file service anywhere. The settings file and the backend's support for it are unchanged.
-- **FR-006**: Replaces F003 FR-006's "dismiss" wording. The action that removes a summary MUST be called "Excluir" (Delete) and MUST delete it from storage as F004 FR-009 describes. Before deleting it MUST ask her to confirm, offering "Excluir" and "Cancelar"; "Cancelar" MUST leave the summary unchanged.
+- **FR-006**: Replaces F003 FR-006's "dismiss" wording. On a finished summary, the action that removes it MUST be called "Excluir" (Delete) and MUST delete it from storage as F004 FR-009 describes. Before deleting it MUST ask her to confirm, offering "Excluir" and "Cancelar"; "Cancelar" MUST leave the summary unchanged. On a failed summary, "Fechar" MUST remove the failure at once, with no confirmation, as F004's dismissal does.
 - **FR-007**: When the stored file of a document is missing or unreadable (F001 FR-017) and she selects "Open PDF" or a citation, the app MUST inform her and MUST NOT change the library record or project associations. The new tab MUST show a short Portuguese page saying the document's file was not found or cannot be read, and no technical error.
 - **FR-008**: She MUST be able to change a document's role in the active project (Fonte principal / Fonte de referência) from that document's entry in the project's document list, with the same rules as before; the action moves there from the removed reader.
 - **FR-009**: Every text the interface shows MUST be in Brazilian Portuguese: labels, buttons, statuses, confirmations, empty states, errors and failure messages, including messages that originate on the server. A server failure with no specific Portuguese message MUST be shown as a generic Portuguese failure message, never as English or technical text.
-- **FR-010**: Dates MUST be shown as dd/mm/aaaa (14/11/2026) and times as 24-hour hh:mm (18:54).
+- **FR-010**: Dates MUST be shown as dd/mm/aaaa (14/11/2026) and times as 24-hour hh:mm (18:54); a date with its time reads "14/11/2026 18:54", with no comma (mockup 06 shows a comma; this requirement wins).
 - **FR-011**: The interface MUST NOT offer a language choice.
 - **FR-012**: The interface MUST use these terms consistently: Projetos; Biblioteca; Fonte principal / Fontes principais (focused source); Fonte de referência / Fontes de referência (reference source); Adicionar documentos; Resumo; Resumir este documento; Resumir; Resumo pronto; Parar; Excluir; Abrir PDF; Cancelar; "Gerado para sua revisão. Não verificado."; Conectado ao ChatGPT; Usando seu plano ChatGPT (replaces F005 FR-006's English label); Gerenciar uso; Enviar documentos ao ChatGPT?; Enviar e resumir; Continuar com o ChatGPT (the sign-in button); citations p. 3, pp. 4–6.
 - **FR-013**: Replaces F005 FR-010's link. The confirmation before sending MUST link to the Portuguese version of OpenAI's help article: https://help.openai.com/pt-br/articles/20001542-using-your-chatgpt-plan-in-other-apps-and-sites

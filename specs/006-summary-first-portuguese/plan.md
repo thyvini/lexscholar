@@ -100,10 +100,10 @@ docs/agents/codebase.md   # updated: Texts, Library opened/role, DocumentEndpoin
 |---|---|---|---|
 | T001 | Shared pieces: `Texts.fs` (glossary, `pages`/`pageRange`, `dateTime`), `Ui.fs` test helpers, tokens and fonts in `app.css`/`fonts/`, `lang="pt-BR"` | — | Texts.fs, Ui.fs, TextsTests.fs, app.css, index.html, fonts/ |
 | T002 | Three-column layout and top bar (screen 06 frame): projects sidebar, project document list with sections "Fontes principais"/"Fontes de referência" and status markers, main area empty state | US1 | App.fs (layout), app.css |
-| T003 | Opening a document fills the main area with its summary, request or progress; `Opened` in `Library.fs`; `Reader.fs` and its tests removed | US1 | Library.fs, Summary.fs, App.fs, LibraryStateTests, WorkspaceJourneyTests |
+| T003 | Opening a document fills the main area with its summary, request or progress; `Opened` and the role-change state in `Library.fs`; `Reader.fs` and its tests removed | US1 | Library.fs, Summary.fs, App.fs, LibraryStateTests, WorkspaceJourneyTests |
 | T004 | "Abrir PDF" and citations as `p. N`/`pp. N–M` links in a new tab at the page; both browsers | US1 | App.fs, WorkspaceJourneyTests |
 | T005 | Missing file: Portuguese page in the new tab (navigation answer); rename `ReaderEndpoints` → `DocumentEndpoints` | US1 | DocumentEndpoints.fs, Endpoints.fs, Server fsproj, DocumentContentContractTests, WorkspaceJourneyTests |
-| T006 | Role change in the document list | US1 | Library.fs, App.fs, LibraryStateTests, WorkspaceJourneyTests |
+| T006 | Role change in the document list (state moved into Library.fs by T003) | US1 | App.fs, WorkspaceJourneyTests |
 | T007 | Only her ChatGPT plan offered; settings-file texts and choice gone | US1 | Summary.fs, App.fs, SummaryStateTests, PreSend/Summary journeys |
 | T008 | "Excluir" with confirmation ("Excluir"/"Cancelar") on a finished summary; "Fechar" stays immediate on a failed one | US1 | Summary.fs, App.fs, SummaryStateTests, BackgroundSummaryJourneyTests |
 | T009 | Projects, library and import in Portuguese, first-run screen (05) layout and texts, their failures | US2 | Texts.fs, App.fs, Project/Library journeys |
@@ -112,7 +112,7 @@ docs/agents/codebase.md   # updated: Texts, Library opened/role, DocumentEndpoin
 | T012 | `docs/agents/codebase.md` updated; quickstart manual validation in Firefox and Chromium (citation shows the page) | — | codebase.md, evidence |
 | T013 | Owner smoke check with her real ChatGPT plan, recorded | — | evidence |
 
-T002 blocks T003–T011 (same `App.fs` view). T005 is server-side and can run alongside T003. T009 and T010 touch different views and can run in parallel after T008.
+T002 blocks T003–T011 (same `App.fs` view), except T005, which needs only T001 (server and its own test files). T009 and T010 touch different views and can run in parallel after T008.
 
 ## Complexity Tracking
 
