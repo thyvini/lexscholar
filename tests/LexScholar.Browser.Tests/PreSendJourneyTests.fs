@@ -33,10 +33,11 @@ let private answer = """{"points":[{"text":"Main idea","pages":[1,2]}]}"""
 
 let private selectProject (page: IPage) (name: string) = task {
     let row = page.Locator("ul.projects li").Filter(LocatorFilterOptions(HasText = name))
-    do! click (button row "Select")
-    do! Assertions.Expect(row.Locator("strong.active")).ToHaveTextAsync("Active") }
+    do! click (button row LexScholar.Client.Texts.select)
+    do! Assertions.Expect(row.Locator("strong.active")).ToHaveTextAsync(LexScholar.Client.Texts.active) }
 
 let private importAndAdd (page: IPage) (fileName: string) = task {
+    do! click (button (page.Locator("body")) LexScholar.Client.Texts.library)
     let input = page.GetByLabel("Import a PDF")
     do! Assertions.Expect(input).ToBeVisibleAsync()
     do! input.SetInputFilesAsync(Path.Combine(AppContext.BaseDirectory, "Fixtures", "summary", fileName))
@@ -57,9 +58,9 @@ let ``leaving a document while the confirmation is open sends nothing and she re
         let! context = browser.NewContextAsync(BrowserNewContextOptions(BaseURL = harness.Client.BaseAddress.ToString()))
         let! page = context.NewPageAsync()
         let! _ = page.GotoAsync("/")
-        do! Assertions.Expect(page.GetByRole(AriaRole.Heading, PageGetByRoleOptions(Name = "Your projects"))).ToBeVisibleAsync()
-        do! page.GetByLabel("Project name").FillAsync("Alpha")
-        do! page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = "Create project")).ClickAsync()
+        do! Assertions.Expect(page.GetByRole(AriaRole.Heading, PageGetByRoleOptions(Name = LexScholar.Client.Texts.projects, Exact = true)).First).ToBeVisibleAsync()
+        do! page.GetByLabel(LexScholar.Client.Texts.projectName).FillAsync("Alpha")
+        do! page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = LexScholar.Client.Texts.createProject)).ClickAsync()
         do! selectProject page "Alpha"
         do! importAndAdd page "article-en.pdf"
         do! importAndAdd page "article-pt.pdf"

@@ -25,7 +25,7 @@ let private openApp (browser: IBrowser) (harness: TestHarness) = task {
     let! context = browser.NewContextAsync(BrowserNewContextOptions(BaseURL = harness.Client.BaseAddress.ToString()))
     let! page = context.NewPageAsync()
     let! _ = page.GotoAsync("/")
-    do! Assertions.Expect(page.GetByRole(AriaRole.Heading, PageGetByRoleOptions(Name = "Your projects"))).ToBeVisibleAsync()
+    do! Assertions.Expect(page.GetByRole(AriaRole.Heading, PageGetByRoleOptions(Name = LexScholar.Client.Texts.projects, Exact = true)).First).ToBeVisibleAsync()
     return page }
 
 let private button (scope: ILocator) (name: string) =
@@ -43,15 +43,16 @@ let private projectRow (page: IPage) (name: string) = page.Locator("ul.projects 
 
 let private selectProject (page: IPage) (name: string) = task {
     let row = projectRow page name
-    do! click (button row "Select")
-    do! Assertions.Expect(row.Locator("strong.active")).ToHaveTextAsync("Active") }
+    do! click (button row LexScholar.Client.Texts.select)
+    do! Assertions.Expect(row.Locator("strong.active")).ToHaveTextAsync(LexScholar.Client.Texts.active) }
 
 let private createProject (page: IPage) (name: string) = task {
-    do! page.GetByLabel("Project name").FillAsync(name)
-    do! page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = "Create project")).ClickAsync()
+    do! page.GetByLabel(LexScholar.Client.Texts.projectName).FillAsync(name)
+    do! page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = LexScholar.Client.Texts.createProject)).ClickAsync()
     do! selectProject page name }
 
 let private importAndAdd (page: IPage) (fileName: string) = task {
+    do! click (button (page.Locator("body")) LexScholar.Client.Texts.library)
     let input = page.GetByLabel("Import a PDF")
     do! Assertions.Expect(input).ToBeVisibleAsync()
     do! input.SetInputFilesAsync(Path.Combine(AppContext.BaseDirectory, "Fixtures", "summary", fileName))
@@ -231,13 +232,13 @@ let ``while viewing another document the marker of a running summary turns to fi
         do! fake.Waiting.WaitAsync(TimeSpan.FromSeconds 30.)
         do! openDocument page "article-pt.pdf"
         // Viewing B: A's marker and the project's marker say running; B has none.
-        do! Assertions.Expect((documentRow page "article-en.pdf").Locator(".summary-marker")).ToHaveTextAsync("Summary running")
+        do! Assertions.Expect((documentRow page "article-en.pdf").Locator(".summary-marker")).ToHaveTextAsync(LexScholar.Client.Texts.summaryRunning)
         do! Assertions.Expect((documentRow page "article-pt.pdf").Locator(".summary-marker")).ToHaveCountAsync(0)
-        do! Assertions.Expect((projectRow page "Alpha").Locator(".summary-marker")).ToHaveTextAsync("Summary running")
+        do! Assertions.Expect((projectRow page "Alpha").Locator(".summary-marker")).ToHaveTextAsync(LexScholar.Client.Texts.summaryRunning)
         fake.Release()
         // No reload, no click: polling updates both.
-        do! Assertions.Expect((documentRow page "article-en.pdf").Locator(".summary-marker")).ToHaveTextAsync("Summary finished")
-        do! Assertions.Expect((projectRow page "Alpha").Locator(".summary-marker")).ToHaveTextAsync("Summary finished") })
+        do! Assertions.Expect((documentRow page "article-en.pdf").Locator(".summary-marker")).ToHaveTextAsync(LexScholar.Client.Texts.summaryReady)
+        do! Assertions.Expect((projectRow page "Alpha").Locator(".summary-marker")).ToHaveTextAsync(LexScholar.Client.Texts.summaryReady) })
 
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T010"); Trait("Category", "Browser")>]
 let ``a failed summary is marked failed in the list`` (browserName: string) =
@@ -251,8 +252,8 @@ let ``a failed summary is marked failed in the list`` (browserName: string) =
         do! openDocument page "article-en.pdf"
         do! click (summarizeButton page)
         do! openDocument page "article-pt.pdf"
-        do! Assertions.Expect((documentRow page "article-en.pdf").Locator(".summary-marker")).ToHaveTextAsync("Summary failed")
-        do! Assertions.Expect((projectRow page "Alpha").Locator(".summary-marker")).ToHaveTextAsync("Summary failed") })
+        do! Assertions.Expect((documentRow page "article-en.pdf").Locator(".summary-marker")).ToHaveTextAsync(LexScholar.Client.Texts.summaryFailed)
+        do! Assertions.Expect((projectRow page "Alpha").Locator(".summary-marker")).ToHaveTextAsync(LexScholar.Client.Texts.summaryFailed) })
 
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T010"); Trait("Category", "Browser")>]
 let ``removing a document with a finished summary clears the project's marker`` (browserName: string) =
@@ -268,7 +269,7 @@ let ``removing a document with a finished summary clears the project's marker`` 
         do! expectCitation page
         // Another document is open when the removal happens, so the view does not change.
         do! openDocument page "article-pt.pdf"
-        do! Assertions.Expect((projectRow page "Alpha").Locator(".summary-marker")).ToHaveTextAsync("Summary finished")
+        do! Assertions.Expect((projectRow page "Alpha").Locator(".summary-marker")).ToHaveTextAsync(LexScholar.Client.Texts.summaryReady)
         do! click (button (documentRow page "article-en.pdf") "Remove")
         do! Assertions.Expect(documentRow page "article-en.pdf").ToHaveCountAsync(0)
         do! Assertions.Expect((projectRow page "Alpha").Locator(".summary-marker")).ToHaveCountAsync(0) })
@@ -294,4 +295,4 @@ let ``a lost answer to the summary request still shows the marker of the job the
         // The server gets the POST and starts the job, but the answer never reaches the page.
         use! _ = page.RouteAsync("**/summary", Func<IRoute, Task>(loseAnswer))
         do! click (summarizeButton page)
-        do! Assertions.Expect((documentRow page "article-en.pdf").Locator(".summary-marker")).ToHaveTextAsync("Summary finished") })
+        do! Assertions.Expect((documentRow page "article-en.pdf").Locator(".summary-marker")).ToHaveTextAsync(LexScholar.Client.Texts.summaryReady) })

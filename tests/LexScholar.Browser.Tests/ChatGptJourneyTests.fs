@@ -43,11 +43,12 @@ let private openDocument (page: IPage) (fileName: string) = task {
 
 /// Opens article-en.pdf as a project document of an active project.
 let private arrange (page: IPage) = task {
-    do! page.GetByLabel("Project name").FillAsync("Alpha")
-    do! page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = "Create project")).ClickAsync()
+    do! page.GetByLabel(LexScholar.Client.Texts.projectName).FillAsync("Alpha")
+    do! page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = LexScholar.Client.Texts.createProject)).ClickAsync()
     let row = page.Locator("ul.projects li").Filter(LocatorFilterOptions(HasText = "Alpha"))
-    do! click (button row "Select")
-    do! Assertions.Expect(row.Locator("strong.active")).ToHaveTextAsync("Active")
+    do! click (button row LexScholar.Client.Texts.select)
+    do! Assertions.Expect(row.Locator("strong.active")).ToHaveTextAsync(LexScholar.Client.Texts.active)
+    do! click (button (page.Locator("body")) LexScholar.Client.Texts.library)
     let input = page.GetByLabel("Import a PDF")
     do! Assertions.Expect(input).ToBeVisibleAsync()
     do! input.SetInputFilesAsync(Path.Combine(AppContext.BaseDirectory, "Fixtures", "summary", "article-en.pdf"))
@@ -81,7 +82,7 @@ let ``she signs in, summarizes on her plan, meets the usage limit and signs out`
             route.FulfillAsync(RouteFulfillOptions(Status = 200, ContentType = "text/html", Body = "<html><body>OpenAI</body></html>"))
         use! _ = page.RouteAsync("https://auth.openai.com/**", Func<IRoute, Task>(intercept))
         let! _ = page.GotoAsync("/")
-        do! Assertions.Expect(page.GetByRole(AriaRole.Heading, PageGetByRoleOptions(Name = "Your projects"))).ToBeVisibleAsync()
+        do! Assertions.Expect(page.GetByRole(AriaRole.Heading, PageGetByRoleOptions(Name = LexScholar.Client.Texts.projects, Exact = true)).First).ToBeVisibleAsync()
         do! arrange page
 
         // Not signed in: the sign-in action is offered, branded as OpenAI asks.
@@ -107,7 +108,7 @@ let ``she signs in, summarizes on her plan, meets the usage limit and signs out`
         let! _ = dismissed
         do! Assertions.Expect(welcome).ToHaveCountAsync(0)
         let! _ = page.ReloadAsync()
-        do! Assertions.Expect(page.GetByRole(AriaRole.Heading, PageGetByRoleOptions(Name = "Your projects"))).ToBeVisibleAsync()
+        do! Assertions.Expect(page.GetByRole(AriaRole.Heading, PageGetByRoleOptions(Name = LexScholar.Client.Texts.projects, Exact = true)).First).ToBeVisibleAsync()
         do! Assertions.Expect(welcome).ToHaveCountAsync(0)
         do! openDocument page "article-en.pdf"
         do! Assertions.Expect(page.Locator(".chatgpt-account")).ToContainTextAsync("Signed in to ChatGPT as researcher@example.test")

@@ -5,6 +5,7 @@ open System.Threading.Tasks
 open Microsoft.Playwright
 open Xunit
 open LexScholar.Server.Tests
+open LexScholar.Client
 
 // Real-browser journeys against an isolated in-process host serving the
 // WebAssembly client. Browsers are Playwright's pinned builds; install them
@@ -20,52 +21,38 @@ type PlaywrightDefaults() =
 [<assembly: AssemblyFixture(typeof<PlaywrightDefaults>)>]
 do ()
 
-/// Runs a journey in a headless browser, owning Playwright and browser cleanup.
-let private withBrowser (name: string) (journey: IBrowser -> Task) : Task = task {
-    use! playwright = Playwright.CreateAsync()
-    let! browser =
-        task {
-            try
-                return! playwright.[name].LaunchAsync(BrowserTypeLaunchOptions(Headless = true))
-            with :? PlaywrightException as error ->
-                return failwithf "Could not launch %s. Install the Playwright browsers with scripts/install-browsers.sh.\n%s" name error.Message
-        }
-    use _ = browser
-    do! journey browser }
+let private withBrowser = Ui.withBrowser
 
 let private startHost (workspace: TemporaryWorkspace) =
     TestHarness.Start(serveClient = true, workspace = workspace)
 
 let private openApp (browser: IBrowser) (harness: TestHarness) = task {
-    let! context = browser.NewContextAsync(BrowserNewContextOptions(BaseURL = harness.Client.BaseAddress.ToString()))
-    let! page = context.NewPageAsync()
-    let! _ = page.GotoAsync("/")
-    do! Assertions.Expect(page.GetByRole(AriaRole.Heading, PageGetByRoleOptions(Name = "Your projects"))).ToBeVisibleAsync()
-    return context, page }
+    let! page = Ui.openApp browser harness
+    return page.Context, page }
 
 let private row (page: IPage) (name: string) =
     page.Locator("ul.projects li").Filter(LocatorFilterOptions(HasText = name))
 
 let private emptyState (page: IPage) =
-    page.GetByText("No projects yet. Create one to get started.")
+    page.GetByText(Texts.noProjects)
 
 let private createProject (page: IPage) (name: string) = task {
-    do! page.GetByLabel("Project name").FillAsync(name)
-    do! page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = "Create project")).ClickAsync()
+    do! page.GetByLabel(Texts.projectName).FillAsync(name)
+    do! Ui.click (Ui.button (page.Locator("body")) Texts.createProject)
     do! Assertions.Expect(row page name).ToBeVisibleAsync() }
 
 let private expectActive (page: IPage) (name: string) = task {
     do! Assertions.Expect(row page name).ToHaveCountAsync(1)
-    do! Assertions.Expect((row page name).Locator("strong.active")).ToHaveTextAsync("Active")
+    do! Assertions.Expect((row page name).Locator("strong.active")).ToHaveTextAsync(Texts.active)
     do! Assertions.Expect(page.Locator("strong.active")).ToHaveCountAsync(1) }
 
 let private expectSelectable (page: IPage) (name: string) =
-    Assertions.Expect((row page name).GetByRole(AriaRole.Button, LocatorGetByRoleOptions(Name = "Select"))).ToBeVisibleAsync()
+    Assertions.Expect(Ui.button (row page name) Texts.select).ToBeVisibleAsync()
 
 let private select (page: IPage) (name: string) =
-    (row page name).GetByRole(AriaRole.Button, LocatorGetByRoleOptions(Name = "Select")).ClickAsync()
+    Ui.click (Ui.button (row page name) Texts.select)
 
-[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T019"); Trait("Category", "Browser")>]
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T019"); Trait("Task", "T002"); Trait("Category", "Browser")>]
 let ``empty workspace shows the project-list empty state`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
         use workspace = TemporaryWorkspace.Create()
@@ -75,7 +62,7 @@ let ``empty workspace shows the project-list empty state`` (browserName: string)
         do! Assertions.Expect(page.Locator("ul.projects li")).ToHaveCountAsync(0)
         do! Assertions.Expect(page.Locator("strong.active")).ToHaveCountAsync(0) })
 
-[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T019"); Trait("Category", "Browser")>]
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T019"); Trait("Task", "T002"); Trait("Category", "Browser")>]
 let ``creating and selecting projects shows the active project`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
         use workspace = TemporaryWorkspace.Create()
@@ -99,7 +86,7 @@ let ``creating and selecting projects shows the active project`` (browserName: s
         do! expectActive page "Alpha"
         do! expectSelectable page "Beta" })
 
-[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T019"); Trait("Category", "Browser")>]
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T019"); Trait("Task", "T002"); Trait("Category", "Browser")>]
 let ``restart over the same data directory restores the active project`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
         use workspace = TemporaryWorkspace.Create()
@@ -119,3 +106,27 @@ let ``restart over the same data directory restores the active project`` (browse
         do! Assertions.Expect(page.Locator("ul.projects li")).ToHaveCountAsync(2)
         do! expectSelectable page "Alpha"
         do! expectActive page "Beta" })
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T002"); Trait("Category", "Browser")>]
+let ``top bar exposes the signed-in account and sign-out`` (browserName: string) =
+    Ui.withBrowser browserName (fun browser -> task {
+        use fake = new FakeOpenAi()
+        use harness = TestHarness.Start(serveClient = true, summaryHandler = fake)
+        let! page = Ui.openApp browser harness
+        let bar = page.Locator(".top-bar")
+        do! Assertions.Expect(bar.GetByText(Texts.signedIn, LocatorGetByTextOptions(Exact = true))).ToHaveCountAsync(0)
+        do! createProject page "Alpha"
+        do! select page "Alpha"
+        do! Ui.click (Ui.button (page.Locator("body")) Texts.library)
+        do! page.GetByLabel("Import a PDF").SetInputFilesAsync(IO.Path.Combine(AppContext.BaseDirectory, "Fixtures", "valid.pdf"))
+        do! Assertions.Expect(page.GetByText("Imported valid.pdf.")).ToBeVisibleAsync()
+        do! Ui.click (Ui.button (page.Locator("ul.documents li")) "Add as Focused Source")
+        do! Ui.click (Ui.button (page.Locator("ul.project-documents li")) "Open")
+        do! Assertions.Expect(page.Locator(".reader")).ToBeVisibleAsync()
+        do! Ui.signInWithChatGpt page harness fake
+        do! Assertions.Expect(bar.GetByText(Texts.signedIn, LocatorGetByTextOptions(Exact = true))).ToBeVisibleAsync()
+        do! bar.GetByText(Texts.account, LocatorGetByTextOptions(Exact = true)).ClickAsync()
+        do! Assertions.Expect(bar).ToContainTextAsync("researcher@example.test")
+        do! Ui.click (Ui.button bar Texts.signOut)
+        do! Assertions.Expect(bar.GetByText(Texts.signedIn, LocatorGetByTextOptions(Exact = true))).ToHaveCountAsync(0)
+    })

@@ -8,21 +8,52 @@
   --success: #2E7D5B; --warning: #A3540C; --danger: #A12B2B;
   --generated-background: #FFF6E5; --generated-text: #5C3B00;
   --font-interface: Inter, system-ui, sans-serif; --font-summary: "Source Serif 4", Georgia, serif;
-  font-family: system-ui, sans-serif; color: #202b37; background: #f3f5f7;
+  font-family: var(--font-interface); color: var(--text); background: var(--page);
 }
 body { margin: 0; }
-.container { max-width: 48rem; margin: 3rem auto; padding: 0 1rem; }
+.workspace { display: grid; grid-template-columns: 232px 300px minmax(0, 1fr); grid-template-rows: auto 1fr; min-height: 100vh; }
+.top-bar { grid-column: 1 / -1; display: flex; align-items: center; gap: 1rem; padding: .75rem 1.5rem; background: var(--surface); border-bottom: 1px solid var(--border); }
+.top-bar h1 { font-size: 1rem; margin: 0; }
+.breadcrumb { color: var(--text-secondary); overflow-wrap: anywhere; }
+.signed-in { margin-left: auto; color: var(--success); font-size: .85rem; }
+.top-bar details { position: relative; margin-left: auto; }
+.signed-in + details { margin-left: 0; }
+.top-bar details[open] { padding: .5rem; background: var(--surface); border: 1px solid var(--border); }
+.top-bar summary { cursor: pointer; }
+.project-column, .document-column { padding: 1.25rem .75rem; border-right: 1px solid var(--border); min-width: 0; }
+.project-column { background: var(--sidebar); }
+.document-column { background: var(--surface); }
+.project-column h2, .project-document-list h3 { font-size: .75rem; text-transform: uppercase; color: var(--text-muted); letter-spacing: .04em; }
+.create-project { margin-bottom: 1.5rem; }
+.create-project input { width: 100%; margin-bottom: .5rem; }
+.document-column > button { width: 100%; color: var(--accent); border-style: dashed; margin-bottom: 1rem; }
+.document-count { font-size: .8rem; color: var(--text-muted); }
+.main-column { min-width: 0; padding: 2rem clamp(1rem, 4vw, 4.5rem); }
+.empty-main { color: var(--text-muted); text-align: center; margin-top: 4rem; }
+.library-navigation { width: 100%; display: flex; justify-content: space-between; margin-top: 1rem; }
+.selected, .projects li:has(.active) { background: var(--accent-tint); outline: 2px solid var(--accent); outline-offset: -2px; border-radius: .4rem; }
+.project-document-list h3 { margin-top: 1.5rem; }
+.document-column .project-documents li { flex-wrap: wrap; gap: .4rem; padding: .65rem; overflow-wrap: anywhere; }
+.document-column .project-documents li > span:first-child { flex-basis: 100%; font-weight: 600; }
+.document-column .project-documents .role { font-size: .75rem; }
+.document-column .project-documents button { font-size: .75rem; padding: .35rem; }
+.summary-marker { color: var(--success); }
+@media (max-width: 900px) { .workspace { grid-template-columns: 180px 240px minmax(300px, 1fr); } .main-column { padding: 1rem; } }
 h1 { margin-bottom: .15rem; }
 .subtitle { color: #596778; margin-top: 0; }
-.card { background: white; border: 1px solid #d9e0e7; border-radius: .5rem; padding: 1.25rem; margin: 1rem 0; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: .5rem; padding: 1.25rem; margin: 1rem 0; }
 h2 { font-size: 1.2rem; margin-top: 0; }
 label { display: block; margin-bottom: .4rem; }
 input { font: inherit; padding: .55rem; width: min(100%, 24rem); box-sizing: border-box; margin-right: .5rem; }
-button { font: inherit; padding: .5rem .8rem; cursor: pointer; }
+button { font: inherit; padding: .5rem .8rem; cursor: pointer; background: var(--surface); border: 1px solid var(--control-border); border-radius: .4rem; color: var(--text); }
+button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent-hover); }
+button:focus-visible, a:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 button:disabled { cursor: default; opacity: .55; }
 .error { color: #a32828; }
 .projects { padding: 0; list-style: none; }
-.projects li { display: flex; align-items: center; justify-content: space-between; gap: 1rem; border-bottom: 1px solid #e5e9ee; padding: .65rem 0; }
+.projects li { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; padding: .65rem; overflow-wrap: anywhere; }
+.projects li > span { flex: 1; }
+.projects .active { font-size: .7rem; }
 .active { color: #175c42; }
 .documents, .project-documents { padding: 0; list-style: none; }
 .documents li, .project-documents li { display: flex; align-items: center; justify-content: space-between; gap: 1rem; border-bottom: 1px solid #e5e9ee; padding: .65rem 0; }

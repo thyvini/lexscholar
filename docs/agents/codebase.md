@@ -72,6 +72,8 @@ Errors are ProblemDetails with a `code` extension (`problem` helpers in the endp
 
 **F006 shared pieces.** `src/LexScholar.Client/Texts.fs` is compiled first and contains the Portuguese glossary plus `pages`, `pageCount`, `documentCount` and local `dateTime`; existing views remain unchanged until their later slices. `app.css` defines the mockup's custom properties and local font faces, without replacing the existing layout. The variable Inter WOFF2 comes from the official [Inter 4.1 release](https://github.com/rsms/inter/releases/tag/v4.1), and Source Serif 4 from the official [4.005R WOFF2 release](https://github.com/adobe-fonts/source-serif/releases/tag/4.005R); each has its SIL Open Font License in its font directory.
 
+**F006 workspace frame (T002).** `App.fs` renders a top bar and three columns: projects, the active project's documents grouped into named role lists, and `main[data-testid="main"]`. `State.ShowLibrary` switches the main area to the library/import view; reader actions return it to the existing reader. Counts use the already loaded library and active project's associations only (inactive-project counts are deferred). The top bar has the breadcrumb and signed-in account menu; the reader and its summary behavior remain until T004. `app.css` now lays out the frame using the shared tokens.
+
 ## Request flow
 
 Client `update` returns an `Effect` → `App.fs` runs the HTTP call (`Api.*`) → host middleware (`HostSecurity.useSecurity`: error handler, Host and Origin checks, antiforgery on unsafe methods) → endpoint → Application workflow → Infrastructure functions → SQLite or files → `Result` → HTTP status and JSON → `App.fs` maps it to a `Message` → `update`.
