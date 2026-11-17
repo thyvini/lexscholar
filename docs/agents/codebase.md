@@ -70,6 +70,8 @@ Errors are ProblemDetails with a `code` extension (`problem` helpers in the endp
 
 **Sign-in button asset (F005).** `src/LexScholar.Client/wwwroot/chatgpt-logo-white.svg` is OpenAI's white ChatGPT logo, downloaded unmodified from `https://developers.openai.com/assets/siwc/sign-in-buttons/chatgpt-logo-white.svg` (listed on `https://developers.openai.com/siwc/website`, which also prescribes the label "Continue with ChatGPT" and the `data-oai-siwc-button` attribute). No licence text is published with it; it is used only as that page directs. The `.siwc-button` styles in `app.css` (black button, white logo) are ours.
 
+**F006 shared pieces.** `src/LexScholar.Client/Texts.fs` is compiled first and contains the Portuguese glossary plus `pages`, `pageCount`, `documentCount` and local `dateTime`; existing views remain unchanged until their later slices. `app.css` defines the mockup's custom properties and local font faces, without replacing the existing layout. The variable Inter WOFF2 comes from the official [Inter 4.1 release](https://github.com/rsms/inter/releases/tag/v4.1), and Source Serif 4 from the official [4.005R WOFF2 release](https://github.com/adobe-fonts/source-serif/releases/tag/4.005R); each has its SIL Open Font License in its font directory.
+
 ## Request flow
 
 Client `update` returns an `Effect` → `App.fs` runs the HTTP call (`Api.*`) → host middleware (`HostSecurity.useSecurity`: error handler, Host and Origin checks, antiforgery on unsafe methods) → endpoint → Application workflow → Infrastructure functions → SQLite or files → `Result` → HTTP status and JSON → `App.fs` maps it to a `Message` → `update`.
@@ -111,5 +113,6 @@ Import (`ImportDocument.create`, `POST /api/documents`): stage at most MaxBytes 
 - Real child process (locks, startup failures): `ProcessHarness.HostProcess.Start(root, overrides)`.
 - State tests: drive `update` with messages and assert on the model and the returned effect; see `LibraryStateTests.fs` for helpers (`step`, `assertState`, request-number extractors).
 - Plan sign-in journey (`ChatGptJourneyTests.fs`): `FakeOpenAi` as `summaryHandler`; `page.RouteAsync("https://auth.openai.com/**", Func<IRoute, Task>(...))` captures the `authorizationUrl` (set `fake.Nonce` from its `nonce`), then `page.GotoAsync` the host's `/auth/callback?state=...&code=...&client_id=...`. The welcome dismissal is a background POST: wait for it (`WaitForResponseAsync`) before reloading.
+- F006 `Ui.fs` shares browser launch, app opening, role/name selectors, click and `signInWithChatGpt`; the latter intercepts authorization and returns through the local callback. `FakeOpenAi` supports `ResponsesScript.Hold text`, with `Waiting`, `Release()` and `Cancelled` handshakes for Responses requests.
 - Browser journeys: Playwright's auto-waiting `Assertions.Expect(...)`, never sleeps; helpers at the top of `ReaderJourneyTests.fs`.
 - Fixtures: `tests/Fixtures/` (`valid.pdf` and friends, provenance in its README).

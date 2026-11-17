@@ -23,6 +23,8 @@ type ResponsesScript =
     | Status of status: int * code: string
     /// Never answers until the request is cancelled.
     | WaitUntilCancelled
+    /// Waits for Release before returning a completed stream.
+    | Hold of text: string
 
 /// One request the fake saw. Bodies are kept so tests can assert on exact fields.
 type RecordedOpenAiRequest =
@@ -66,6 +68,7 @@ type FakeOpenAi(responses: int -> ResponsesScript) =
     let mutable responseCalls = 0
     let waiting = TaskCompletionSource()
     let cancelled = TaskCompletionSource()
+    let release = TaskCompletionSource()
     let tokenArrived = TaskCompletionSource()
     let mutable tokenHold : TaskCompletionSource option = None
 
@@ -93,6 +96,7 @@ type FakeOpenAi(responses: int -> ResponsesScript) =
     /// Completes when a `WaitUntilCancelled` Responses request waits, and when it is cancelled (handshakes, no polling).
     member _.Waiting : Task = waiting.Task
     member _.Cancelled : Task = cancelled.Task
+    member _.Release() = release.TrySetResult() |> ignore
     /// Completes when the first token request arrives.
     member _.TokenArrived : Task = tokenArrived.Task
 
@@ -143,7 +147,16 @@ type FakeOpenAi(responses: int -> ResponsesScript) =
                 {| models = this.Models |> List.map (fun (slug, visibility) -> {| slug = slug; visibility = visibility |}) |}))
         | "api.openai.com", "/v1/responses" ->
             let number = Interlocked.Increment(&responseCalls)
-            match responses number with
+            let! answer = task {
+                match responses number with
+                | ResponsesScript.Hold text ->
+                    waiting.TrySetResult() |> ignore
+                    try do! release.Task.WaitAsync(cancellation)
+                    with :? OperationCanceledException as error -> cancelled.TrySetResult() |> ignore; raise error
+                    return ResponsesScript.Completed text
+                | answer -> return answer
+            }
+            match answer with
             | ResponsesScript.Completed text ->
                 let half = text.Length / 2
                 return this.Sse
@@ -161,5 +174,6 @@ type FakeOpenAi(responses: int -> ResponsesScript) =
                 try do! Task.Delay(Timeout.Infinite, cancellation)
                 with :? OperationCanceledException as error -> cancelled.TrySetResult() |> ignore; raise error
                 return new HttpResponseMessage(HttpStatusCode.OK)
+            | ResponsesScript.Hold _ -> return failwith "A held response must be released first."
         | _ -> return new HttpResponseMessage(HttpStatusCode.NotFound)
     }

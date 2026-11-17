@@ -7,6 +7,7 @@ open System.Threading.Tasks
 open Microsoft.Playwright
 open Xunit
 open LexScholar.Server.Tests
+open LexScholar.Browser.Tests.Ui
 
 // Real-browser reader and role journeys (T040) against an isolated in-process
 // host serving the WebAssembly client. These tests check the frame URL and PDF
@@ -14,34 +15,7 @@ open LexScholar.Server.Tests
 // manually and accepted by the owner; see the T040 evidence for the procedure.
 // Only Playwright's auto-waiting assertions are used; there are no sleeps.
 
-let private withBrowser (name: string) (journey: IBrowser -> Task) : Task = task {
-    use! playwright = Playwright.CreateAsync()
-    let! browser =
-        task {
-            try
-                return! playwright.[name].LaunchAsync(BrowserTypeLaunchOptions(Headless = true))
-            with :? PlaywrightException as error ->
-                return failwithf "Could not launch %s. Install the Playwright browsers with scripts/install-browsers.sh.\n%s" name error.Message
-        }
-    use _ = browser
-    do! journey browser }
-
-let private openApp (browser: IBrowser) (harness: TestHarness) = task {
-    let! context = browser.NewContextAsync(BrowserNewContextOptions(BaseURL = harness.Client.BaseAddress.ToString()))
-    let! page = context.NewPageAsync()
-    let! _ = page.GotoAsync("/")
-    do! Assertions.Expect(page.GetByRole(AriaRole.Heading, PageGetByRoleOptions(Name = "Your projects"))).ToBeVisibleAsync()
-    return page }
-
 let private fixture name = Path.Combine(AppContext.BaseDirectory, "Fixtures", name)
-
-let private button (scope: ILocator) (name: string) =
-    scope.GetByRole(AriaRole.Button, LocatorGetByRoleOptions(Name = name, Exact = true))
-
-/// Asserts the control is visible before using it, so a missing UI fails on an assertion.
-let private click (control: ILocator) = task {
-    do! Assertions.Expect(control).ToBeVisibleAsync()
-    do! control.ClickAsync() }
 
 let private projectRow (page: IPage) (name: string) = page.Locator("ul.projects li").Filter(LocatorFilterOptions(HasText = name))
 let private libraryRow (page: IPage) (name: string) = page.Locator("ul.documents li").Filter(LocatorFilterOptions(HasText = name))
