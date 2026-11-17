@@ -42,5 +42,13 @@
         { "action": "shell", "resource": "*", "effect": "deny" }
       ]
     }
+  },
+  "mcp": {
+    "servers": {
+      "codecks": {
+        "type": "remote",
+        "url": "https://mcp.codecks.io/mcp"
+      }
+    }
   }
 }
