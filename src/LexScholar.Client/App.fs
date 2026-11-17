@@ -550,7 +550,7 @@ module private Ui =
             }
         }
 
-    let projectDocuments (library: Library.Model) (reader: Reader.Model) (statuses: SummaryStatus.StatusEntry list) readerDispatch dispatch =
+    let projectDocuments (library: Library.Model) (reader: Reader.Model) showLibrary (statuses: SummaryStatus.StatusEntry list) readerDispatch dispatch =
         let busy = library.Busy.IsSome
         section {
             attr.``class`` "project-document-list"
@@ -572,7 +572,7 @@ module private Ui =
                                     "aria-label" => heading
                                     forEach (library.Associations |> List.filter (fun association -> association.Role = role)) <| fun association ->
                                         li {
-                                            attr.``class`` (if reader.Open |> Option.exists (fun opened -> opened.Id = association.Document.Id) then "selected" else "")
+                                            attr.``class`` (if not showLibrary && (reader.Open |> Option.exists (fun opened -> opened.Id = association.Document.Id)) then "selected" else "")
                                             span { text association.Document.FileName }
                                             small { text (Texts.pageCount association.Document.PageCount) }
                                             summaryMarker (SummaryStatus.documentStatus statuses project association.Document.Id)
@@ -873,9 +873,12 @@ module private Ui =
                 span {
                     attr.``class`` "breadcrumb"
                     text (model.Snapshot.Projects |> List.tryFind (fun p -> Some p.Id = model.Snapshot.Active) |> Option.map (fun p -> p.Name) |> Option.defaultValue "")
-                    cond state.Reader.Open <| function
-                        | Some document -> text $" / {document.FileName}"
-                        | None -> empty ()
+                    cond state.ShowLibrary <| function
+                        | true -> text $" / {Texts.library}"
+                        | false ->
+                            cond state.Reader.Open <| function
+                                | Some document -> text $" / {document.FileName}"
+                                | None -> empty ()
                 }
                 cond state.ChatGpt.Status <| function
                     | ChatGpt.SignedIn account ->
@@ -961,7 +964,7 @@ module private Ui =
                     | true -> p { attr.``class`` "document-count"; text (Texts.documentCount state.Library.Associations.Length) }
                     | false -> empty ()
                 button { attr.``type`` "button"; on.click (fun _ -> dispatch' ShowLibrary); text Texts.addDocuments }
-                projectDocuments state.Library state.Reader state.Statuses.Entries (ReaderMsg >> dispatch') (LibraryMsg >> dispatch')
+                projectDocuments state.Library state.Reader state.ShowLibrary state.Statuses.Entries (ReaderMsg >> dispatch') (LibraryMsg >> dispatch')
             }
             main {
             "data-testid" => "main"

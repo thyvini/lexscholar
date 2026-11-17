@@ -164,6 +164,8 @@ let ``workspace groups sources and opens the library in the main column`` (brows
         do! Assertions.Expect(page.Locator(".breadcrumb")).ToContainTextAsync("Alpha / valid.pdf")
         do! Ui.click (Ui.button (page.Locator("body")) Texts.library)
         do! Assertions.Expect(page.GetByTestId("main").GetByLabel("Import a PDF")).ToBeVisibleAsync()
+        do! Assertions.Expect(page.Locator(".breadcrumb")).ToHaveTextAsync($"Alpha / {Texts.library}")
+        do! Assertions.Expect(page.Locator(".project-documents li.selected")).ToHaveCountAsync(0)
         // Inactive counts are intentionally deferred; only Alpha has a count.
         do! Assertions.Expect(page.Locator(".project-count")).ToHaveCountAsync(1)
     })
