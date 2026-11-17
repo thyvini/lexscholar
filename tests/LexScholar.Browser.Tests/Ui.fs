@@ -1,0 +1,51 @@
+module LexScholar.Browser.Tests.Ui
+
+open System
+open System.Threading.Tasks
+open Microsoft.Playwright
+open LexScholar.Server.Tests
+
+let withBrowser (name: string) (journey: IBrowser -> Task) : Task = task {
+    use! playwright = Playwright.CreateAsync()
+    let! browser =
+        task {
+            try return! playwright.[name].LaunchAsync(BrowserTypeLaunchOptions(Headless = true))
+            with :? PlaywrightException as error ->
+                return failwithf "Could not launch %s. Install the Playwright browsers with scripts/install-browsers.sh.\n%s" name error.Message
+        }
+    use _ = browser
+    do! journey browser
+}
+
+let openApp (browser: IBrowser) (harness: TestHarness) = task {
+    let! context = browser.NewContextAsync(BrowserNewContextOptions(BaseURL = harness.Client.BaseAddress.ToString()))
+    let! page = context.NewPageAsync()
+    let! _ = page.GotoAsync("/")
+    do! Assertions.Expect(page.GetByRole(AriaRole.Heading, PageGetByRoleOptions(Name = "Your projects"))).ToBeVisibleAsync()
+    return page
+}
+
+let button (scope: ILocator) (name: string) = scope.GetByRole(AriaRole.Button, LocatorGetByRoleOptions(Name = name, Exact = true))
+let link (scope: ILocator) (name: string) = scope.GetByRole(AriaRole.Link, LocatorGetByRoleOptions(Name = name, Exact = true))
+let region (page: IPage) (name: string) = page.GetByRole(AriaRole.Region, PageGetByRoleOptions(Name = name, Exact = true))
+let listNamed (page: IPage) (name: string) = page.GetByRole(AriaRole.List, PageGetByRoleOptions(Name = name, Exact = true))
+
+let click (control: ILocator) = task {
+    do! Assertions.Expect(control).ToBeVisibleAsync()
+    do! control.ClickAsync()
+}
+
+let signInWithChatGpt (page: IPage) (_harness: TestHarness) (fake: FakeOpenAi) = task {
+    let authorization = TaskCompletionSource<Uri>()
+    let intercept (route: IRoute) : Task =
+        authorization.TrySetResult(Uri route.Request.Url) |> ignore
+        route.FulfillAsync(RouteFulfillOptions(Status = 200, ContentType = "text/html", Body = "<html><body>OpenAI</body></html>"))
+    use! _ = page.RouteAsync("https://auth.openai.com/**", Func<IRoute, Task>(intercept))
+    do! click (page.Locator("button[data-oai-siwc-button]").First)
+    let! url = authorization.Task
+    let query = System.Web.HttpUtility.ParseQueryString url.Query
+    fake.Nonce <- query["nonce"]
+    let state = Uri.EscapeDataString query["state"]
+    let! _ = page.GotoAsync($"/auth/callback?state={state}&code=code-1&client_id={fake.ClientId}")
+    return ()
+}
