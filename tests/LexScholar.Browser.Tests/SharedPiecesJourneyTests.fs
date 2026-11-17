@@ -6,6 +6,7 @@ open System.Collections.Concurrent
 open System.Threading.Tasks
 open Microsoft.Playwright
 open Xunit
+open LexScholar.Client
 open LexScholar.Server.Tests
 open LexScholar.Browser.Tests.Ui
 
@@ -29,16 +30,17 @@ let ``fonts are served locally and fake sign-in shows the current account`` (bro
         let urls = ConcurrentBag<string>()
         page.Request.Add(fun request -> urls.Add(request.Url))
         let! _ = page.GotoAsync("/")
-        do! Assertions.Expect(page.GetByRole(AriaRole.Heading, PageGetByRoleOptions(Name = "Your projects"))).ToBeVisibleAsync()
+        do! Assertions.Expect(page.GetByRole(AriaRole.Heading, PageGetByRoleOptions(Name = Texts.projects, Exact = true)).First).ToBeVisibleAsync()
         let! loaded = page.EvaluateAsync<bool>("async () => { await Promise.all([document.fonts.load('16px Inter'), document.fonts.load('16px \"Source Serif 4\"')]); return document.fonts.check('16px Inter') && document.fonts.check('16px \"Source Serif 4\"'); }")
         Assert.True(loaded)
         Assert.Contains(urls, fun url -> url.Contains("/fonts/inter/InterVariable.woff2"))
         Assert.Contains(urls, fun url -> url.Contains("/fonts/source-serif/SourceSerif4Variable.woff2"))
         Assert.All(urls, fun url -> Assert.Equal("127.0.0.1", Uri(url).Host))
-        do! page.GetByLabel("Project name").FillAsync("Alpha")
-        do! page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = "Create project")).ClickAsync()
+        do! page.GetByLabel(Texts.projectName).FillAsync("Alpha")
+        do! page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = Texts.createProject)).ClickAsync()
         let project = page.Locator("ul.projects li").Filter(LocatorFilterOptions(HasText = "Alpha"))
-        do! click (button project "Select")
+        do! click (button project Texts.select)
+        do! click (button (page.Locator("body")) Texts.library)
         do! page.GetByLabel("Import a PDF").SetInputFilesAsync(Path.Combine(AppContext.BaseDirectory, "Fixtures", "valid.pdf"))
         do! Assertions.Expect(page.GetByText("Imported valid.pdf.")).ToBeVisibleAsync()
         let document = page.Locator("ul.documents li").Filter(LocatorFilterOptions(HasText = "valid.pdf"))

@@ -6,41 +6,30 @@ open System.Threading.Tasks
 open Microsoft.Playwright
 open Xunit
 open LexScholar.Server.Tests
+open LexScholar.Client
 
 // Real-browser library journeys (T033) against an isolated in-process host
 // serving the WebAssembly client, with real fixtures from tests/Fixtures.
 // Only Playwright's auto-waiting assertions are used; there are no sleeps.
 
-let private withBrowser (name: string) (journey: IBrowser -> Task) : Task = task {
-    use! playwright = Playwright.CreateAsync()
-    let! browser =
-        task {
-            try
-                return! playwright.[name].LaunchAsync(BrowserTypeLaunchOptions(Headless = true))
-            with :? PlaywrightException as error ->
-                return failwithf "Could not launch %s. Install the Playwright browsers with scripts/install-browsers.sh.\n%s" name error.Message
-        }
-    use _ = browser
-    do! journey browser }
+let private withBrowser = Ui.withBrowser
 
 let private openApp (browser: IBrowser) (harness: TestHarness) = task {
-    let! context = browser.NewContextAsync(BrowserNewContextOptions(BaseURL = harness.Client.BaseAddress.ToString()))
-    let! page = context.NewPageAsync()
-    let! _ = page.GotoAsync("/")
-    do! Assertions.Expect(page.GetByRole(AriaRole.Heading, PageGetByRoleOptions(Name = "Your projects"))).ToBeVisibleAsync()
+    let! page = Ui.openApp browser harness
+    do! Ui.click (Ui.button (page.Locator("body")) Texts.library)
     return page }
 
 let private fixture name = Path.Combine(AppContext.BaseDirectory, "Fixtures", name)
 
 let private createProject (page: IPage) (name: string) = task {
-    do! page.GetByLabel("Project name").FillAsync(name)
-    do! page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = "Create project")).ClickAsync()
+    do! page.GetByLabel(Texts.projectName).FillAsync(name)
+    do! Ui.click (Ui.button (page.Locator("body")) Texts.createProject)
     do! Assertions.Expect(page.Locator("ul.projects li").Filter(LocatorFilterOptions(HasText = name))).ToBeVisibleAsync() }
 
 let private select (page: IPage) (name: string) = task {
     let row = page.Locator("ul.projects li").Filter(LocatorFilterOptions(HasText = name))
-    do! row.GetByRole(AriaRole.Button, LocatorGetByRoleOptions(Name = "Select")).ClickAsync()
-    do! Assertions.Expect(row.Locator("strong.active")).ToHaveTextAsync("Active") }
+    do! Ui.click (Ui.button row Texts.select)
+    do! Assertions.Expect(row.Locator("strong.active")).ToHaveTextAsync(Texts.active) }
 
 let private importFile (page: IPage) (name: string) = task {
     let input = page.GetByLabel("Import a PDF")
@@ -59,20 +48,20 @@ let private addToProject (page: IPage) (name: string) (role: string) = task {
 let private remove (page: IPage) (name: string) =
     (projectRow page name).GetByRole(AriaRole.Button, LocatorGetByRoleOptions(Name = "Remove")).ClickAsync()
 
-let private noProjectDocuments (page: IPage) = page.GetByText("No documents are associated with this project.")
+let private noProjectDocuments (page: IPage) = page.GetByText(Texts.noDocuments)
 
 /// Imports a fixture and waits for its success notice.
 let private imported (page: IPage) (name: string) = task {
     do! importFile page name
     do! Assertions.Expect(page.GetByText($"Imported {name}.")).ToBeVisibleAsync() }
 
-[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T033"); Trait("Category", "Browser")>]
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T033"); Trait("Task", "T002"); Trait("Category", "Browser")>]
 let ``importing adds to the shared library, reuses identical bytes and explains rejections`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
         use harness = TestHarness.Start(serveClient = true)
         let! page = openApp browser harness
         do! Assertions.Expect(page.GetByText("No documents in the library yet.")).ToBeVisibleAsync()
-        do! Assertions.Expect(page.GetByText("Select a project to see its documents.")).ToBeVisibleAsync()
+        do! Assertions.Expect(page.GetByText(Texts.noProject)).ToBeVisibleAsync()
         do! imported page "valid.pdf"
         do! Assertions.Expect(libraryRows page).ToHaveCountAsync(1)
         do! Assertions.Expect(libraryRow page "valid.pdf").ToBeVisibleAsync()
@@ -86,7 +75,7 @@ let ``importing adds to the shared library, reuses identical bytes and explains 
         do! Assertions.Expect(page.GetByText("Imported distinct.pdf.")).ToBeVisibleAsync()
         do! Assertions.Expect(libraryRows page).ToHaveCountAsync(2) })
 
-[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T033"); Trait("Category", "Browser")>]
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T033"); Trait("Task", "T002"); Trait("Category", "Browser")>]
 let ``switching projects shows each project's own documents and roles`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
         use harness = TestHarness.Start(serveClient = true)
@@ -119,7 +108,7 @@ let ``switching projects shows each project's own documents and roles`` (browser
         do! Assertions.Expect(projectRow page "valid.pdf").ToContainTextAsync("Reference Source")
         do! Assertions.Expect(projectRow page "distinct.pdf").ToContainTextAsync("Focused Source") })
 
-[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T033"); Trait("Category", "Browser")>]
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T033"); Trait("Task", "T002"); Trait("Category", "Browser")>]
 let ``removing associations keeps the shared document and other projects' associations`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
         use harness = TestHarness.Start(serveClient = true)
@@ -143,3 +132,38 @@ let ``removing associations keeps the shared document and other projects' associ
         do! Assertions.Expect(noProjectDocuments page).ToBeVisibleAsync()
         do! Assertions.Expect(libraryRows page).ToHaveCountAsync(1)
         do! addToProject page "valid.pdf" "Reference Source" })
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T002"); Trait("Category", "Browser")>]
+let ``workspace groups sources and opens the library in the main column`` (browserName: string) =
+    Ui.withBrowser browserName (fun browser -> task {
+        use harness = TestHarness.Start(serveClient = true)
+        let! page = Ui.openApp browser harness
+        do! Assertions.Expect(page.GetByTestId("main")).ToContainTextAsync(Texts.chooseDocument)
+        let! columns = page.Locator(".workspace").EvaluateAsync<string>("element => getComputedStyle(element).gridTemplateColumns")
+        Assert.Equal(3, columns.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length)
+        do! createProject page "Alpha"
+        do! createProject page "Beta"
+        do! select page "Alpha"
+        do! Ui.click (Ui.button (page.Locator("body")) Texts.addDocuments)
+        do! Assertions.Expect(page.GetByTestId("main").GetByLabel("Import a PDF")).ToBeVisibleAsync()
+        do! imported page "valid.pdf"
+        do! imported page "distinct.pdf"
+        do! addToProject page "valid.pdf" "Focused Source"
+        do! addToProject page "distinct.pdf" "Reference Source"
+        let focused = Ui.listNamed page Texts.focusedSources
+        let reference = Ui.listNamed page Texts.referenceSources
+        do! Assertions.Expect(focused).ToContainTextAsync("valid.pdf")
+        do! Assertions.Expect(focused).Not.ToContainTextAsync("distinct.pdf")
+        do! Assertions.Expect(reference).ToContainTextAsync("distinct.pdf")
+        do! Assertions.Expect(reference).Not.ToContainTextAsync("valid.pdf")
+        do! Assertions.Expect(page.Locator(".project-count")).ToHaveTextAsync("2")
+        do! Assertions.Expect(page.Locator(".document-column")).ToContainTextAsync(Texts.documentCount 2)
+        do! Assertions.Expect(page.Locator(".library-count")).ToHaveTextAsync("2")
+        do! (projectRow page "valid.pdf").GetByRole(AriaRole.Button, LocatorGetByRoleOptions(Name = "Open", Exact = true)).ClickAsync()
+        do! Assertions.Expect(page.GetByTestId("main").Locator(".reader")).ToBeVisibleAsync()
+        do! Assertions.Expect(page.Locator(".breadcrumb")).ToContainTextAsync("Alpha / valid.pdf")
+        do! Ui.click (Ui.button (page.Locator("body")) Texts.library)
+        do! Assertions.Expect(page.GetByTestId("main").GetByLabel("Import a PDF")).ToBeVisibleAsync()
+        // Inactive counts are intentionally deferred; only Alpha has a count.
+        do! Assertions.Expect(page.Locator(".project-count")).ToHaveCountAsync(1)
+    })

@@ -292,9 +292,10 @@ module ChatGptApi =
         return () }
 
 /// The whole page: projects, shared library, native reader and its summary.
-type State = { Projects: Model; Library: Library.Model; Reader: Reader.Model; Summary: Summary.Model; ChatGpt: ChatGpt.Model; Statuses: SummaryStatus.Statuses }
+type State = { Projects: Model; Library: Library.Model; Reader: Reader.Model; Summary: Summary.Model; ChatGpt: ChatGpt.Model; Statuses: SummaryStatus.Statuses; ShowLibrary: bool }
 
 type Msg =
+    | ShowLibrary
     | ProjectsMsg of Message
     | LibraryMsg of Library.Message
     | ReaderMsg of Reader.Message
@@ -336,7 +337,8 @@ module private Ui =
 
     let private updateReader http message state =
         let reader, effect = Reader.update message state.Reader
-        let state = { state with Reader = reader }
+        let showLibrary = match message with Reader.Open _ -> false | _ -> state.ShowLibrary
+        let state = { state with Reader = reader; ShowLibrary = showLibrary }
         match effect with
         | Some Reader.RefreshProject -> updateLibrary http Library.ReloadProject state
         | Some (Reader.CheckContent (request, url)) ->
@@ -396,6 +398,7 @@ module private Ui =
 
     let private updateCore http navigation msg state =
         match msg with
+        | ShowLibrary -> { state with ShowLibrary = true }, Cmd.none
         | ChatGptMsg message ->
             let chatGpt, effect = ChatGpt.update message state.ChatGpt
             { state with ChatGpt = chatGpt }, chatGptCommand http navigation effect
@@ -488,17 +491,17 @@ module private Ui =
     let summaryMarker (status: SummaryStatus.Status option) =
         cond status <| function
             | Some status ->
-                let word = match status with SummaryStatus.Status.Running -> "running" | SummaryStatus.Status.Finished -> "finished" | SummaryStatus.Status.Failed -> "failed"
-                small { attr.``class`` "summary-marker"; attr.title $"Summary {word}"; text $"Summary {word}" }
+                let word = match status with SummaryStatus.Status.Running -> Texts.summaryRunning | SummaryStatus.Status.Finished -> Texts.summaryReady | SummaryStatus.Status.Failed -> Texts.summaryFailed
+                small { attr.``class`` "summary-marker"; attr.title word; text word }
             | None -> empty ()
 
-    let libraryView (library: Library.Model) (reader: Reader.Model) (statuses: SummaryStatus.StatusEntry list) readerDispatch dispatch =
+    let libraryView (library: Library.Model) dispatch =
         let busy = library.Busy.IsSome
         let associated = library.Associations |> List.map (fun item -> item.Document.Id) |> Set.ofList
         concat {
             section {
                 attr.``class`` "card"
-                h2 { "Shared library" }
+                h2 { text Texts.library }
                 label { "for" => "library-file"; "Import a PDF" }
                 comp<InputFile> {
                     "id" => "library-file"
@@ -545,50 +548,57 @@ module private Ui =
                         }
                 }
             }
-            section {
-                attr.``class`` "card"
-                h2 { "Project documents" }
-                cond library.Project <| function
-                    | None -> p { "Select a project to see its documents." }
-                    | Some _ ->
-                        concat {
-                            cond library.LoadingProject <| function
-                                | true -> p { "role" => "status"; "Loading project documents…" }
-                                | false -> empty ()
-                            cond (library.HasLoadedProject && library.Associations.IsEmpty) <| function
-                                | true -> p { "No documents are associated with this project." }
-                                | false -> empty ()
-                            ul {
-                                attr.``class`` "project-documents"
-                                forEach library.Associations <| fun association ->
-                                    li {
-                                        span { text association.Document.FileName }
-                                        cond library.Project <| function
-                                            | Some project -> summaryMarker (SummaryStatus.documentStatus statuses project association.Document.Id)
-                                            | None -> empty ()
-                                        strong { attr.``class`` "role"; text (roleLabel association.Role) }
-                                        button {
-                                            attr.``type`` "button"
-                                            on.click (fun _ -> readerDispatch (Reader.Open { Id = association.Document.Id; FileName = association.Document.FileName; ContentUrl = association.Document.ContentUrl }))
-                                            "Open"
+        }
+
+    let projectDocuments (library: Library.Model) (reader: Reader.Model) (statuses: SummaryStatus.StatusEntry list) readerDispatch dispatch =
+        let busy = library.Busy.IsSome
+        section {
+            attr.``class`` "project-document-list"
+            cond library.Project <| function
+                | None -> p { text Texts.noProject }
+                | Some project ->
+                    concat {
+                        cond library.LoadingProject <| function
+                            | true -> p { "role" => "status"; "Loading project documents…" }
+                            | false -> empty ()
+                        cond (library.HasLoadedProject && library.Associations.IsEmpty) <| function
+                            | true -> p { text Texts.noDocuments }
+                            | false -> empty ()
+                        forEach [ FocusedSource, Texts.focusedSources; ReferenceSource, Texts.referenceSources ] <| fun (role, heading) ->
+                            concat {
+                                h3 { text heading }
+                                ul {
+                                    attr.``class`` "project-documents"
+                                    "aria-label" => heading
+                                    forEach (library.Associations |> List.filter (fun association -> association.Role = role)) <| fun association ->
+                                        li {
+                                            attr.``class`` (if reader.Open |> Option.exists (fun opened -> opened.Id = association.Document.Id) then "selected" else "")
+                                            span { text association.Document.FileName }
+                                            small { text (Texts.pageCount association.Document.PageCount) }
+                                            summaryMarker (SummaryStatus.documentStatus statuses project association.Document.Id)
+                                            strong { attr.``class`` "role"; text (roleLabel association.Role) }
+                                            button {
+                                                attr.``type`` "button"
+                                                on.click (fun _ -> readerDispatch (Reader.Open { Id = association.Document.Id; FileName = association.Document.FileName; ContentUrl = association.Document.ContentUrl }))
+                                                "Open"
+                                            }
+                                            button {
+                                                attr.``type`` "button"
+                                                attr.disabled (busy || reader.ChangingRole.IsSome)
+                                                let role = if association.Role = FocusedSource then ReferenceSource else FocusedSource
+                                                on.click (fun _ -> readerDispatch (Reader.ChangeRole (association.Document.Id, role)))
+                                                text $"Make {roleLabel role}"
+                                            }
+                                            button {
+                                                attr.``type`` "button"
+                                                attr.disabled busy
+                                                on.click (fun _ -> dispatch (Library.Remove association.Document.Id))
+                                                "Remove"
+                                            }
                                         }
-                                        button {
-                                            attr.``type`` "button"
-                                            attr.disabled (busy || reader.ChangingRole.IsSome)
-                                            let role = if association.Role = FocusedSource then ReferenceSource else FocusedSource
-                                            on.click (fun _ -> readerDispatch (Reader.ChangeRole (association.Document.Id, role)))
-                                            text $"Make {roleLabel role}"
-                                        }
-                                        button {
-                                            attr.``type`` "button"
-                                            attr.disabled busy
-                                            on.click (fun _ -> dispatch (Library.Remove association.Document.Id))
-                                            "Remove"
-                                        }
-                                    }
+                                }
                             }
-                        }
-            }
+                    }
         }
 
     /// The context needed to understand and reproduce a summary (FR-008).
@@ -856,37 +866,63 @@ module private Ui =
         let dispatch' = dispatch
         let dispatch = ProjectsMsg >> dispatch'
         div {
-            attr.``class`` "container"
-            h1 { "LexScholar" }
-            p { attr.``class`` "subtitle"; "Research projects" }
+            attr.``class`` "workspace"
+            header {
+                attr.``class`` "top-bar"
+                h1 { "LexScholar" }
+                span {
+                    attr.``class`` "breadcrumb"
+                    text (model.Snapshot.Projects |> List.tryFind (fun p -> Some p.Id = model.Snapshot.Active) |> Option.map (fun p -> p.Name) |> Option.defaultValue "")
+                    cond state.Reader.Open <| function
+                        | Some document -> text $" / {document.FileName}"
+                        | None -> empty ()
+                }
+                cond state.ChatGpt.Status <| function
+                    | ChatGpt.SignedIn account ->
+                        concat {
+                            span { attr.``class`` "signed-in"; text Texts.signedIn }
+                            elt "details" {
+                                elt "summary" { "aria-label" => Texts.account; text Texts.account }
+                                p { text account.Name }
+                                button {
+                                    attr.``type`` "button"
+                                    attr.disabled state.ChatGpt.SigningOut
+                                    on.click (fun _ -> dispatch' (ChatGptMsg ChatGpt.SignOut))
+                                    text Texts.signOut
+                                }
+                            }
+                        }
+                    | _ -> empty ()
+            }
+            aside {
+            attr.``class`` "project-column"
             section {
-                attr.``class`` "card"
-                h2 { "Create a project" }
+                attr.``class`` "create-project"
+                h2 { text Texts.createProject }
                 form {
                     on.submit (fun _ -> dispatch Create)
                     "onsubmit:preventDefault" => true
-                    label { "for" => "project-name"; "Project name" }
+                    label { "for" => "project-name"; text Texts.projectName }
                     input {
                         attr.id "project-name"
                         attr.``type`` "text"
                         bind.input.string model.Name (dispatch << NameChanged)
                         attr.disabled busy
                     }
-                    button { attr.``type`` "submit"; attr.disabled busy; text (if model.Busy = Some Creating then "Creating…" else "Create project") }
+                    button { attr.``type`` "submit"; attr.disabled busy; text Texts.createProject }
                 }
                 cond model.Error <| function
                     | Some error -> p { attr.``class`` "error"; "role" => "alert"; text (errorText error) }
                     | None -> empty ()
             }
             section {
-                attr.``class`` "card"
-                h2 { "Your projects" }
+                h2 { text Texts.projects }
                 cond model.Busy <| function
                     | Some Loading -> p { "role" => "status"; "Loading projects…" }
                     | Some Selecting -> p { "role" => "status"; "Selecting project…" }
                     | _ -> empty ()
                 cond (model.HasLoaded && model.Snapshot.Projects.IsEmpty && model.Busy <> Some Loading) <| function
-                    | true -> p { "No projects yet. Create one to get started." }
+                    | true -> p { text Texts.noProjects }
                     | false -> empty ()
                 ul {
                     attr.``class`` "projects"
@@ -895,14 +931,48 @@ module private Ui =
                             span { text project.Name }
                             summaryMarker (SummaryStatus.projectStatus state.Statuses.Entries project.Id)
                             cond (model.Snapshot.Active = Some project.Id) <| function
-                                | true -> strong { attr.``class`` "active"; "Active" }
-                                | false -> button { attr.``type`` "button"; attr.disabled busy; on.click (fun _ -> dispatch (Select project.Id)); "Select" }
+                                 | true ->
+                                     concat {
+                                         strong { attr.``class`` "active"; text Texts.active }
+                                         cond (state.Library.HasLoadedProject && state.Library.Project = Some project.Id) <| function
+                                             | true -> small { attr.``class`` "project-count"; text (string state.Library.Associations.Length) }
+                                             | false -> empty ()
+                                     }
+                                 | false -> button { attr.``type`` "button"; attr.disabled busy; on.click (fun _ -> dispatch (Select project.Id)); text Texts.select }
                         }
                 }
-                button { attr.``type`` "button"; attr.disabled busy; on.click (fun _ -> dispatch Reload); "Refresh" }
+                button { attr.``type`` "button"; attr.disabled busy; on.click (fun _ -> dispatch Reload); text Texts.refresh }
             }
+            button {
+                attr.``type`` "button"
+                "aria-label" => Texts.library
+                attr.``class`` (if state.ShowLibrary then "library-navigation selected" else "library-navigation")
+                on.click (fun _ -> dispatch' ShowLibrary)
+                text Texts.library
+                cond state.Library.HasLoadedLibrary <| function
+                    | true -> small { attr.``class`` "library-count"; text (string state.Library.Documents.Length) }
+                    | false -> empty ()
+            }
+            }
+            aside {
+                attr.``class`` "document-column"
+                h2 { text (model.Snapshot.Projects |> List.tryFind (fun p -> Some p.Id = model.Snapshot.Active) |> Option.map (fun p -> p.Name) |> Option.defaultValue Texts.projects) }
+                cond state.Library.HasLoadedProject <| function
+                    | true -> p { attr.``class`` "document-count"; text (Texts.documentCount state.Library.Associations.Length) }
+                    | false -> empty ()
+                button { attr.``type`` "button"; on.click (fun _ -> dispatch' ShowLibrary); text Texts.addDocuments }
+                projectDocuments state.Library state.Reader state.Statuses.Entries (ReaderMsg >> dispatch') (LibraryMsg >> dispatch')
+            }
+            main {
+            "data-testid" => "main"
+            attr.``class`` "main-column"
             chatGptBanner state.ChatGpt (ChatGptMsg >> dispatch')
-            libraryView state.Library state.Reader state.Statuses.Entries (ReaderMsg >> dispatch') (LibraryMsg >> dispatch')
+            cond state.ShowLibrary <| function
+                | true -> libraryView state.Library (LibraryMsg >> dispatch')
+                | false -> empty ()
+            cond (not state.ShowLibrary && state.Reader.Open.IsNone && state.Reader.Opening.IsNone) <| function
+                | true -> p { attr.``class`` "empty-main"; text Texts.chooseDocument }
+                | false -> empty ()
             cond state.Reader.Error <| function
                 | Some error ->
                     p {
@@ -919,7 +989,7 @@ module private Ui =
             cond state.Reader.Opening <| function
                 | Some _ -> p { "role" => "status"; "Opening document…" }
                 | None -> empty ()
-            cond state.Reader.Open <| function
+            cond (if state.ShowLibrary then None else state.Reader.Open) <| function
                 | Some document ->
                     section {
                         attr.``class`` "card reader"
@@ -940,6 +1010,7 @@ module private Ui =
                         }
                     }
                 | None -> empty ()
+            }
         }
 
 type App() =
@@ -958,7 +1029,7 @@ type App() =
             let chatGpt, chatGptEffect = ChatGpt.update ChatGpt.Load ChatGpt.initial
             let statuses, statusEffect = SummaryStatus.updateStatuses SummaryStatus.Refresh SummaryStatus.initialStatuses
             let chatGpt, _ = ChatGpt.update (ChatGpt.Returned returned) chatGpt
-            { Projects = { initial with Busy = Some Loading }; Library = library; Reader = Reader.initial; Summary = Summary.initial; ChatGpt = chatGpt; Statuses = statuses },
+            { Projects = { initial with Busy = Some Loading }; Library = library; Reader = Reader.initial; Summary = Summary.initial; ChatGpt = chatGpt; Statuses = statuses; ShowLibrary = false },
             Cmd.batch [ Ui.command http Fetch |> Cmd.map ProjectsMsg
                         Ui.chatGptCommand http this.Navigation chatGptEffect
                         Ui.statusCommand http statusEffect

@@ -23,15 +23,16 @@ let private documentRow (page: IPage) (name: string) = page.Locator("ul.project-
 let private frame (page: IPage) = page.Locator("iframe.reader-frame")
 
 let private createProject (page: IPage) (name: string) = task {
-    do! page.GetByLabel("Project name").FillAsync(name)
-    do! page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = "Create project")).ClickAsync()
+    do! page.GetByLabel(LexScholar.Client.Texts.projectName).FillAsync(name)
+    do! page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = LexScholar.Client.Texts.createProject)).ClickAsync()
     do! Assertions.Expect(projectRow page name).ToBeVisibleAsync() }
 
 let private select (page: IPage) (name: string) = task {
-    do! click (button (projectRow page name) "Select")
-    do! Assertions.Expect((projectRow page name).Locator("strong.active")).ToHaveTextAsync("Active") }
+    do! click (button (projectRow page name) LexScholar.Client.Texts.select)
+    do! Assertions.Expect((projectRow page name).Locator("strong.active")).ToHaveTextAsync(LexScholar.Client.Texts.active) }
 
 let private import (page: IPage) (name: string) = task {
+    do! click (button (page.Locator("body")) LexScholar.Client.Texts.library)
     let input = page.GetByLabel("Import a PDF")
     do! Assertions.Expect(input).ToBeVisibleAsync()
     do! input.SetInputFilesAsync(fixture name)
@@ -140,6 +141,7 @@ let ``an unavailable document shows a clear error and keeps its records`` (brows
                 "This document's stored file is missing, unreadable or not the recorded size. Its library record and project associations are unchanged.")
         do! Assertions.Expect(frame page).ToHaveCountAsync(0)
         // No repair or deletion: the record and both associations remain.
+        do! click (button (page.Locator("body")) LexScholar.Client.Texts.library)
         do! Assertions.Expect(libraryRow page "valid.pdf").ToBeVisibleAsync()
         do! Assertions.Expect(documentRow page "valid.pdf").ToContainTextAsync("Focused Source")
         do! select page "Beta"
