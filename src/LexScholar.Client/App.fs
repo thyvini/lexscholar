@@ -863,6 +863,14 @@ module private Ui =
     let view (state: State) dispatch =
         let model = state.Projects
         let busy = model.Busy.IsSome
+        let projectName =
+            model.Snapshot.Projects
+            |> List.tryFind (fun p -> Some p.Id = model.Snapshot.Active)
+            |> Option.map (fun p -> p.Name)
+        let location =
+            if state.ShowLibrary then Some Texts.library
+            else state.Reader.Open |> Option.map (fun document -> document.FileName)
+        let breadcrumb = [ projectName; location ] |> List.choose id |> String.concat " / "
         let dispatch' = dispatch
         let dispatch = ProjectsMsg >> dispatch'
         div {
@@ -872,13 +880,7 @@ module private Ui =
                 h1 { "LexScholar" }
                 span {
                     attr.``class`` "breadcrumb"
-                    text (model.Snapshot.Projects |> List.tryFind (fun p -> Some p.Id = model.Snapshot.Active) |> Option.map (fun p -> p.Name) |> Option.defaultValue "")
-                    cond state.ShowLibrary <| function
-                        | true -> text $" / {Texts.library}"
-                        | false ->
-                            cond state.Reader.Open <| function
-                                | Some document -> text $" / {document.FileName}"
-                                | None -> empty ()
+                    text breadcrumb
                 }
                 cond state.ChatGpt.Status <| function
                     | ChatGpt.SignedIn account ->
@@ -959,7 +961,7 @@ module private Ui =
             }
             aside {
                 attr.``class`` "document-column"
-                h2 { text (model.Snapshot.Projects |> List.tryFind (fun p -> Some p.Id = model.Snapshot.Active) |> Option.map (fun p -> p.Name) |> Option.defaultValue Texts.projects) }
+                h2 { text (projectName |> Option.defaultValue Texts.projects) }
                 cond state.Library.HasLoadedProject <| function
                     | true -> p { attr.``class`` "document-count"; text (Texts.documentCount state.Library.Associations.Length) }
                     | false -> empty ()

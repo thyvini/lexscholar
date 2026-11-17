@@ -141,6 +141,8 @@ let ``workspace groups sources and opens the library in the main column`` (brows
         do! Assertions.Expect(page.GetByTestId("main")).ToContainTextAsync(Texts.chooseDocument)
         let! columns = page.Locator(".workspace").EvaluateAsync<string>("element => getComputedStyle(element).gridTemplateColumns")
         Assert.Equal(3, columns.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length)
+        do! Ui.click (Ui.button (page.Locator("body")) Texts.library)
+        do! Assertions.Expect(page.Locator(".breadcrumb")).ToHaveTextAsync(Texts.library)
         do! createProject page "Alpha"
         do! createProject page "Beta"
         do! select page "Alpha"
