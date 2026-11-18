@@ -24,6 +24,17 @@ let private generated =
 let private reading = update (ReaderChanged (Some project, Some document)) initial |> fst
 
 [<Fact; Trait("Task", "T004")>]
+let ``following opened document fetches its job and invalidates old results`` () =
+    let library = { LexScholar.Client.Library.initial with Project = Some project; Opened = Some document }
+    let followed, effects = followOpened library initial
+    Assert.Contains(effects, fun effect -> match effect with Fetch (_, p, d, false) -> p = project && d = document | _ -> false)
+    let watch = followed.Watch
+    let closed, _ = followOpened { library with Opened = None } followed
+    let late, _ = update (Polled (watch, Some (RemoteFinished generated))) closed
+    assertState Idle late.State
+    assertState None late.Document
+
+[<Fact; Trait("Task", "T004")>]
 let ``requesting a summary starts generating and sends one request`` () =
     let model, effect = update Summarize reading
     assertState (Generating 1) model.State

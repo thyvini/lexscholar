@@ -63,9 +63,9 @@ let private importAndAdd (page: IPage) (fileName: string) = task {
 let private openDocument (page: IPage) (fileName: string) = task {
     let row = page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = fileName))
     do! click (button row "Open")
-    do! Assertions.Expect(page.Locator("iframe.reader-frame")).ToBeVisibleAsync() }
+    do! Assertions.Expect(page.GetByTestId("main").Locator("iframe")).ToHaveCountAsync(0) }
 
-let private summarizeButton (page: IPage) = page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = "Summarize", Exact = true))
+let private summarizeButton (page: IPage) = page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = LexScholar.Client.Texts.summarize, Exact = true))
 
 let private panel (page: IPage) = page.Locator("section.summary")
 
@@ -77,7 +77,7 @@ let private expectCitation (page: IPage) = task {
     do! click citation
     do! Assertions.Expect(panel page).ToContainTextAsync("Main idea") }
 
-[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T002"); Trait("Category", "Browser")>]
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T002"); Trait("Task", "T004"); Trait("Category", "Browser")>]
 let ``a summary asked on one document is found on return after opening another document`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
         use fake = new FakeChatService(Hold answer)
@@ -94,6 +94,10 @@ let ``a summary asked on one document is found on return after opening another d
         fake.Release()
         do! openDocument page "article-en.pdf"
         do! expectCitation page
+        do! openDocument page "article-pt.pdf"
+        do! openDocument page "article-en.pdf"
+        do! expectCitation page
+        do! Assertions.Expect(page.GetByTestId("main").Locator("iframe")).ToHaveCountAsync(0)
         Assert.False(fake.Cancelled.IsCompleted)
         Assert.Equal(1, fake.Requests.Length) })
 
@@ -133,6 +137,7 @@ let ``returning to a document while its summary runs shows it running, and the s
         do! openDocument page "article-en.pdf"
         // Back while it still runs: the running state, not the Summarize button.
         do! Assertions.Expect(page.GetByRole(AriaRole.Status).Filter(LocatorFilterOptions(HasText = "Summarizing"))).ToBeVisibleAsync()
+        do! Assertions.Expect(button (page.GetByRole(AriaRole.Status).Filter(LocatorFilterOptions(HasText = "Summarizing"))) LexScholar.Client.Texts.stop).ToBeVisibleAsync()
         do! Assertions.Expect(summarizeButton page).ToHaveCountAsync(0)
         fake.Release()
         // No click: polling finds it.
@@ -171,7 +176,7 @@ let ``Stop clears a running summary, the held call is cancelled and she can ask 
         do! openDocument page "article-en.pdf"
         do! click (summarizeButton page)
         do! fake.Waiting.WaitAsync(TimeSpan.FromSeconds 30.)
-        do! click (button (page.GetByRole(AriaRole.Status).Filter(LocatorFilterOptions(HasText = "Summarizing"))) "Stop")
+        do! click (button (page.GetByRole(AriaRole.Status).Filter(LocatorFilterOptions(HasText = "Summarizing"))) LexScholar.Client.Texts.stop)
         do! fake.Cancelled.WaitAsync(TimeSpan.FromSeconds 30.)
         do! Assertions.Expect(summarizeButton page).ToBeVisibleAsync()
         do! Assertions.Expect(page.GetByRole(AriaRole.Status).Filter(LocatorFilterOptions(HasText = "Summarizing"))).ToHaveCountAsync(0)

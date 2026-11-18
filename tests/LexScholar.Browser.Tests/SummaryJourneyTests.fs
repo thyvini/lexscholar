@@ -57,7 +57,7 @@ let arrange (page: IPage) = task {
     let documentRow = page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))
     do! Assertions.Expect(documentRow).ToContainTextAsync("Focused Source")
     do! click (button documentRow "Open")
-    do! Assertions.Expect(page.GetByRole(AriaRole.Heading, PageGetByRoleOptions(Name = "Reader"))).ToBeVisibleAsync() }
+    do! Assertions.Expect(page.GetByTestId("main").GetByRole(AriaRole.Heading, LocatorGetByRoleOptions(Name = "article-en.pdf"))).ToBeVisibleAsync() }
 
 let private panel (page: IPage) = page.Locator("section.summary")
 
@@ -68,7 +68,7 @@ let ``a requested summary is labelled as generated, shows its context and plain-
         use harness = TestHarness.Start(serveClient = true, settings = settings, summaryHandler = fake)
         let! page = openApp browser harness
         do! arrange page
-        do! click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = "Summarize", Exact = true)))
+        do! click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = LexScholar.Client.Texts.summarize, Exact = true)))
         do! Assertions.Expect(panel page).ToContainTextAsync("Generated summary")
         do! Assertions.Expect(panel page).ToContainTextAsync("for your review")
         let context = panel page |> fun p -> p.Locator(".summary-context")
@@ -87,7 +87,7 @@ let ``a requested summary is labelled as generated, shows its context and plain-
         // Dismissing changes nothing about the document or its association.
         do! Assertions.Expect(page.Locator("ul.project-documents li")).ToHaveCountAsync(1)
         do! Assertions.Expect(page.Locator("ul.project-documents li")).ToContainTextAsync("Focused Source")
-        do! Assertions.Expect(page.GetByRole(AriaRole.Heading, PageGetByRoleOptions(Name = "Reader"))).ToBeVisibleAsync() })
+        do! Assertions.Expect(page.GetByTestId("main").GetByRole(AriaRole.Heading, LocatorGetByRoleOptions(Name = "article-en.pdf"))).ToBeVisibleAsync() })
 
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T004"); Trait("Category", "Browser")>]
 let ``without a configured service or sign-in the researcher is offered the ChatGPT sign-in`` (browserName: string) =
@@ -95,7 +95,7 @@ let ``without a configured service or sign-in the researcher is offered the Chat
         use harness = TestHarness.Start(serveClient = true)
         let! page = openApp browser harness
         do! arrange page
-        do! click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = "Summarize", Exact = true)))
+        do! click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = LexScholar.Client.Texts.summarize, Exact = true)))
         let alert = page.GetByRole(AriaRole.Alert).Filter(LocatorFilterOptions(HasText = "Summaries need a ChatGPT sign-in or a summarization service"))
         do! Assertions.Expect(alert).ToContainTextAsync("LexScholar:Summary:Model")
         do! Assertions.Expect(page.Locator("button[data-oai-siwc-button]").First).ToContainTextAsync("Continue with ChatGPT")
@@ -108,13 +108,11 @@ let ``citations are page references that leave the reader and summary unchanged`
         use harness = TestHarness.Start(serveClient = true, settings = settings, summaryHandler = fake)
         let! page = openApp browser harness
         do! arrange page
-        do! click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = "Summarize", Exact = true)))
-        let frame = page.Locator("iframe.reader-frame")
-        let! original = frame.GetAttributeAsync("src")
+        do! click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = LexScholar.Client.Texts.summarize, Exact = true)))
         let citation = (panel page).GetByRole(AriaRole.Link, LocatorGetByRoleOptions(Name = "p. 3", Exact = true))
         do! Assertions.Expect(citation).ToHaveAttributeAsync("href", Text.RegularExpressions.Regex("/content#page=3$"))
         do! click citation
-        do! Assertions.Expect(frame).ToHaveAttributeAsync("src", original)
+        do! Assertions.Expect(page.GetByTestId("main").Locator("iframe")).ToHaveCountAsync(0)
         do! Assertions.Expect(panel page).ToContainTextAsync("Generated summary") })
 
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T007"); Trait("Category", "Browser")>]
@@ -126,7 +124,7 @@ let ``a service elsewhere is asked about first: Cancel sends nothing, Send sends
         let! page = openApp browser harness
         do! arrange page
         let dialog = page.GetByRole(AriaRole.Alertdialog)
-        do! click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = "Summarize", Exact = true)))
+        do! click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = LexScholar.Client.Texts.summarize, Exact = true)))
         do! Assertions.Expect(dialog).ToContainTextAsync("article-en.pdf")
         do! Assertions.Expect(dialog).ToContainTextAsync("summary.example.test:8080")
         do! Assertions.Expect(dialog).ToContainTextAsync("test-model")
@@ -135,7 +133,7 @@ let ``a service elsewhere is asked about first: Cancel sends nothing, Send sends
         do! Assertions.Expect(panel page).ToHaveCountAsync(0)
         Assert.Empty(fake.Requests)
         // Asking again asks again; Send then produces the summary with one service request.
-        do! click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = "Summarize", Exact = true)))
+        do! click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = LexScholar.Client.Texts.summarize, Exact = true)))
         do! click (button dialog "Send")
         do! Assertions.Expect(panel page).ToContainTextAsync("Generated summary")
         Assert.Single(fake.Requests) |> ignore })
@@ -147,7 +145,7 @@ let ``a rejected request shows its explanation and Try again asks the service ag
         use harness = TestHarness.Start(serveClient = true, settings = settings, summaryHandler = fake)
         let! page = openApp browser harness
         do! arrange page
-        do! click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = "Summarize", Exact = true)))
+        do! click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = LexScholar.Client.Texts.summarize, Exact = true)))
         let alert = page.GetByRole(AriaRole.Alert).Filter(LocatorFilterOptions(HasText = "MaxOutputTokens"))
         do! Assertions.Expect(alert).ToContainTextAsync("Model")
         do! Assertions.Expect(alert).Not.ToContainTextAsync("service detail")

@@ -39,7 +39,7 @@ let private usageUrl = "https://chatgpt.com/settings/usage"
 let private openDocument (page: IPage) (fileName: string) = task {
     let row = page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = fileName))
     do! click (button row "Open")
-    do! Assertions.Expect(page.GetByRole(AriaRole.Heading, PageGetByRoleOptions(Name = "Reader"))).ToBeVisibleAsync() }
+    do! Assertions.Expect(page.GetByTestId("main").Locator("iframe")).ToHaveCountAsync(0) }
 
 /// Opens article-en.pdf as a project document of an active project.
 let private arrange (page: IPage) = task {
@@ -62,7 +62,7 @@ let private arrange (page: IPage) = task {
     do! Assertions.Expect(page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = "article-pt.pdf"))).ToContainTextAsync("Focused Source")
     do! openDocument page "article-en.pdf" }
 
-let private summarize (page: IPage) = click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = "Summarize", Exact = true)))
+let private summarize (page: IPage) = click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = LexScholar.Client.Texts.summarize, Exact = true)))
 let private panel (page: IPage) = page.Locator("section.summary")
 
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T011"); Trait("Category", "Browser")>]

@@ -1,4 +1,4 @@
-module LexScholar.Browser.Tests.ReaderApiTests
+module LexScholar.Browser.Tests.RoleApiTests
 
 open System
 open System.Net
@@ -11,27 +11,6 @@ open LexScholar.Domain
 type private Handler(respond: HttpRequestMessage -> HttpResponseMessage) =
     inherit HttpMessageHandler()
     override _.SendAsync(request, _) = Task.FromResult(respond request)
-
-[<Theory; InlineData(503, "document_unavailable"); InlineData(404, "document_not_found");
-  Trait("Task", "T039")>]
-let ``availability checks request one byte and distinguish unavailable and unknown documents`` (status: int, code: string) = task {
-    use handler = new Handler(fun request ->
-        Assert.Equal(HttpMethod.Get, request.Method)
-        Assert.Equal("http://localhost/api/documents/paper/content", request.RequestUri.AbsoluteUri)
-        Assert.Equal("bytes=0-0", request.Headers.Range.ToString())
-        let response = new HttpResponseMessage(enum<HttpStatusCode> status)
-        response.Content <- new StringContent($"{{\"code\":\"{code}\"}}")
-        response)
-    use http = new HttpClient(handler, BaseAddress = Uri("http://localhost/"))
-    let! result = Api.checkContent http "/api/documents/paper/content" |> Async.StartAsTask
-    Assert.True((result = Error (if status = 503 then Reader.Unavailable else Reader.DocumentNotFound))) }
-
-[<Fact; Trait("Task", "T039")>]
-let ``network failures do not claim the stored original is unavailable`` () = task {
-    use handler = new Handler(fun _ -> raise (HttpRequestException("private internal detail")))
-    use http = new HttpClient(handler, BaseAddress = Uri("http://localhost/"))
-    let! result = Api.checkContent http "/api/documents/paper/content" |> Async.StartAsTask
-    Assert.True((result = Error Reader.RequestFailed)) }
 
 [<Fact; Trait("Task", "T039")>]
 let ``role changes send project scoped PATCH with antiforgery and the exact role`` () = task {

@@ -162,7 +162,7 @@ let ``workspace groups sources and opens the library in the main column`` (brows
         do! Assertions.Expect(page.Locator(".document-column")).ToContainTextAsync(Texts.documentCount 2)
         do! Assertions.Expect(page.Locator(".library-count")).ToHaveTextAsync("2")
         do! (projectRow page "valid.pdf").GetByRole(AriaRole.Button, LocatorGetByRoleOptions(Name = "Open", Exact = true)).ClickAsync()
-        do! Assertions.Expect(page.GetByTestId("main").Locator(".reader")).ToBeVisibleAsync()
+        do! Assertions.Expect(page.GetByTestId("main").GetByRole(AriaRole.Heading, LocatorGetByRoleOptions(Name = "valid.pdf", Exact = true))).ToBeVisibleAsync()
         do! Assertions.Expect(page.Locator(".breadcrumb")).ToContainTextAsync("Alpha / valid.pdf")
         do! Ui.click (Ui.button (page.Locator("body")) Texts.library)
         do! Assertions.Expect(page.GetByTestId("main").GetByLabel("Import a PDF")).ToBeVisibleAsync()

@@ -277,9 +277,9 @@ let update (message: Message) (model: Model) : Model * Effect option =
         { abandoned with Project = project; Document = document; DismissFailed = false }, effect
     | _ -> model, None
 
-/// Follows the reader's project and open document; a newly opened document asks the server for the state of its summary job.
-let followReader (reader: Reader.Model) (model: Model) : Model * Effect list =
-    let moved, cancel = update (ReaderChanged (reader.Project, reader.Open |> Option.map (fun document -> document.Id))) model
+/// Follows the active project and opened document, fetching the summary job on change.
+let followOpened (library: Library.Model) (model: Model) : Model * Effect list =
+    let moved, cancel = update (ReaderChanged (library.Project, library.Opened)) model
     let refreshed, fetch = if moved = model then moved, None else update Refresh moved
     refreshed, List.choose id [ cancel; fetch ]
 

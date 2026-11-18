@@ -123,7 +123,7 @@ let ``top bar exposes the signed-in account and sign-out`` (browserName: string)
         do! Assertions.Expect(page.GetByText("Imported valid.pdf.")).ToBeVisibleAsync()
         do! Ui.click (Ui.button (page.Locator("ul.documents li")) "Add as Focused Source")
         do! Ui.click (Ui.button (page.Locator("ul.project-documents li")) "Open")
-        do! Assertions.Expect(page.Locator(".reader")).ToBeVisibleAsync()
+        do! Assertions.Expect(page.GetByTestId("main").GetByRole(AriaRole.Heading, LocatorGetByRoleOptions(Name = "valid.pdf", Exact = true))).ToBeVisibleAsync()
         do! Ui.signInWithChatGpt page harness fake
         do! Assertions.Expect(bar.GetByText(Texts.signedIn, LocatorGetByTextOptions(Exact = true))).ToBeVisibleAsync()
         do! bar.GetByText(Texts.account, LocatorGetByTextOptions(Exact = true)).ClickAsync()
