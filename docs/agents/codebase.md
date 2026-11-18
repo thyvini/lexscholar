@@ -74,6 +74,8 @@ Errors are ProblemDetails with a `code` extension (`problem` helpers in the endp
 
 **F006 workspace frame (T002).** `App.fs` renders a top bar and three columns: projects, the active project's documents grouped into named role lists, and `main[data-testid="main"]`. `State.ShowLibrary` switches the main area to the library/import view; reader actions return it to the existing reader. Counts use the already loaded library and active project's associations only (inactive-project counts are deferred). The top bar has the breadcrumb and signed-in account menu; the reader and its summary behavior remain until T004. `app.css` now lays out the frame using the shared tokens.
 
+**F006 PDF/citation links (T003).** `App.View.summaryView` offers `Abrir PDF` to the open document's API `ContentUrl`. Summary citations are anchors, one per consecutive run of validated `point.Pages`, labelled with `Texts.pages`, linking to that same URL plus `#page={first}`. Every link uses `_blank`/`noopener`; citations no longer dispatch `Reader.ShowPage`. The reader remains until T004. `WorkspaceJourneyTests.fs` checks fresh tabs, document requests and preserved summaries in both browsers; bundled browsers download PDFs, so native page rendering remains the T012 manual check. Summary points use Source Serif 4; citation links are italic, underlined accent.
+
 ## Request flow
 
 Client `update` returns an `Effect` → `App.fs` runs the HTTP call (`Api.*`) → host middleware (`HostSecurity.useSecurity`: error handler, Host and Origin checks, antiforgery on unsafe methods) → endpoint → Application workflow → Infrastructure functions → SQLite or files → `Result` → HTTP status and JSON → `App.fs` maps it to a `Message` → `update`.

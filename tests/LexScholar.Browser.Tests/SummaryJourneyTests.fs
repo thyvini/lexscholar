@@ -42,7 +42,7 @@ let private settings = [ "LexScholar:Summary:Endpoint", "http://127.0.0.1:9/v1";
 let private answer = """{"points":[{"text":"<b>Main</b> idea","pages":[1,2]},{"text":"Second idea","pages":[3]}]}"""
 
 /// Opens article-en.pdf as a project document of an active project.
-let private arrange (page: IPage) = task {
+let arrange (page: IPage) = task {
     do! page.GetByLabel(LexScholar.Client.Texts.projectName).FillAsync("Alpha")
     do! page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = LexScholar.Client.Texts.createProject)).ClickAsync()
     let row = page.Locator("ul.projects li").Filter(LocatorFilterOptions(HasText = "Alpha"))
@@ -81,7 +81,7 @@ let ``a requested summary is labelled as generated, shows its context and plain-
         // Generated text is plain text: markup in a point is shown literally.
         do! Assertions.Expect(points.First.Locator(".point-text")).ToHaveTextAsync("<b>Main</b> idea")
         do! Assertions.Expect(points.First.Locator("b")).ToHaveCountAsync(0)
-        do! Assertions.Expect(points.First.Locator("button.citation")).ToHaveTextAsync([| "1"; "2" |])
+        do! Assertions.Expect(points.First.GetByRole(AriaRole.Link)).ToHaveTextAsync("pp. 1–2")
         do! click (button (panel page) "Dismiss")
         do! Assertions.Expect(panel page).ToHaveCountAsync(0)
         // Dismissing changes nothing about the document or its association.
@@ -101,8 +101,8 @@ let ``without a configured service or sign-in the researcher is offered the Chat
         do! Assertions.Expect(page.Locator("button[data-oai-siwc-button]").First).ToContainTextAsync("Continue with ChatGPT")
         do! Assertions.Expect(panel page).ToHaveCountAsync(0) })
 
-[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T005"); Trait("Category", "Browser")>]
-let ``selecting a citation shows the cited page in the reader, also when selected again`` (browserName: string) =
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T003"); Trait("Category", "Browser")>]
+let ``citations are page references that leave the reader and summary unchanged`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
         use fake = new FakeChatService(Reply answer)
         use harness = TestHarness.Start(serveClient = true, settings = settings, summaryHandler = fake)
@@ -110,15 +110,12 @@ let ``selecting a citation shows the cited page in the reader, also when selecte
         do! arrange page
         do! click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = "Summarize", Exact = true)))
         let frame = page.Locator("iframe.reader-frame")
-        let citation = (panel page).Locator("button.citation[data-page='2']")
+        let! original = frame.GetAttributeAsync("src")
+        let citation = (panel page).GetByRole(AriaRole.Link, LocatorGetByRoleOptions(Name = "p. 3", Exact = true))
+        do! Assertions.Expect(citation).ToHaveAttributeAsync("href", Text.RegularExpressions.Regex("/content#page=3$"))
         do! click citation
-        do! Assertions.Expect(frame).ToHaveAttributeAsync("src", Text.RegularExpressions.Regex("/content#page=2$"))
-        // Mark the current frame element; a re-created frame loses the mark.
-        let! _ = frame.EvaluateAsync("e => e.setAttribute('data-mark', 'old')")
-        do! Assertions.Expect(frame).ToHaveAttributeAsync("data-mark", "old")
-        do! click citation
-        do! Assertions.Expect(frame).Not.ToHaveAttributeAsync("data-mark", "old")
-        do! Assertions.Expect(frame).ToHaveAttributeAsync("src", Text.RegularExpressions.Regex("/content#page=2$")) })
+        do! Assertions.Expect(frame).ToHaveAttributeAsync("src", original)
+        do! Assertions.Expect(panel page).ToContainTextAsync("Generated summary") })
 
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T007"); Trait("Category", "Browser")>]
 let ``a service elsewhere is asked about first: Cancel sends nothing, Send sends exactly once`` (browserName: string) =

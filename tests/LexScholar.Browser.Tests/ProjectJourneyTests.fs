@@ -117,6 +117,7 @@ let ``top bar exposes the signed-in account and sign-out`` (browserName: string)
         do! Assertions.Expect(bar.GetByText(Texts.signedIn, LocatorGetByTextOptions(Exact = true))).ToHaveCountAsync(0)
         do! createProject page "Alpha"
         do! select page "Alpha"
+        do! expectActive page "Alpha"
         do! Ui.click (Ui.button (page.Locator("body")) Texts.library)
         do! page.GetByLabel("Import a PDF").SetInputFilesAsync(IO.Path.Combine(AppContext.BaseDirectory, "Fixtures", "valid.pdf"))
         do! Assertions.Expect(page.GetByText("Imported valid.pdf.")).ToBeVisibleAsync()

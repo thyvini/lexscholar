@@ -71,8 +71,11 @@ let private panel (page: IPage) = page.Locator("section.summary")
 
 let private expectCitation (page: IPage) = task {
     do! Assertions.Expect(panel page).ToContainTextAsync("Main idea")
-    do! click ((panel page).Locator("button.citation[data-page='2']"))
-    do! Assertions.Expect(page.Locator("iframe.reader-frame")).ToHaveAttributeAsync("src", Text.RegularExpressions.Regex("/content#page=2$")) }
+    let citation = (panel page).GetByRole(AriaRole.Link, LocatorGetByRoleOptions(Name = "pp. 1–2", Exact = true))
+    do! Assertions.Expect(citation).ToHaveAttributeAsync("href", Text.RegularExpressions.Regex("/content#page=1$"))
+    do! Assertions.Expect(citation).ToHaveAttributeAsync("target", "_blank")
+    do! click citation
+    do! Assertions.Expect(panel page).ToContainTextAsync("Main idea") }
 
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T002"); Trait("Category", "Browser")>]
 let ``a summary asked on one document is found on return after opening another document`` (browserName: string) =
