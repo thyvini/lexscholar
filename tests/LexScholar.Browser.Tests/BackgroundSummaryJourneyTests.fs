@@ -137,6 +137,7 @@ let ``returning to a document while its summary runs shows it running, and the s
         do! openDocument page "article-en.pdf"
         // Back while it still runs: the running state, not the Summarize button.
         do! Assertions.Expect(page.GetByRole(AriaRole.Status).Filter(LocatorFilterOptions(HasText = "Summarizing"))).ToBeVisibleAsync()
+        do! Assertions.Expect(button (page.GetByRole(AriaRole.Status).Filter(LocatorFilterOptions(HasText = "Summarizing"))) LexScholar.Client.Texts.stop).ToBeVisibleAsync()
         do! Assertions.Expect(summarizeButton page).ToHaveCountAsync(0)
         fake.Release()
         // No click: polling finds it.
