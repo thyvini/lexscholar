@@ -654,18 +654,28 @@ module private Ui =
             plainButton "Cancel" (Some "send-cancel") (fun _ -> dispatch Summary.CancelSend)
         }
 
-    /// Page-number buttons that ask the reader to show that page.
-    let private citation onCite page =
-        button {
-            attr.``type`` "button"
-            attr.``class`` "citation"
-            "data-page" => string page
-            attr.title $"Page {page}"
-            on.click (fun _ -> onCite page)
-            text (string page)
+    /// One link per consecutive run of validated pages, always for the open document.
+    let private citations contentUrl pages =
+        let runs =
+            pages
+            |> List.fold (fun groups page ->
+                match groups with
+                | current :: rest when page = List.head current + 1 -> (page :: current) :: rest
+                | _ -> [page] :: groups) []
+            |> List.rev
+            |> List.map List.rev
+        forEach (List.indexed runs) <| fun (index, run) -> concat {
+            if index > 0 then text ", "
+            a {
+                attr.``class`` "citation"
+                attr.href $"{contentUrl}#page={List.head run}"
+                "target" => "_blank"
+                "rel" => "noopener"
+                text (Texts.pages run)
+            }
         }
 
-    let private summaryPanel (document: Reader.Document) (generated: Summary.Generated) onCite dispatch =
+    let private summaryPanel (document: Reader.Document) (generated: Summary.Generated) dispatch =
         section {
             attr.``class`` "summary"
             h3 { "Generated summary" }
@@ -681,14 +691,12 @@ module private Ui =
                     li {
                         span { attr.``class`` "point-text"; text point.Text }
                         " "
-                        forEach point.Pages (citation onCite)
+                        citations document.ContentUrl point.Pages
                     }
             }
             plainButton "Dismiss" None (fun _ -> dispatch Summary.Dismiss)
         }
 
-    /// The summary controls and panel of the open document. Citations are plain
-    /// page-number buttons (`button.citation`, `data-page`) that ask the reader to show that page.
     /// The sign-in action, branded per OpenAI's guidance: its label, its white logo on a dark button, and its attribute.
     let private signInButton (disabled: bool) dispatch =
         button {
@@ -793,9 +801,10 @@ module private Ui =
             radio Summary.UseConfigured "summary-destination-configured" configured
         }
 
-    let summaryView (document: Reader.Document) (summary: Summary.Model) (chatGpt: ChatGpt.Model) onCite dispatch dispatchChatGpt =
+    let summaryView (document: Reader.Document) (summary: Summary.Model) (chatGpt: ChatGpt.Model) dispatch dispatchChatGpt =
         let needsChoice = summary.Available.Plan && summary.Available.Configured
         concat {
+            a { attr.href document.ContentUrl; "target" => "_blank"; "rel" => "noopener"; text Texts.openPdf }
             cond (needsChoice && (match summary.State with Summary.Generating _ | Summary.Running | Summary.Confirming _ -> false | _ -> true)) <| function
                 | true -> destinationChoice chatGpt summary dispatch
                 | false -> empty ()
@@ -856,7 +865,7 @@ module private Ui =
                 | true -> p { attr.``class`` "error"; "role" => "alert"; "The summary could not be dismissed. Please try again." }
                 | false -> empty ()
             cond summary.State <| function
-                | Summary.Shown generated -> summaryPanel document generated onCite dispatch
+                | Summary.Shown generated -> summaryPanel document generated dispatch
                 | _ -> empty ()
         }
 
@@ -1001,12 +1010,11 @@ module private Ui =
                         h2 { "Reader" }
                         p { text document.FileName }
                         p { "Use your browser's PDF viewer controls to navigate pages." }
-                        a { attr.href document.ContentUrl; "target" => "_blank"; "rel" => "noopener"; "Open in new tab" }
                         button { attr.``type`` "button"; on.click (fun _ -> dispatch' (ReaderMsg Reader.Close)); "Close" }
                         chatGptAccount state.ChatGpt (ChatGptMsg >> dispatch')
-                        summaryView document state.Summary state.ChatGpt (ReaderMsg << Reader.ShowPage >> dispatch') (SummaryMsg >> dispatch') (ChatGptMsg >> dispatch')
+                        summaryView document state.Summary state.ChatGpt (SummaryMsg >> dispatch') (ChatGptMsg >> dispatch')
                         iframe {
-                            // Keyed by the navigation counter: every citation click re-creates the frame.
+                            // Retained until T004 removes the built-in reader.
                             attr.key state.Reader.Navigation
                             attr.``class`` "reader-frame"
                             "title" => document.FileName

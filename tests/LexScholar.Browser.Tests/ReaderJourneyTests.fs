@@ -99,7 +99,7 @@ let ``opening a project document shows it in the browser's native viewer`` (brow
         do! Assertions.Expect(page.GetByRole(AriaRole.Heading, PageGetByRoleOptions(Name = "Reader"))).ToBeVisibleAsync()
         do! Assertions.Expect(frame page).ToHaveAttributeAsync("src", url)
         do! Assertions.Expect(frame page).ToHaveAttributeAsync("title", "valid.pdf")
-        let link = page.GetByRole(AriaRole.Link, PageGetByRoleOptions(Name = "Open in new tab"))
+        let link = page.GetByRole(AriaRole.Link, PageGetByRoleOptions(Name = LexScholar.Client.Texts.openPdf))
         do! Assertions.Expect(link).ToHaveAttributeAsync("href", url)
         do! Assertions.Expect(link).ToHaveAttributeAsync("target", "_blank")
         do! Assertions.Expect(link).ToHaveAttributeAsync("rel", "noopener")

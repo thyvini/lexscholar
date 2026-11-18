@@ -123,7 +123,7 @@ let ``she signs in, summarizes on her plan, meets the usage limit and signs out`
         do! click (button dialog "Send")
         do! Assertions.Expect(panel page).ToContainTextAsync("Generated summary")
         do! Assertions.Expect((panel page).Locator(".summary-context")).ToContainTextAsync("ChatGPT plan")
-        do! Assertions.Expect((panel page).Locator("button.citation")).ToHaveTextAsync([| "1"; "2"; "3" |])
+        do! Assertions.Expect((panel page).GetByRole(AriaRole.Link)).ToHaveTextAsync([| "pp. 1–2"; "p. 3" |])
         let using = page.Locator(".summary-using-plan")
         do! Assertions.Expect(using).ToContainTextAsync("Using ChatGPT plan")
         do! Assertions.Expect(using.GetByRole(AriaRole.Link, LocatorGetByRoleOptions(Name = "Manage usage"))).ToHaveAttributeAsync("href", usageUrl)
