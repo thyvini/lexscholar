@@ -22,6 +22,7 @@
     <Compile Include="SummaryStateTests.fs" />
     <Compile Include="SummaryJourneyTests.fs" />
     <Compile Include="WorkspaceJourneyTests.fs" />
+    <Compile Include="MissingFileJourneyTests.fs" />
     <Compile Include="ChatGptStateTests.fs" />
     <Compile Include="ChatGptJourneyTests.fs" />
     <Compile Include="SummaryStatusStateTests.fs" />

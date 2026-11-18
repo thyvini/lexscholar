@@ -1,6 +1,6 @@
 /// Reading and classifying sources (T038): project-scoped role changes and
 /// inline, range-capable delivery of stored originals.
-module LexScholar.Server.ReaderEndpoints
+module LexScholar.Server.DocumentEndpoints
 
 open System
 open System.Threading.Tasks
@@ -8,6 +8,11 @@ open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.Http
 open LexScholar.Application
 open LexScholar.Infrastructure
+
+let private navigationError (context: HttpContext) (status: int) title sentence =
+    context.Response.Headers.XContentTypeOptions <- "nosniff"
+    Results.Content($"<!doctype html><html lang=\"pt-BR\"><head><meta charset=\"utf-8\"><title>{title}</title></head><body><h1>{title}</h1><p>{sentence}</p></body></html>",
+                    "text/html; charset=utf-8", statusCode = Nullable status)
 
 let map (app: WebApplication) (configuration: WorkspaceConfiguration) =
     let directory = configuration.DataDirectory
@@ -25,11 +30,21 @@ let map (app: WebApplication) (configuration: WorkspaceConfiguration) =
                 return LibraryEndpoints.problem 404 "not_found" "Association not found" })) |> ignore
 
     app.MapGet("/api/documents/{documentId:guid}/content", Func<Guid, HttpContext, Task<IResult>>(fun documentId context -> task {
+        let html =
+            context.Request.GetTypedHeaders().Accept
+            |> Seq.exists (fun media -> String.Equals(media.MediaType.Value, "text/html", StringComparison.OrdinalIgnoreCase))
         match! openContent documentId context.RequestAborted with
-        | Error DocumentNotFound -> return LibraryEndpoints.problem 404 "document_not_found" "Document not found"
+        | Error DocumentNotFound ->
+            if html then
+                return navigationError context 404 "Documento não encontrado" "Este documento não está mais na biblioteca."
+            else
+                return LibraryEndpoints.problem 404 "document_not_found" "Document not found"
         | Error DocumentUnavailable ->
-            return LibraryEndpoints.problem 503 "document_unavailable"
-                       "The document's stored file is missing, unreadable or not the recorded size. Its library record and associations are unchanged."
+            if html then
+                return navigationError context 503 "Documento indisponível" "O arquivo deste documento não foi encontrado ou não pode ser lido. O registro na biblioteca e os projetos não foram alterados."
+            else
+                return LibraryEndpoints.problem 503 "document_unavailable"
+                           "The document's stored file is missing, unreadable or not the recorded size. Its library record and associations are unchanged."
         | Ok content ->
             context.Response.Headers.ContentDisposition <- "inline"
             context.Response.Headers.XContentTypeOptions <- "nosniff"

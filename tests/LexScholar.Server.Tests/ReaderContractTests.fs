@@ -283,3 +283,33 @@ let ``GET content for an unavailable original is 503 with records unchanged and 
     Assert.DoesNotContain(harness.Root, body)
     Assert.DoesNotContain(library.StorageKey, body)
     Assert.Equal(before, snapshot harness.Root)
+
+[<Theory; InlineData("missing"); InlineData("shorter"); Trait("Task", "T005")>]
+let ``navigation errors are Portuguese HTML while API errors and records stay unchanged`` (condition: string) =
+    use harness = TestHarness.Start()
+    let library = arrange harness.Root
+    let before = snapshot harness.Root
+    makeUnavailable condition (originalPath harness.Root library)
+    let get (id: Guid) (accept: string) =
+        use request = new HttpRequestMessage(HttpMethod.Get, $"/api/documents/{id}/content")
+        request.Headers.TryAddWithoutValidation("Accept", accept) |> ignore
+        harness.Client.Send(request)
+    let checkHtml status title sentence (response: HttpResponseMessage) =
+        expectStatus status response
+        Assert.Equal("text/html", response.Content.Headers.ContentType.MediaType)
+        Assert.Equal("utf-8", response.Content.Headers.ContentType.CharSet)
+        Assert.Equal<string seq>([ "nosniff" ], response.Headers.GetValues("X-Content-Type-Options"))
+        let body = bodyText response
+        Assert.Contains("<html lang=\"pt-BR\">", body)
+        Assert.Contains($"<title>{title}</title>", body)
+        Assert.Contains(sentence, body)
+        for secret in [ harness.Root; library.StorageKey; "<script"; "document_unavailable"; "document_not_found" ] do
+            Assert.DoesNotContain(secret, body)
+    use missing = get library.DocumentId "text/html,application/xhtml+xml"
+    checkHtml HttpStatusCode.ServiceUnavailable "Documento indisponível" "O arquivo deste documento não foi encontrado ou não pode ser lido. O registro na biblioteca e os projetos não foram alterados." missing
+    use unknown = get (Guid.NewGuid()) "text/html"
+    checkHtml HttpStatusCode.NotFound "Documento não encontrado" "Este documento não está mais na biblioteca." unknown
+    use api = get library.DocumentId "application/json"
+    expectStatus HttpStatusCode.ServiceUnavailable api
+    expectCode "document_unavailable" api
+    Assert.Equal(before, snapshot harness.Root)
