@@ -43,6 +43,7 @@ let noProject = "Selecione um projeto para ver seus documentos."
 let noDocuments = "Nenhum documento neste projeto."
 let summaryRunning = "Gerando resumo"
 let summaryFailed = "Falha no resumo"
+let inProject = "em"
 
 let pages values =
     let format group =

@@ -9,6 +9,45 @@ open LexScholar.Client
 open LexScholar.Server.Tests
 open LexScholar.Browser.Tests.Ui
 
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T004"); Trait("Category", "Browser")>]
+let ``opening a document shows its summary request without an embedded reader`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use harness = TestHarness.Start(serveClient = true)
+        let! page = openApp browser harness
+        let contentRequests = System.Collections.Concurrent.ConcurrentQueue<string>()
+        page.Request.Add(fun request ->
+            if request.Url.Contains("/api/documents/") && request.Url.Contains("/content") then
+                contentRequests.Enqueue(request.Url))
+        do! SummaryJourneyTests.arrange page
+        do! Assertions.Expect(page.GetByTestId("main").Locator("iframe")).ToHaveCountAsync(0)
+        do! Assertions.Expect(page.GetByRole(AriaRole.Heading, PageGetByRoleOptions(Name = Texts.requestSummary))).ToBeVisibleAsync()
+        Assert.Empty(contentRequests)
+    })
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T004"); Trait("Category", "Browser")>]
+let ``changing a role moves the document and leaves the other project unchanged`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use harness = TestHarness.Start(serveClient = true)
+        let! page = openApp browser harness
+        do! SummaryJourneyTests.arrange page
+        let documentRow = page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))
+        do! click (button documentRow "Make Reference Source")
+        do! Assertions.Expect(documentRow).ToContainTextAsync("Reference Source")
+        do! page.GetByLabel(Texts.projectName).FillAsync("Beta")
+        do! click (button (page.Locator("body")) Texts.createProject)
+        let beta = page.Locator("ul.projects li").Filter(LocatorFilterOptions(HasText = "Beta"))
+        do! click (button beta Texts.select)
+        do! click (button (page.Locator("body")) Texts.library)
+        let libraryRow = page.Locator("ul.documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))
+        do! click (button libraryRow "Add as Reference Source")
+        do! Assertions.Expect(documentRow).ToContainTextAsync("Reference Source")
+        do! click (button documentRow "Make Focused Source")
+        do! Assertions.Expect(documentRow).ToContainTextAsync("Focused Source")
+        let alpha = page.Locator("ul.projects li").Filter(LocatorFilterOptions(HasText = "Alpha"))
+        do! click (button alpha Texts.select)
+        do! Assertions.Expect(documentRow).ToContainTextAsync("Reference Source")
+    })
+
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T003"); Trait("Category", "Browser")>]
 let ``PDF and citation links open the same document in fresh tabs and keep the summary visible`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
@@ -18,7 +57,7 @@ let ``PDF and citation links open the same document in fresh tabs and keep the s
             settings = [ "LexScholar:Summary:Endpoint", "http://127.0.0.1:9/v1"; "LexScholar:Summary:Model", "test-model" ])
         let! page = openApp browser harness
         do! SummaryJourneyTests.arrange page
-        do! click (button (page.Locator("body")) "Summarize")
+        do! click (button (page.Locator("body")) Texts.summarize)
         let panel = page.Locator("section.summary")
         do! Assertions.Expect(panel).ToContainTextAsync("Generated summary")
         use! response = harness.Client.GetAsync("/api/documents")

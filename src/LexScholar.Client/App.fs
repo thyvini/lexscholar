@@ -142,26 +142,14 @@ module Api =
         let! result = send http HttpMethod.Delete $"api/projects/{projectId:D}/documents/{documentId:D}" None
         return result |> Result.map ignore }
 
-    /// Check availability without downloading the entire PDF before the native viewer opens it.
-    let checkContent (http: HttpClient) (url: string) = async {
-        try
-            use request = new HttpRequestMessage(HttpMethod.Get, url)
-            request.Headers.Range <- Headers.RangeHeaderValue(Nullable 0L, Nullable 0L)
-            use! response = http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead) |> Async.AwaitTask
-            if response.IsSuccessStatusCode then return Ok ()
-            else
-                let! body = response.Content.ReadAsStringAsync() |> Async.AwaitTask
-                return Error (Reader.parseFailure (int response.StatusCode) body)
-        with _ -> return Error Reader.RequestFailed }
-
     let changeRole (http: HttpClient) (projectId: Guid) (documentId: Guid) documentRole = async {
         let body = JsonSerializer.Serialize({| role = roleName documentRole |})
         let content = new StringContent(body, Encoding.UTF8, "application/json") :> HttpContent
         let! result = send http HttpMethod.Patch $"api/projects/{projectId:D}/documents/{documentId:D}" (Some content)
         return result |> Result.map ignore |> Result.mapError (function
-            | Library.NotFound -> Reader.AssociationNotFound
-            | Library.InvalidRole -> Reader.InvalidRole
-            | _ -> Reader.RequestFailed) }
+            | Library.NotFound -> Library.NotFound
+            | Library.InvalidRole -> Library.InvalidRole
+            | _ -> Library.RequestFailed) }
 
     /// Requests a summary. The server answers with the job's state (202, or 200 when one exists); nothing is streamed and
     /// leaving the document does not abort the request. Failures never show response details.
@@ -291,14 +279,13 @@ module ChatGptApi =
         let! _ = post http "api/chatgpt/welcome/dismiss"
         return () }
 
-/// The whole page: projects, shared library, native reader and its summary.
-type State = { Projects: Model; Library: Library.Model; Reader: Reader.Model; Summary: Summary.Model; ChatGpt: ChatGpt.Model; Statuses: SummaryStatus.Statuses; ShowLibrary: bool }
+/// The whole page: projects, shared library and the opened document's summary.
+type State = { Projects: Model; Library: Library.Model; Summary: Summary.Model; ChatGpt: ChatGpt.Model; Statuses: SummaryStatus.Statuses; ShowLibrary: bool }
 
 type Msg =
     | ShowLibrary
     | ProjectsMsg of Message
     | LibraryMsg of Library.Message
-    | ReaderMsg of Reader.Message
     | SummaryMsg of Summary.Message
     | ChatGptMsg of ChatGpt.Message
     | StatusMsg of SummaryStatus.StatusMessage
@@ -330,22 +317,13 @@ module private Ui =
             perform (fun () -> Api.associate http projectId documentId role) (fun result -> Library.Associated (projectId, result))
         | Library.SendRemove (projectId, documentId) ->
             perform (fun () -> Api.removeAssociation http projectId documentId) (fun result -> Library.Removed (projectId, documentId, result))
+        | Library.SendRole (projectId, documentId, role) ->
+            perform (fun () -> Api.changeRole http projectId documentId role) (fun result -> Library.RoleChanged (projectId, result))
 
     let private updateLibrary http message state =
         let library, effect = Library.update message state.Library
-        { state with Library = library; Reader = Reader.followLibrary library state.Reader }, effect |> Option.map (libraryCommand http) |> Option.defaultValue Cmd.none
-
-    let private updateReader http message state =
-        let reader, effect = Reader.update message state.Reader
-        let showLibrary = match message with Reader.Open _ -> false | _ -> state.ShowLibrary
-        let state = { state with Reader = reader; ShowLibrary = showLibrary }
-        match effect with
-        | Some Reader.RefreshProject -> updateLibrary http Library.ReloadProject state
-        | Some (Reader.CheckContent (request, url)) ->
-            state, Cmd.OfAsync.perform (Api.checkContent http) url (fun result -> ReaderMsg (Reader.ContentChecked (request, result)))
-        | Some (Reader.SendRole (projectId, documentId, role)) ->
-            state, Cmd.OfAsync.perform (fun () -> Api.changeRole http projectId documentId role) () (fun result -> ReaderMsg (Reader.RoleChanged (projectId, result)))
-        | None -> state, Cmd.none
+        let showLibrary = match message with Library.OpenDocument _ when library.Opened.IsSome -> false | _ -> state.ShowLibrary
+        { state with Library = library; ShowLibrary = showLibrary }, effect |> Option.map (libraryCommand http) |> Option.defaultValue Cmd.none
 
     /// How often the open document's running summary is asked for (research §4).
     let private summaryPollMilliseconds = 2000
@@ -437,11 +415,10 @@ module private Ui =
                 state, Cmd.batch [ projectCommand; libraryCommand ]
             else state, projectCommand
         | LibraryMsg message -> updateLibrary http message state
-        | ReaderMsg message -> updateReader http message state
 
-    /// The summary follows the reader's project and open document after every message.
+    /// The summary follows the library's project and open document after every message.
     let update http navigation msg state =
-        let viewOf (state: State) = state.Library.Project, state.Reader.Open |> Option.map (fun document -> document.Id)
+        let viewOf (state: State) = state.Library.Project, state.Library.Opened
         let before = viewOf state
         let state, command = updateCore http navigation msg state
         // The markers are read again on every project or document view change (AR 4) and once a summary was asked for or
@@ -460,7 +437,7 @@ module private Ui =
               Summary.Configured = state.ChatGpt.Configured.IsSome }
         let summary, _ = Summary.update (Summary.DestinationsChanged available) state.Summary
         let state = { state with Summary = summary }
-        let summary, effects = Summary.followReader state.Reader state.Summary
+        let summary, effects = Summary.followOpened state.Library state.Summary
         { state with Summary = summary }, Cmd.batch [ command; yield! effects |> List.map (Some >> summaryCommand http) ]
 
     let errorText = function
@@ -550,7 +527,7 @@ module private Ui =
             }
         }
 
-    let projectDocuments (library: Library.Model) (reader: Reader.Model) showLibrary (statuses: SummaryStatus.StatusEntry list) readerDispatch dispatch =
+    let projectDocuments (library: Library.Model) showLibrary (statuses: SummaryStatus.StatusEntry list) dispatch =
         let busy = library.Busy.IsSome
         section {
             attr.``class`` "project-document-list"
@@ -572,21 +549,21 @@ module private Ui =
                                     "aria-label" => heading
                                     forEach (library.Associations |> List.filter (fun association -> association.Role = role)) <| fun association ->
                                         li {
-                                            attr.``class`` (if not showLibrary && (reader.Open |> Option.exists (fun opened -> opened.Id = association.Document.Id)) then "selected" else "")
+                                            attr.``class`` (if not showLibrary && library.Opened = Some association.Document.Id then "selected" else "")
                                             span { text association.Document.FileName }
                                             small { text (Texts.pageCount association.Document.PageCount) }
                                             summaryMarker (SummaryStatus.documentStatus statuses project association.Document.Id)
                                             strong { attr.``class`` "role"; text (roleLabel association.Role) }
                                             button {
                                                 attr.``type`` "button"
-                                                on.click (fun _ -> readerDispatch (Reader.Open { Id = association.Document.Id; FileName = association.Document.FileName; ContentUrl = association.Document.ContentUrl }))
+                                                on.click (fun _ -> dispatch (Library.OpenDocument association.Document.Id))
                                                 "Open"
                                             }
                                             button {
                                                 attr.``type`` "button"
-                                                attr.disabled (busy || reader.ChangingRole.IsSome)
+                                                attr.disabled (busy || library.ChangingRole.IsSome)
                                                 let role = if association.Role = FocusedSource then ReferenceSource else FocusedSource
-                                                on.click (fun _ -> readerDispatch (Reader.ChangeRole (association.Document.Id, role)))
+                                                on.click (fun _ -> dispatch (Library.ChangeRole (association.Document.Id, role)))
                                                 text $"Make {roleLabel role}"
                                             }
                                             button {
@@ -602,7 +579,7 @@ module private Ui =
         }
 
     /// The context needed to understand and reproduce a summary (FR-008).
-    let summaryContext (document: Reader.Document) (generated: Summary.Generated) =
+    let summaryContext (document: Library.Document) (generated: Summary.Generated) =
         let generatedAt = generated.GeneratedAt.LocalDateTime.ToString("yyyy-MM-dd HH:mm")
         let unreadable =
             if generated.UnreadablePages.IsEmpty then ""
@@ -630,7 +607,7 @@ module private Ui =
         | Some Summary.Combining -> span { attr.``class`` "summary-progress"; text "Combining points. " }
         | None -> empty ()
 
-    let private confirmDialog (document: Reader.Document) (target: Summary.ConfirmTarget) dispatch =
+    let private confirmDialog (document: Library.Document) (target: Summary.ConfirmTarget) dispatch =
         div {
             attr.``class`` "summary-confirm"
             "role" => "alertdialog"
@@ -675,7 +652,7 @@ module private Ui =
             }
         }
 
-    let private summaryPanel (document: Reader.Document) (generated: Summary.Generated) dispatch =
+    let private summaryPanel (document: Library.Document) (generated: Summary.Generated) dispatch =
         section {
             attr.``class`` "summary"
             h3 { "Generated summary" }
@@ -801,10 +778,9 @@ module private Ui =
             radio Summary.UseConfigured "summary-destination-configured" configured
         }
 
-    let summaryView (document: Reader.Document) (summary: Summary.Model) (chatGpt: ChatGpt.Model) dispatch dispatchChatGpt =
+    let summaryView (document: Library.Document) (summary: Summary.Model) (chatGpt: ChatGpt.Model) dispatch dispatchChatGpt =
         let needsChoice = summary.Available.Plan && summary.Available.Configured
         concat {
-            a { attr.href document.ContentUrl; "target" => "_blank"; "rel" => "noopener"; text Texts.openPdf }
             cond (needsChoice && (match summary.State with Summary.Generating _ | Summary.Running | Summary.Confirming _ -> false | _ -> true)) <| function
                 | true -> destinationChoice chatGpt summary dispatch
                 | false -> empty ()
@@ -821,18 +797,21 @@ module private Ui =
                         "role" => "status"
                         "Summarizing… "
                         progressText summary.Progress
-                        plainButton "Stop" None (fun _ -> dispatch Summary.Stop)
+                        plainButton Texts.stop None (fun _ -> dispatch Summary.Stop)
                     }
                 | Summary.Shown _ -> empty ()
                 | Summary.Dismissing Summary.Running -> span { "role" => "status"; "Stopping… " }
                 | Summary.Dismissing _ -> span { "role" => "status"; "Dismissing… " }
                 | Summary.Confirming target -> confirmDialog document target dispatch
                 | Summary.Idle ->
-                    button {
-                        attr.``type`` "button"
-                        attr.disabled (needsChoice && summary.Choice.IsNone)
-                        on.click (fun _ -> dispatch Summary.Summarize)
-                        text "Summarize"
+                    concat {
+                        h3 { text Texts.requestSummary }
+                        button {
+                            attr.``type`` "button"
+                            attr.disabled (needsChoice && summary.Choice.IsNone)
+                            on.click (fun _ -> dispatch Summary.Summarize)
+                            text Texts.summarize
+                        }
                     }
                 | Summary.Failed failure ->
                     // Her other destination stays reachable, so a retry is always offered next to the primary action.
@@ -876,9 +855,11 @@ module private Ui =
             model.Snapshot.Projects
             |> List.tryFind (fun p -> Some p.Id = model.Snapshot.Active)
             |> Option.map (fun p -> p.Name)
+        let opened = state.Library.Associations |> List.tryFind (fun item -> Some item.Document.Id = state.Library.Opened)
+        let projectLabel = projectName |> Option.defaultValue ""
         let location =
             if state.ShowLibrary then Some Texts.library
-            else state.Reader.Open |> Option.map (fun document -> document.FileName)
+            else opened |> Option.map (fun item -> item.Document.FileName)
         let breadcrumb = [ projectName; location ] |> List.choose id |> String.concat " / "
         let dispatch' = dispatch
         let dispatch = ProjectsMsg >> dispatch'
@@ -975,7 +956,7 @@ module private Ui =
                     | true -> p { attr.``class`` "document-count"; text (Texts.documentCount state.Library.Associations.Length) }
                     | false -> empty ()
                 button { attr.``type`` "button"; on.click (fun _ -> dispatch' ShowLibrary); text Texts.addDocuments }
-                projectDocuments state.Library state.Reader state.ShowLibrary state.Statuses.Entries (ReaderMsg >> dispatch') (LibraryMsg >> dispatch')
+                projectDocuments state.Library state.ShowLibrary state.Statuses.Entries (LibraryMsg >> dispatch')
             }
             main {
             "data-testid" => "main"
@@ -984,43 +965,31 @@ module private Ui =
             cond state.ShowLibrary <| function
                 | true -> libraryView state.Library (LibraryMsg >> dispatch')
                 | false -> empty ()
-            cond (not state.ShowLibrary && state.Reader.Open.IsNone && state.Reader.Opening.IsNone) <| function
+            cond (not state.ShowLibrary && opened.IsNone) <| function
                 | true -> p { attr.``class`` "empty-main"; text Texts.chooseDocument }
                 | false -> empty ()
-            cond state.Reader.Error <| function
+            cond state.Library.RoleError <| function
                 | Some error ->
                     p {
                         "role" => "alert"
                         attr.``class`` "error"
-                        text (match error with
-                              | Reader.Unavailable -> "This document's stored file is missing, unreadable or not the recorded size. Its library record and project associations are unchanged."
-                              | Reader.DocumentNotFound -> "That document is no longer in the library. Refresh and try again."
-                              | Reader.AssociationNotFound -> "That association is no longer available. Refresh and try again."
-                              | Reader.InvalidRole -> "Choose Focused Source or Reference Source."
-                              | Reader.RequestFailed -> "The request failed. Please try again.")
+                        text (libraryErrorText error)
                     }
                 | None -> empty ()
-            cond state.Reader.Opening <| function
-                | Some _ -> p { "role" => "status"; "Opening document…" }
-                | None -> empty ()
-            cond (if state.ShowLibrary then None else state.Reader.Open) <| function
-                | Some document ->
+            cond (if state.ShowLibrary then None else opened) <| function
+                | Some association ->
                     section {
-                        attr.``class`` "card reader"
-                        h2 { "Reader" }
-                        p { text document.FileName }
-                        p { "Use your browser's PDF viewer controls to navigate pages." }
-                        button { attr.``type`` "button"; on.click (fun _ -> dispatch' (ReaderMsg Reader.Close)); "Close" }
+                        let document = association.Document
+                        let role = if association.Role = FocusedSource then Texts.focusedSource else Texts.referenceSource
+                        attr.``class`` "card"
+                        div {
+                            attr.``class`` "document-heading"
+                            h2 { text document.FileName }
+                            a { attr.href document.ContentUrl; "target" => "_blank"; "rel" => "noopener"; text Texts.openPdf }
+                        }
+                        p { text $"{Texts.pageCount document.PageCount} · {role} {Texts.inProject} {projectLabel}" }
                         chatGptAccount state.ChatGpt (ChatGptMsg >> dispatch')
                         summaryView document state.Summary state.ChatGpt (SummaryMsg >> dispatch') (ChatGptMsg >> dispatch')
-                        iframe {
-                            // Retained until T004 removes the built-in reader.
-                            attr.key state.Reader.Navigation
-                            attr.``class`` "reader-frame"
-                            "title" => document.FileName
-                            "src" => (match state.Reader.Page with Some page -> $"{document.ContentUrl}#page={page}" | None -> document.ContentUrl)
-                            "style" => "width:100%;height:75vh;border:0"
-                        }
                     }
                 | None -> empty ()
             }
@@ -1042,7 +1011,7 @@ type App() =
             let chatGpt, chatGptEffect = ChatGpt.update ChatGpt.Load ChatGpt.initial
             let statuses, statusEffect = SummaryStatus.updateStatuses SummaryStatus.Refresh SummaryStatus.initialStatuses
             let chatGpt, _ = ChatGpt.update (ChatGpt.Returned returned) chatGpt
-            { Projects = { initial with Busy = Some Loading }; Library = library; Reader = Reader.initial; Summary = Summary.initial; ChatGpt = chatGpt; Statuses = statuses; ShowLibrary = false },
+            { Projects = { initial with Busy = Some Loading }; Library = library; Summary = Summary.initial; ChatGpt = chatGpt; Statuses = statuses; ShowLibrary = false },
             Cmd.batch [ Ui.command http Fetch |> Cmd.map ProjectsMsg
                         Ui.chatGptCommand http this.Navigation chatGptEffect
                         Ui.statusCommand http statusEffect

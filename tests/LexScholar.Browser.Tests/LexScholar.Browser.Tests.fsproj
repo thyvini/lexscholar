@@ -18,9 +18,7 @@
     <Compile Include="ProjectJourneyTests.fs" />
     <Compile Include="LibraryStateTests.fs" />
     <Compile Include="LibraryJourneyTests.fs" />
-    <Compile Include="ReaderStateTests.fs" />
-    <Compile Include="ReaderApiTests.fs" />
-    <Compile Include="ReaderJourneyTests.fs" />
+    <Compile Include="RoleApiTests.fs" />
     <Compile Include="SummaryStateTests.fs" />
     <Compile Include="SummaryJourneyTests.fs" />
     <Compile Include="WorkspaceJourneyTests.fs" />

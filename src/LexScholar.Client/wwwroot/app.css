@@ -64,4 +64,5 @@ small { color: #596778; }
 .siwc-button img { width: 21px; height: 21px; }
 .chatgpt-welcome, .chatgpt-notice { border-color: #b7c4d1; }
 .summary-points { font-family: "Source Serif 4", Georgia, serif; }
+.document-heading { display: flex; justify-content: space-between; align-items: start; gap: 1rem; }
 .citation { color: var(--accent); font-style: italic; text-decoration: underline; }

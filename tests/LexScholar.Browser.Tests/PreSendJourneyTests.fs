@@ -48,7 +48,7 @@ let private importAndAdd (page: IPage) (fileName: string) = task {
 let private openDocument (page: IPage) (fileName: string) = task {
     let row = page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = fileName))
     do! click (button row "Open")
-    do! Assertions.Expect(page.Locator("iframe.reader-frame")).ToBeVisibleAsync() }
+    do! Assertions.Expect(page.GetByTestId("main").Locator("iframe")).ToHaveCountAsync(0) }
 
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T011"); Trait("Category", "Browser")>]
 let ``leaving a document while the confirmation is open sends nothing and she returns to an idle document`` (browserName: string) =
@@ -65,7 +65,7 @@ let ``leaving a document while the confirmation is open sends nothing and she re
         do! importAndAdd page "article-en.pdf"
         do! importAndAdd page "article-pt.pdf"
         let dialog = page.GetByRole(AriaRole.Alertdialog)
-        let summarize = page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = "Summarize", Exact = true))
+        let summarize = page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = LexScholar.Client.Texts.summarize, Exact = true))
         do! openDocument page "article-en.pdf"
         do! click summarize
         do! Assertions.Expect(dialog).ToContainTextAsync("article-en.pdf")
