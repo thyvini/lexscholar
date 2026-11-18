@@ -31,7 +31,7 @@ let ``changing a role moves the document and leaves the other project unchanged`
         let! page = openApp browser harness
         do! SummaryJourneyTests.arrange page
         let documentRow = page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))
-        do! click (button documentRow "Make Reference Source")
+        do! click (button documentRow Texts.makeReference)
         do! Assertions.Expect(documentRow).ToContainTextAsync("Reference Source")
         do! page.GetByLabel(Texts.projectName).FillAsync("Beta")
         do! click (button (page.Locator("body")) Texts.createProject)
@@ -41,11 +41,33 @@ let ``changing a role moves the document and leaves the other project unchanged`
         let libraryRow = page.Locator("ul.documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))
         do! click (button libraryRow "Add as Reference Source")
         do! Assertions.Expect(documentRow).ToContainTextAsync("Reference Source")
-        do! click (button documentRow "Make Focused Source")
+        do! click (button documentRow Texts.makeFocused)
         do! Assertions.Expect(documentRow).ToContainTextAsync("Focused Source")
         let alpha = page.Locator("ul.projects li").Filter(LocatorFilterOptions(HasText = "Alpha"))
         do! click (button alpha Texts.select)
         do! Assertions.Expect(documentRow).ToContainTextAsync("Reference Source")
+    })
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T006"); Trait("Category", "Browser")>]
+let ``changing a role moves the document while its summary stays visible`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        let answer = """{"points":[{"text":"Retained point","pages":[1]}]}"""
+        use fake = new FakeChatService(Reply answer)
+        use harness = TestHarness.Start(serveClient = true, summaryHandler = fake,
+            settings = [ "LexScholar:Summary:Endpoint", "http://127.0.0.1:9/v1"; "LexScholar:Summary:Model", "test-model" ])
+        let! page = openApp browser harness
+        do! SummaryJourneyTests.arrange page
+        do! click (button (page.Locator("body")) Texts.summarize)
+        let panel = page.Locator("section.summary")
+        do! Assertions.Expect(panel).ToContainTextAsync("Retained point")
+        let focused = listNamed page Texts.focusedSources
+        let reference = listNamed page Texts.referenceSources
+        let row (list: ILocator) = list.Locator("li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))
+        do! Assertions.Expect(row focused).ToHaveCountAsync(1)
+        do! click (button (row focused) Texts.makeReference)
+        do! Assertions.Expect(row focused).ToHaveCountAsync(0)
+        do! Assertions.Expect(row reference).ToHaveCountAsync(1)
+        do! Assertions.Expect(panel).ToContainTextAsync("Retained point")
     })
 
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T003"); Trait("Category", "Browser")>]
