@@ -683,7 +683,7 @@ module private Ui =
             attr.disabled disabled
             on.click (fun _ -> dispatch ChatGpt.SignIn)
             img { attr.src "chatgpt-logo-white.svg"; attr.alt "" }
-            text "Continue with ChatGPT"
+            text Texts.signIn
         }
 
     /// The account line (or the sign-in action) where she asks for a summary.
@@ -750,40 +750,8 @@ module private Ui =
     let private usageLink (caption: string) =
         a { attr.href "https://chatgpt.com/settings/usage"; "target" => "_blank"; "rel" => "noopener noreferrer"; attr.``class`` "manage-usage"; text caption }
 
-    /// Her plan is the destination of the next request.
-    let private usingPlan (summary: Summary.Model) =
-        summary.Available.Plan && (not summary.Available.Configured || summary.Choice = Some Summary.UsePlan)
-
-    let private destinationChoice (chatGpt: ChatGpt.Model) (summary: Summary.Model) dispatch =
-        let radio (value: Summary.Destination) id (caption: string) =
-            span {
-                input {
-                    attr.``type`` "radio"
-                    attr.name "summary-destination"
-                    attr.id id
-                    attr.``checked`` (summary.Choice = Some value)
-                    on.change (fun _ -> dispatch (Summary.Choose value))
-                }
-                label { attr.``for`` id; text caption }
-                " "
-            }
-        let configured =
-            match chatGpt.Configured with
-            | Some service -> $"{service.Host} (model {service.Model})"
-            | None -> "the configured service"
-        fieldset {
-            attr.``class`` "summary-destination"
-            legend { "Summarize with" }
-            radio Summary.UsePlan "summary-destination-plan" "Your ChatGPT plan"
-            radio Summary.UseConfigured "summary-destination-configured" configured
-        }
-
     let summaryView (document: Library.Document) (summary: Summary.Model) (chatGpt: ChatGpt.Model) dispatch dispatchChatGpt =
-        let needsChoice = summary.Available.Plan && summary.Available.Configured
         concat {
-            cond (needsChoice && (match summary.State with Summary.Generating _ | Summary.Running | Summary.Confirming _ -> false | _ -> true)) <| function
-                | true -> destinationChoice chatGpt summary dispatch
-                | false -> empty ()
             cond summary.State <| function
                 | Summary.Generating _ ->
                     span {
@@ -806,12 +774,12 @@ module private Ui =
                 | Summary.Idle ->
                     concat {
                         h3 { text Texts.requestSummary }
-                        button {
-                            attr.``type`` "button"
-                            attr.disabled (needsChoice && summary.Choice.IsNone)
-                            on.click (fun _ -> dispatch Summary.Summarize)
-                            text Texts.summarize
-                        }
+                        if summary.Available.Plan then
+                            button {
+                                attr.``type`` "button"
+                                on.click (fun _ -> dispatch Summary.Summarize)
+                                text Texts.summarize
+                            }
                     }
                 | Summary.Failed failure ->
                     // Her other destination stays reachable, so a retry is always offered next to the primary action.
@@ -826,18 +794,12 @@ module private Ui =
                         button {
                             attr.``type`` "button"
                             attr.``class`` "summary-retry"
-                            attr.disabled (needsChoice && summary.Choice.IsNone)
+                            attr.disabled (not summary.Available.Plan)
                             on.click (fun _ -> dispatch Summary.Summarize)
                             text "Try again"
                         }
                     }
-            cond (usingPlan summary && (match summary.State with Summary.Failed Summary.UsageLimitReached -> false | _ -> true)) <| function
-                | true -> span { attr.``class`` "summary-using-plan"; text " Using ChatGPT plan. "; usageLink "Manage usage" }
-                | false -> empty ()
             cond summary.State <| function
-                | Summary.Failed Summary.NotConfigured ->
-                    p { attr.``class`` "error"; "role" => "alert"; text "Summaries need a ChatGPT sign-in or a summarization service. "
-                        span { attr.``class`` "secondary"; text (Summary.failureText Summary.NotConfigured) } }
                 | Summary.Failed failure -> p { attr.``class`` "error"; "role" => "alert"; text (Summary.failureText failure) }
                 | _ -> empty ()
             cond summary.DismissFailed <| function
@@ -846,6 +808,9 @@ module private Ui =
             cond summary.State <| function
                 | Summary.Shown generated -> summaryPanel document generated dispatch
                 | _ -> empty ()
+            cond (match summary.State with Summary.Idle -> summary.Available.Plan | Summary.Shown generated -> generated.ServiceHost = "ChatGPT plan" | _ -> false) <| function
+                | true -> span { attr.``class`` "summary-using-plan"; text Texts.usingPlan; text " · "; usageLink Texts.manageUsage }
+                | false -> empty ()
         }
 
     let view (state: State) dispatch =

@@ -21,6 +21,8 @@ type ResponsesScript =
     | Failed of code: string
     /// A non-200 answer whose JSON body carries this error code.
     | Status of status: int * code: string
+    /// An error without the expected error object, matching the legacy fake's unstructured body.
+    | UnstructuredStatus of status: int
     /// Never answers until the request is cancelled.
     | WaitUntilCancelled
     /// Waits for Release before returning a completed stream.
@@ -169,6 +171,8 @@ type FakeOpenAi(responses: int -> ResponsesScript) =
                     [ "response.failed", box {| ``type`` = "response.failed"; response = {| error = {| code = code; message = "service detail" |} |} |} ]
             | ResponsesScript.Status (status, code) ->
                 return this.Json(status, JsonSerializer.Serialize({| error = {| code = code; message = "service detail" |} |}))
+            | ResponsesScript.UnstructuredStatus status ->
+                return this.Json(status, """{"error":"service detail"}""")
             | ResponsesScript.WaitUntilCancelled ->
                 waiting.TrySetResult() |> ignore
                 try do! Task.Delay(Timeout.Infinite, cancellation)

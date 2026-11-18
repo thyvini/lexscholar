@@ -154,20 +154,11 @@ let update (message: Message) (model: Model) : Model * Effect option =
     let start project document destination confirmed =
         let request = model.Request + 1
         { model with State = Generating request; Progress = None; Request = request; Claim = request }, Some (Send (request, project, document, destination, confirmed))
-    // One available destination is used; with two, only her choice (none: nothing can be sent yet).
-    let destination =
-        match model.Available with
-        | { Plan = true; Configured = false } -> Some (Some UsePlan)
-        | { Plan = false; Configured = true } -> Some (Some UseConfigured)
-        | { Plan = true; Configured = true } -> model.Choice |> Option.map Some
-        | _ -> Some None
     match message with
     | Summarize ->
         match model.Project, model.Document, model.State with
-        | Some project, Some document, (Idle | Shown _ | Failed _) ->
-            match destination with
-            | Some destination -> start project document destination None
-            | None -> model, None
+        | Some project, Some document, (Idle | Shown _ | Failed _) when model.Available.Plan ->
+            start project document (Some UsePlan) None
         | _ -> model, None
     // Stopping a running summary is a DELETE like dismissing; she waits for its answer and cannot ask meanwhile.
     | Stop ->
@@ -211,7 +202,6 @@ let update (message: Message) (model: Model) : Model * Effect option =
         | _ -> model, None
     | ConfirmSend ->
         match model.Project, model.Document, model.State with
-        | Some project, Some document, Confirming (Service (host, name)) -> start project document (Some UseConfigured) (Some (ConfirmedService (host, name)))
         | Some project, Some document, Confirming (Plan _) -> start project document (Some UsePlan) (Some ConfirmedPlan)
         | _ -> model, None
     // Cancelling sends nothing: no effect. A late answer is dropped because only `Generating` accepts one.
@@ -302,8 +292,7 @@ let pageRanges (pages: int list) : string =
 /// What the researcher reads for a failure.
 let failureText (failure: Failure) : string =
     match failure with
-    | NotConfigured ->
-        "Alternatively, set LexScholar:Summary:Endpoint and LexScholar:Summary:Model in the app's settings file, then restart LexScholar, to use your own summarization service."
+    | NotConfigured -> "Entre no ChatGPT para gerar resumos."
     | Unavailable ->
         "This document's stored file is missing, unreadable or not the recorded size. Its library record and project associations are unchanged."
     | NoText -> "This document has no readable text to summarize (for example, a scanned PDF without a text layer). Nothing was sent."

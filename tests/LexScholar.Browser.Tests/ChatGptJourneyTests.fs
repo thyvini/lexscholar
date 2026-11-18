@@ -65,7 +65,7 @@ let private arrange (page: IPage) = task {
 let private summarize (page: IPage) = click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = LexScholar.Client.Texts.summarize, Exact = true)))
 let private panel (page: IPage) = page.Locator("section.summary")
 
-[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T011"); Trait("Category", "Browser")>]
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T011"); Trait("Task", "T007"); Trait("Category", "Browser")>]
 let ``she signs in, summarizes on her plan, meets the usage limit and signs out`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
         let script call =
@@ -87,7 +87,7 @@ let ``she signs in, summarizes on her plan, meets the usage limit and signs out`
 
         // Not signed in: the sign-in action is offered, branded as OpenAI asks.
         let signIn = page.Locator("button[data-oai-siwc-button]").First
-        do! Assertions.Expect(signIn).ToContainTextAsync("Continue with ChatGPT")
+        do! Assertions.Expect(signIn).ToContainTextAsync(LexScholar.Client.Texts.signIn)
         do! Assertions.Expect(page.Locator(".chatgpt-account")).ToContainTextAsync("signed out")
         do! click signIn
         let! url = authorization.Task
@@ -125,8 +125,8 @@ let ``she signs in, summarizes on her plan, meets the usage limit and signs out`
         do! Assertions.Expect((panel page).Locator(".summary-context")).ToContainTextAsync("ChatGPT plan")
         do! Assertions.Expect((panel page).GetByRole(AriaRole.Link)).ToHaveTextAsync([| "pp. 1–2"; "p. 3" |])
         let using = page.Locator(".summary-using-plan")
-        do! Assertions.Expect(using).ToContainTextAsync("Using ChatGPT plan")
-        do! Assertions.Expect(using.GetByRole(AriaRole.Link, LocatorGetByRoleOptions(Name = "Manage usage"))).ToHaveAttributeAsync("href", usageUrl)
+        do! Assertions.Expect(using).ToContainTextAsync(LexScholar.Client.Texts.usingPlan)
+        do! Assertions.Expect(using.GetByRole(AriaRole.Link, LocatorGetByRoleOptions(Name = LexScholar.Client.Texts.manageUsage))).ToHaveAttributeAsync("href", usageUrl)
 
         // Asking again after dismissing (which deletes the stored summary, F004) goes straight through, with no confirmation.
         do! click (button (panel page) "Dismiss")

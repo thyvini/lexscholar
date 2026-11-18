@@ -27,8 +27,6 @@ let private click (control: ILocator) = task {
     do! Assertions.Expect(control).ToBeVisibleAsync()
     do! control.ClickAsync() }
 
-let private elsewhere = [ "LexScholar:Summary:Endpoint", "http://summary.example.test:8080/v1"; "LexScholar:Summary:Model", "test-model" ]
-
 let private answer = """{"points":[{"text":"Main idea","pages":[1,2]}]}"""
 
 let private selectProject (page: IPage) (name: string) = task {
@@ -50,11 +48,11 @@ let private openDocument (page: IPage) (fileName: string) = task {
     do! click (button row "Open")
     do! Assertions.Expect(page.GetByTestId("main").Locator("iframe")).ToHaveCountAsync(0) }
 
-[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T011"); Trait("Category", "Browser")>]
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T011"); Trait("Task", "T007"); Trait("Category", "Browser")>]
 let ``leaving a document while the confirmation is open sends nothing and she returns to an idle document`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
-        use fake = new FakeChatService(Reply answer)
-        use harness = TestHarness.Start(serveClient = true, settings = elsewhere, summaryHandler = fake)
+        use fake = new FakeOpenAi(ResponsesScript.Completed answer)
+        use harness = TestHarness.Start(serveClient = true, summaryHandler = fake)
         let! context = browser.NewContextAsync(BrowserNewContextOptions(BaseURL = harness.Client.BaseAddress.ToString()))
         let! page = context.NewPageAsync()
         let! _ = page.GotoAsync("/")
@@ -67,6 +65,8 @@ let ``leaving a document while the confirmation is open sends nothing and she re
         let dialog = page.GetByRole(AriaRole.Alertdialog)
         let summarize = page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = LexScholar.Client.Texts.summarize, Exact = true))
         do! openDocument page "article-en.pdf"
+        do! Ui.signInWithChatGpt page harness fake
+        do! openDocument page "article-en.pdf"
         do! click summarize
         do! Assertions.Expect(dialog).ToContainTextAsync("article-en.pdf")
         do! openDocument page "article-pt.pdf"
@@ -76,4 +76,4 @@ let ``leaving a document while the confirmation is open sends nothing and she re
         do! Assertions.Expect(summarize).ToBeVisibleAsync()
         do! Assertions.Expect(dialog).ToHaveCountAsync(0)
         do! Assertions.Expect(page.Locator("section.summary")).ToHaveCountAsync(0)
-        Assert.Empty(fake.Requests) })
+        Assert.Empty(fake.RequestsTo("api.openai.com", "/v1/responses")) })

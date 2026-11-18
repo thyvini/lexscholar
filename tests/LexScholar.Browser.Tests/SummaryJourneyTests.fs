@@ -61,20 +61,58 @@ let arrange (page: IPage) = task {
 
 let private panel (page: IPage) = page.Locator("section.summary")
 
-[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T004"); Trait("Category", "Browser")>]
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T007"); Trait("Category", "Browser")>]
+let ``historical configured service summary retains its recorded provenance`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use fake = new FakeOpenAi(ResponsesScript.Completed answer)
+        use harness = TestHarness.Start(serveClient = true, summaryHandler = fake)
+        let! page = openApp browser harness
+        do! arrange page
+        do! Ui.signInWithChatGpt page harness fake
+        use! projects = harness.Client.GetAsync("/api/projects")
+        let! projectBody = projects.Content.ReadAsStringAsync()
+        use projectJson = System.Text.Json.JsonDocument.Parse(projectBody)
+        let project = projectJson.RootElement.GetProperty("projects").[0].GetProperty("id").GetGuid()
+        use! documents = harness.Client.GetAsync("/api/documents")
+        let! documentBody = documents.Content.ReadAsStringAsync()
+        use documentJson = System.Text.Json.JsonDocument.Parse(documentBody)
+        let document = documentJson.RootElement.[0].GetProperty("id").GetGuid()
+        let generatedAt = DateTimeOffset(2026, 11, 14, 18, 54, 0, TimeSpan.Zero)
+        let key: LexScholar.Domain.SummaryKey = { Project = project; Document = document }
+        let summary: LexScholar.Domain.StoredSummary =
+            { DocumentId = document; Points = [ { Text = "Historical point"; Pages = [ 1 ] } ]
+              PagesCovered = [ 1; 2 ]; UnreadablePages = [ 2 ]; OmittedPoints = 1
+              GeneratedAt = generatedAt; ServiceHost = "archive.example.test:8080"; Model = "historic-model" }
+        LexScholar.Infrastructure.SummaryRepository.save harness.Root key summary
+        let! _ = page.ReloadAsync()
+        do! click (button (page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))) "Open")
+        let context = (panel page).Locator(".summary-context")
+        do! Assertions.Expect(context).ToContainTextAsync("archive.example.test:8080")
+        do! Assertions.Expect(context).ToContainTextAsync("historic-model")
+        do! Assertions.Expect(context).ToContainTextAsync(generatedAt.LocalDateTime.ToString("yyyy-MM-dd HH:mm"))
+        do! Assertions.Expect(context).ToContainTextAsync("pages 1–2")
+        do! Assertions.Expect(context).ToContainTextAsync("Not readable")
+        do! Assertions.Expect(context).ToContainTextAsync("1 generated points")
+        do! Assertions.Expect(page.Locator(".summary-using-plan")).ToHaveCountAsync(0)
+    })
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T004"); Trait("Task", "T007"); Trait("Category", "Browser")>]
 let ``a requested summary is labelled as generated, shows its context and plain-text points, and can be dismissed`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
-        use fake = new FakeChatService(Reply answer)
+        use fake = new FakeOpenAi(ResponsesScript.Completed answer)
         use harness = TestHarness.Start(serveClient = true, settings = settings, summaryHandler = fake)
         let! page = openApp browser harness
         do! arrange page
+        do! Ui.signInWithChatGpt page harness fake
+        do! click (button (page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))) "Open")
         do! click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = LexScholar.Client.Texts.summarize, Exact = true)))
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) "Send")
         do! Assertions.Expect(panel page).ToContainTextAsync("Generated summary")
         do! Assertions.Expect(panel page).ToContainTextAsync("for your review")
         let context = panel page |> fun p -> p.Locator(".summary-context")
         do! Assertions.Expect(context).ToContainTextAsync("article-en.pdf")
-        do! Assertions.Expect(context).ToContainTextAsync("127.0.0.1:9")
-        do! Assertions.Expect(context).ToContainTextAsync("test-model")
+        do! Assertions.Expect(context).ToContainTextAsync("ChatGPT plan")
+        do! Assertions.Expect(context).ToContainTextAsync("gpt-")
         do! Assertions.Expect(context).ToContainTextAsync("pages 1–12")
         let points = (panel page).Locator("ul.summary-points li")
         do! Assertions.Expect(points).ToHaveCountAsync(2)
@@ -89,26 +127,27 @@ let ``a requested summary is labelled as generated, shows its context and plain-
         do! Assertions.Expect(page.Locator("ul.project-documents li")).ToContainTextAsync("Focused Source")
         do! Assertions.Expect(page.GetByTestId("main").GetByRole(AriaRole.Heading, LocatorGetByRoleOptions(Name = "article-en.pdf"))).ToBeVisibleAsync() })
 
-[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T004"); Trait("Category", "Browser")>]
-let ``without a configured service or sign-in the researcher is offered the ChatGPT sign-in`` (browserName: string) =
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T004"); Trait("Task", "T007"); Trait("Category", "Browser")>]
+let ``signed out even with a configured service the researcher is offered only ChatGPT sign-in`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
-        use harness = TestHarness.Start(serveClient = true)
+        use harness = TestHarness.Start(serveClient = true, settings = settings)
         let! page = openApp browser harness
         do! arrange page
-        do! click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = LexScholar.Client.Texts.summarize, Exact = true)))
-        let alert = page.GetByRole(AriaRole.Alert).Filter(LocatorFilterOptions(HasText = "Summaries need a ChatGPT sign-in or a summarization service"))
-        do! Assertions.Expect(alert).ToContainTextAsync("LexScholar:Summary:Model")
-        do! Assertions.Expect(page.Locator("button[data-oai-siwc-button]").First).ToContainTextAsync("Continue with ChatGPT")
+        do! Assertions.Expect(page.Locator("button[data-oai-siwc-button]").First).ToContainTextAsync(LexScholar.Client.Texts.signIn)
+        do! Assertions.Expect(page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = LexScholar.Client.Texts.summarize, Exact = true))).ToHaveCountAsync(0)
         do! Assertions.Expect(panel page).ToHaveCountAsync(0) })
 
-[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T003"); Trait("Category", "Browser")>]
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T003"); Trait("Task", "T007"); Trait("Category", "Browser")>]
 let ``citations are page references that leave the reader and summary unchanged`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
-        use fake = new FakeChatService(Reply answer)
+        use fake = new FakeOpenAi(ResponsesScript.Completed answer)
         use harness = TestHarness.Start(serveClient = true, settings = settings, summaryHandler = fake)
         let! page = openApp browser harness
         do! arrange page
+        do! Ui.signInWithChatGpt page harness fake
+        do! click (button (page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))) "Open")
         do! click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = LexScholar.Client.Texts.summarize, Exact = true)))
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) "Send")
         let citation = (panel page).GetByRole(AriaRole.Link, LocatorGetByRoleOptions(Name = "p. 3", Exact = true))
         do! Assertions.Expect(citation).ToHaveAttributeAsync("href", Text.RegularExpressions.Regex("/content#page=3$"))
         do! click citation
@@ -116,39 +155,47 @@ let ``citations are page references that leave the reader and summary unchanged`
         do! Assertions.Expect(panel page).ToContainTextAsync("Generated summary") })
 
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T007"); Trait("Category", "Browser")>]
-let ``a service elsewhere is asked about first: Cancel sends nothing, Send sends exactly once`` (browserName: string) =
+let ``with a configured service the plan alone is offered and confirmation can be cancelled`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
-        use fake = new FakeChatService(Reply answer)
+        use fake = new FakeOpenAi(ResponsesScript.Completed answer)
         let elsewhere = [ "LexScholar:Summary:Endpoint", "http://summary.example.test:8080/v1"; "LexScholar:Summary:Model", "test-model" ]
         use harness = TestHarness.Start(serveClient = true, settings = elsewhere, summaryHandler = fake)
         let! page = openApp browser harness
         do! arrange page
+        do! Ui.signInWithChatGpt page harness fake
+        do! click (button (page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))) "Open")
+        do! Assertions.Expect(page.Locator(".summary-destination")).ToHaveCountAsync(0)
+        do! Assertions.Expect(page.Locator("body")).Not.ToContainTextAsync("LexScholar:Summary:Endpoint")
+        do! Assertions.Expect(page.Locator(".summary-using-plan")).ToContainTextAsync("Usando seu plano ChatGPT")
+        do! Assertions.Expect(page.Locator(".summary-using-plan").GetByRole(AriaRole.Link)).ToHaveTextAsync("Gerenciar uso")
         let dialog = page.GetByRole(AriaRole.Alertdialog)
         do! click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = LexScholar.Client.Texts.summarize, Exact = true)))
         do! Assertions.Expect(dialog).ToContainTextAsync("article-en.pdf")
-        do! Assertions.Expect(dialog).ToContainTextAsync("summary.example.test:8080")
-        do! Assertions.Expect(dialog).ToContainTextAsync("test-model")
+        do! Assertions.Expect(dialog).ToContainTextAsync("ChatGPT plan")
         do! click (button dialog "Cancel")
         do! Assertions.Expect(dialog).ToHaveCountAsync(0)
         do! Assertions.Expect(panel page).ToHaveCountAsync(0)
-        Assert.Empty(fake.Requests)
+        Assert.Empty(fake.RequestsTo("api.openai.com", "/v1/responses"))
         // Asking again asks again; Send then produces the summary with one service request.
         do! click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = LexScholar.Client.Texts.summarize, Exact = true)))
         do! click (button dialog "Send")
         do! Assertions.Expect(panel page).ToContainTextAsync("Generated summary")
-        Assert.Single(fake.Requests) |> ignore })
+        Assert.Single(fake.RequestsTo("api.openai.com", "/v1/responses")) |> ignore })
 
-[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T010"); Trait("Category", "Browser")>]
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T010"); Trait("Task", "T007"); Trait("Category", "Browser")>]
 let ``a rejected request shows its explanation and Try again asks the service again`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
-        use fake = new FakeChatService(fun call -> if call = 1 then Status 400 else Reply answer)
+        use fake = new FakeOpenAi(fun call -> if call = 1 then ResponsesScript.UnstructuredStatus 400 else ResponsesScript.Completed answer)
         use harness = TestHarness.Start(serveClient = true, settings = settings, summaryHandler = fake)
         let! page = openApp browser harness
         do! arrange page
+        do! Ui.signInWithChatGpt page harness fake
+        do! click (button (page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))) "Open")
         do! click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = LexScholar.Client.Texts.summarize, Exact = true)))
-        let alert = page.GetByRole(AriaRole.Alert).Filter(LocatorFilterOptions(HasText = "MaxOutputTokens"))
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) "Send")
+        let alert = page.GetByRole(AriaRole.Alert).Filter(LocatorFilterOptions(HasText = "The summary service"))
         do! Assertions.Expect(alert).ToContainTextAsync("Model")
         do! Assertions.Expect(alert).Not.ToContainTextAsync("service detail")
         do! click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = "Try again", Exact = true)))
         do! Assertions.Expect(panel page).ToContainTextAsync("Generated summary")
-        Assert.Equal(2, fake.Requests.Length) })
+        Assert.Equal(2, (fake.RequestsTo("api.openai.com", "/v1/responses")).Length) })
