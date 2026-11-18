@@ -564,7 +564,7 @@ module private Ui =
                                                 attr.disabled (busy || library.ChangingRole.IsSome)
                                                 let role = if association.Role = FocusedSource then ReferenceSource else FocusedSource
                                                 on.click (fun _ -> dispatch (Library.ChangeRole (association.Document.Id, role)))
-                                                text $"Make {roleLabel role}"
+                                                text (if role = FocusedSource then Texts.makeFocused else Texts.makeReference)
                                             }
                                             button {
                                                 attr.``type`` "button"
@@ -969,11 +969,11 @@ module private Ui =
                 | true -> p { attr.``class`` "empty-main"; text Texts.chooseDocument }
                 | false -> empty ()
             cond state.Library.RoleError <| function
-                | Some error ->
+                | Some _ ->
                     p {
                         "role" => "alert"
                         attr.``class`` "error"
-                        text (libraryErrorText error)
+                        text Texts.genericFailure
                     }
                 | None -> empty ()
             cond (if state.ShowLibrary then None else opened) <| function
