@@ -20,6 +20,6 @@ module Endpoints =
                         | Ok associations -> associations |> List.exists (fun (item, _) -> item.DocumentId = key.Document)
                         | Error _ -> false })
         LibraryEndpoints.map app configuration jobs
-        ReaderEndpoints.map app configuration
+        DocumentEndpoints.map app configuration
         let vault = ChatGptEndpoints.map app configuration
         SummaryEndpoints.map app configuration vault jobs
