@@ -119,3 +119,21 @@ small { color: #596778; }
 .file-button:has(+ input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
 .onboarding-actions { display: flex; justify-content: flex-end; margin-top: 20px; }
 @media (max-width: 560px) { .onboarding { margin-top: 32px; padding-inline: 16px; } .onboarding form { display: block; } .onboarding form input { margin-bottom: 10px; } .onboarding-step { padding: 16px; gap: 10px; } }
+.summary-instruction {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 6rem;
+    margin-top: .5rem;
+    padding: .75rem;
+    resize: vertical;
+    border: 1px solid var(--border-control, #D5D5CF);
+    border-radius: .6rem;
+    background: white;
+    color: inherit;
+    font: inherit;
+}
+.summary-instruction:focus-visible {
+    outline: 2px solid var(--accent, #0E6E80);
+    outline-offset: 2px;
+}

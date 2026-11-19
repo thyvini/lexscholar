@@ -61,6 +61,72 @@ let private callbackObserved (harness: TestHarness) (path: string) =
 
 let private answerJson = """{"points":[{"text":"Main idea","pages":[1,2]}]}"""
 
+[<Theory; Trait("Task", "T023")>]
+[<InlineData("configured", 400, "", false, "service_failed")>]
+[<InlineData("configured", 429, "", false, "service_failed")>]
+[<InlineData("chatgpt", 400, "unknown_error", false, "service_failed")>]
+[<InlineData("chatgpt", 500, "unknown_error", true, "service_failed")>]
+[<InlineData("chatgpt", 429, "subscription_sharing_usage_limit_exceeded", false, "usage_limit_reached")>]
+[<InlineData("chatgpt", 401, "subscription_sharing_invalid_user", false, "signed_out")>]
+[<InlineData("chatgpt", 403, "subscription_sharing_user_not_eligible", true, "no_plan_access")>]
+let ``service error echo cannot retain an instruction in status or logs`` destination status code stream expectedCode =
+    let secret = "PRIVATE-INSTRUCTION-ERROR-T023"
+    let lines = new Lines()
+    use configured = new FakeChatService(StatusWithBody(status, JsonSerializer.Serialize({| error = {| message = "Refused focus: " + secret |} |})))
+    use plan = new FakeOpenAi(if stream then ResponsesScript.Failed code else ResponsesScript.Status(status, code))
+    plan.SummaryErrorMessage <- "Refused focus: " + secret
+    let handler : HttpMessageHandler = if destination = "configured" then configured else plan
+    use harness =
+        TestHarness.Start(
+            summaryHandler = handler,
+            settings = [ "LexScholar:Summary:Endpoint", "http://127.0.0.1:9/v1"; "LexScholar:Summary:Model", "m" ],
+            configure = fun host -> host.Services.GetRequiredService<ILoggerFactory>().AddProvider lines)
+    let path = documentPath harness
+    if destination = "chatgpt" then signInThrough harness plan "" |> ignore
+    let postStatus, response =
+        sendJson harness path (JsonSerializer.Serialize({| destination = destination; confirmSend = true; instruction = secret |}))
+    Assert.Equal(HttpStatusCode.Accepted, postStatus)
+    Assert.DoesNotContain(secret, response)
+    let parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries)
+    SummaryJobsAccess.settled harness.App (Guid.Parse parts.[2]) (Guid.Parse parts.[4])
+    |> fun task -> task.WaitAsync(TimeSpan.FromSeconds 30.).GetAwaiter().GetResult()
+    let state = harness.Client.GetStringAsync(path).GetAwaiter().GetResult()
+    use json = JsonDocument.Parse state
+    Assert.Equal("failed", json.RootElement.GetProperty("status").GetString())
+    Assert.Equal(expectedCode, json.RootElement.GetProperty("code").GetString())
+    Assert.DoesNotContain(secret, state)
+    Assert.DoesNotContain("Refused focus", state)
+    Assert.NotEmpty lines.All
+    Assert.DoesNotContain(secret, String.Join('\n', lines.All))
+
+[<Fact; Trait("Task", "T023")>]
+let ``optional instruction is absent from logs status and local files`` () =
+    let lines = new Lines()
+    use fake = new FakeOpenAi(ResponsesScript.Completed answerJson)
+    use harness =
+        TestHarness.Start(
+            summaryHandler = fake,
+            configure = fun host -> host.Services.GetRequiredService<ILoggerFactory>().AddProvider lines)
+    let path = documentPath harness
+    signInThrough harness fake "" |> ignore
+    let secret = "PRIVATE-INSTRUCTION-T023-DO-NOT-STORE"
+    let status, response = sendJson harness path (JsonSerializer.Serialize({| confirmSend = true; instruction = secret |}))
+    Assert.Equal(HttpStatusCode.Accepted, status)
+    Assert.DoesNotContain(secret, response)
+    let parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries)
+    SummaryJobsAccess.settled harness.App (Guid.Parse parts.[2]) (Guid.Parse parts.[4])
+    |> fun task -> task.WaitAsync(TimeSpan.FromSeconds 30.).GetAwaiter().GetResult()
+    let state = harness.Client.GetStringAsync(path).GetAwaiter().GetResult()
+    Assert.DoesNotContain(secret, state)
+    Assert.NotEmpty lines.All
+    Assert.DoesNotContain(secret, String.Join('\n', lines.All))
+    for file in IO.Directory.EnumerateFiles(harness.Root, "*", IO.SearchOption.AllDirectories)
+                |> Seq.filter (fun f -> IO.Path.GetFileName f <> ".lexscholar.lock") do
+        use stream = new IO.FileStream(file, IO.FileMode.Open, IO.FileAccess.Read, IO.FileShare.ReadWrite ||| IO.FileShare.Delete)
+        use memory = new IO.MemoryStream()
+        stream.CopyTo memory
+        Assert.DoesNotContain(secret, Text.Encoding.UTF8.GetString(memory.ToArray()))
+
 [<Fact; Trait("Task", "T008")>]
 let ``no secret reaches a log line, a response or a file in any flow`` () =
     observed.Clear()

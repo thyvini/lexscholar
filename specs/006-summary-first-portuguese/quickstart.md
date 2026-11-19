@@ -4,6 +4,16 @@ Prerequisites: build as in AGENTS.md; browsers installed (`scripts/install-brows
 
 ## Automated
 
+T023 optional first-summary instruction: `scripts/check.sh T023`. Impacted regressions: `scripts/check.sh T023 T016 T020 T021 T007` (builds with warnings as errors).
+
+### Optional instruction (T023, both browsers)
+
+1. Open a document without a summary. Check the "O que você quer desta fonte? (opcional)" field and its limit/privacy hint.
+2. Leave it blank to keep default main points; on another unsummarized document, enter a focus such as "Compare os fundamentos e limites da tese."
+3. On the first request after sign-in, check that confirmation discloses the optional instruction. Cancel: no generation starts and the draft remains editable. Edit and deliberately send.
+4. Verify the generated summary remains in Portuguese with valid PDF page links. For a long document, the same focus is supplied to all map/combine stages (automated prompt capture; no real-model guarantee).
+5. Changing project/document or reloading clears an unsent draft. No Recentes/history or regeneration/feedback control is introduced. The raw instruction is not separately saved; generated content can reflect it.
+
 ```sh
 scripts/check.sh T001 T002 T003 T004 T005 T006 T007 T008 T009 T010 T011
 ```

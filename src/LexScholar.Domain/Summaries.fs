@@ -2,6 +2,14 @@
 /// (readability, chunking, parsing points) arrive with the slices that need them.
 namespace LexScholar.Domain
 
+/// Optional, transient focus for a new summary. This is user input, not source evidence.
+module SummaryInstruction =
+    [<Literal>]
+    let maximumCharacters = 2000
+
+    let normalize (value: string) =
+        if System.String.IsNullOrWhiteSpace value then None else Some (value.Trim())
+
 /// Whether the configured service runs on this machine or elsewhere (FR-014).
 type ServiceLocation =
     | Local
