@@ -2,6 +2,12 @@
 
 Decisions for [plan.md](plan.md). Each has the decision, why, and the alternatives considered (constitution VI). The look comes from [mockups/README.md](mockups/README.md).
 
+## R11. Consistent summary typography and PDF control (T017, $154)
+
+- **Decision**: summary points and their citations use the same Inter stack as the interface. This owner clarification supersedes the serif points in screen 06 and the mockup README, without changing onboarding typography. Keep citations italic, underlined and accent-colored.
+- **PDF control**: follow screen 06's bordered secondary control using the existing interface button tokens and a decorative external-link arrow. Retain an anchor, its content URL, `_blank` and `noopener`, and the existing focus outline.
+- **Alternatives**: retaining Source Serif 4 would contradict the owner's explicit consistency request; a filled accent button would elevate PDF opening above the summary workflow; replacing the anchor with a button adds behavior unnecessarily. No new technology, source-list action changes or workspace layout remediation.
+
 ## R10. Owner-approved onboarding remediation (T014, $14z, $151)
 
 - **Decision**: track onboarding independently of project count. It starts after the first successful project-list load finds no projects, remains through creation/import/sign-in, and ends only on explicit skip/finish. Retain its active/finished flag in same-origin browser `sessionStorage` across reload and the same-tab authorization return. Normalize every localhost app entry to `127.0.0.1` on the same port before loading projects or reading setup state, replacing the history entry and preserving query parameters. Only the OAuth callback origin owns workspace/setup state. The three numbered cards follow screen 05, with the owner's additional completion action.

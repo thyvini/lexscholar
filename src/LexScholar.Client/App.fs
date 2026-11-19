@@ -1050,7 +1050,14 @@ module private Ui =
                                     div {
                                         attr.``class`` "document-heading"
                                         h2 { text document.FileName }
-                                        a { attr.href document.ContentUrl; "target" => "_blank"; "rel" => "noopener"; text Texts.openPdf }
+                                        a {
+                                            attr.``class`` "open-pdf"
+                                            attr.href document.ContentUrl
+                                            "target" => "_blank"
+                                            "rel" => "noopener"
+                                            text Texts.openPdf
+                                            span { "aria-hidden" => "true"; text "↗" }
+                                        }
                                     }
                                     p { text (Texts.documentDetails document.PageCount role projectLabel) }
                                     chatGptAccount state.ChatGpt (ChatGptMsg >> dispatch')

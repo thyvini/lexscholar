@@ -9,6 +9,39 @@ open LexScholar.Client
 open LexScholar.Server.Tests
 open LexScholar.Browser.Tests.Ui
 
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T017"); Trait("Category", "Browser")>]
+let ``summary uses interface typography and PDF is a secondary link control`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use fake = new FakeOpenAi(ResponsesScript.Completed """{"points":[{"text":"Consistent typography","pages":[1]}]}""")
+        use harness = TestHarness.Start(serveClient = true, summaryHandler = fake)
+        let! page = openApp browser harness
+        do! SummaryJourneyTests.arrange page
+        do! signInWithChatGpt page harness fake
+        do! click (button (page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))) Texts.openDocument)
+        do! click (button (page.Locator("body")) Texts.summarize)
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) Texts.sendAndSummarize)
+        let points = page.Locator(".summary-points")
+        do! Assertions.Expect(points).ToContainTextAsync("Consistent typography")
+        let! interfaceFont = page.GetByTestId("main").EvaluateAsync<string>("element => getComputedStyle(element).fontFamily")
+        do! Assertions.Expect(points).ToHaveCSSAsync("font-family", interfaceFont)
+        do! Assertions.Expect(points.Locator(".citation")).ToHaveCSSAsync("font-family", interfaceFont)
+        let pdf = link (page.GetByTestId("main")) Texts.openPdf
+        // The inline-flex link is blockified as a document-heading flex item.
+        do! Assertions.Expect(pdf).ToHaveCSSAsync("display", "flex")
+        do! Assertions.Expect(pdf).ToHaveCSSAsync("border-top-style", "solid")
+        do! Assertions.Expect(pdf).ToHaveCSSAsync("border-top-width", "1px")
+        do! Assertions.Expect(pdf).ToHaveCSSAsync("text-decoration-line", "none")
+        do! Assertions.Expect(pdf).ToHaveCSSAsync("font-family", interfaceFont)
+        do! Assertions.Expect(pdf.Locator("[aria-hidden=true]")).ToHaveCountAsync(1)
+        do! pdf.HoverAsync()
+        do! Assertions.Expect(pdf).ToHaveCSSAsync("color", "rgb(10, 85, 98)")
+        do! pdf.FocusAsync()
+        do! page.Keyboard.PressAsync("Tab")
+        do! page.Keyboard.PressAsync("Shift+Tab")
+        do! Assertions.Expect(pdf).ToBeFocusedAsync()
+        do! Assertions.Expect(pdf).ToHaveCSSAsync("outline-style", "solid")
+    })
+
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T004"); Trait("Task", "T007"); Trait("Category", "Browser")>]
 let ``opening a document shows its summary request without an embedded reader`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
