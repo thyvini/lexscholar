@@ -248,11 +248,12 @@ let private startAnswer (jobs: SummaryJobs) (key: SummaryKey) (outcome: StartOut
     | Started -> stateResult 202 (jobs.State key |> Option.defaultValue (JobState.Running None))
     | AlreadyRunning | AlreadyFinished -> stateResult 200 (jobs.State key |> Option.defaultValue (JobState.Running None))
     | NotAssociated -> problem 404 "not_found" "Association not found" null
+    | NoSavedSummary -> problem 404 "no_summary" "No saved summary to replace" null
 
 /// The summary through her plan, as a background job. `prepareSend` is the only way to a token: confirmation, refresh
 /// and save happen there under one lock, and nothing is sent before it returns `Prepared`. The job's token source exists
 /// before it and is handed to the registry after, so the run it registers ends with the job and with sign-out (research §2).
-let private summarizeViaPlan (context: HttpContext) (vault: ChatGptAccess.Vault) (jobs: SummaryJobs) (body: Body) projectId documentId (pages: ReadablePages) : Task<IResult> = task {
+let private summarizeViaPlan regenerate (context: HttpContext) (vault: ChatGptAccess.Vault) (jobs: SummaryJobs) (body: Body) projectId documentId (pages: ReadablePages) : Task<IResult> = task {
     let clock () = DateTimeOffset.UtcNow
     let logger = summaryLogger context
     let injected = context.RequestServices.GetService<HttpMessageHandler>()
@@ -268,9 +269,9 @@ let private summarizeViaPlan (context: HttpContext) (vault: ChatGptAccess.Vault)
             return chatgptConfirmationRequired account
         | ChatGptAccess.NoSignIn -> return chatgptSignedOut ()
         // Decided before anything was sent: the job is created already failed, so the client reads it like any other.
-        | ChatGptAccess.SignInEnded -> return startAnswer jobs key (jobs.StartFailed(key, "signed_out", signedOutDetail))
+        | ChatGptAccess.SignInEnded -> return startAnswer jobs key (jobs.StartFailed(key, "signed_out", signedOutDetail, regenerate = regenerate))
         | ChatGptAccess.RefreshUnreachable ->
-            return startAnswer jobs key (jobs.StartFailed(key, "service_failed", "ChatGPT could not be reached to renew your sign-in. Try again."))
+            return startAnswer jobs key (jobs.StartFailed(key, "service_failed", "ChatGPT could not be reached to renew your sign-in. Try again.", regenerate = regenerate))
         | ChatGptAccess.Prepared (credentials, run) ->
             // A refusal ends the sign-in (record deleted, other runs cancelled) before the failure is reported.
             let ended (error: Summarize.ServiceError) : Task<unit> =
@@ -306,7 +307,7 @@ let private summarizeViaPlan (context: HttpContext) (vault: ChatGptAccess.Vault)
                     // Only the error type is logged, never text or the service's answer (FR-009, FR-014).
                     logger.LogError("Summary of document {DocumentId} failed unexpectedly: {Error}", box key.Document, error.GetType().Name)
                     jobs.Fail(key, job.Id, "service_failed", Summarize.failureDetail Summarize.ServiceError.UnusableOutput, None) |> ignore }
-            match jobs.StartWith(key, source, run.Token, work) with
+            match jobs.StartWith(key, source, run.Token, work, regenerate = regenerate) with
             | Started ->
                 handedOver <- true
                 return startAnswer jobs key Started
@@ -318,7 +319,7 @@ let private summarizeViaPlan (context: HttpContext) (vault: ChatGptAccess.Vault)
 
 /// The service from her settings file: F003's rule, unchanged. Elsewhere needs this request's confirmation.
 /// After the checks the summary runs as a background job (F004): the answer is immediate and closing the request does not stop it.
-let private summarizeConfigured (context: HttpContext) (jobs: SummaryJobs) (configured: SummaryConfiguration) (body: Body) projectId documentId (pages: ReadablePages) : Task<IResult> = task {
+let private summarizeConfigured regenerate (context: HttpContext) (jobs: SummaryJobs) (configured: SummaryConfiguration) (body: Body) projectId documentId (pages: ReadablePages) : Task<IResult> = task {
     // FR-014: for a service elsewhere nothing is sent without this request's confirmation
     // of the host and model currently configured.
     let current = configured.Endpoint.Authority, configured.Model
@@ -338,7 +339,7 @@ let private summarizeConfigured (context: HttpContext) (jobs: SummaryJobs) (conf
                   Temperature = configured.Temperature; MaxOutputTokens = configured.MaxOutputTokens }
             return! runJob logger jobs key job (fun _ -> Task.FromResult()) configured.MaxChunkCharacters (ChatCompletions.complete logger client settings)
                         configured.Endpoint.Authority configured.Model pages body.Instruction }
-        return startAnswer jobs key (jobs.Start(key, stopping, run)) }
+        return startAnswer jobs key (jobs.Start(key, stopping, run, regenerate = regenerate)) }
 
 /// Resolves the destination before anything else (research §10): `Error` is the answer to send.
 let private resolveDestination (configuration: WorkspaceConfiguration) (signedIn: bool) (requested: Requested) : Result<Destination, IResult> =
@@ -369,6 +370,15 @@ let private mapBackground (app: WebApplication) (jobs: SummaryJobs) (listStored:
     app.MapDelete(path, Func<Guid, Guid, IResult>(fun projectId documentId ->
         jobs.Stop { Project = projectId; Document = documentId }
         Results.NoContent())) |> ignore
+    app.MapPost(path + "/cancel", Func<Guid, Guid, IResult>(fun projectId documentId ->
+        jobs.Cancel { Project = projectId; Document = documentId }
+        Results.NoContent())) |> ignore
+    // The durable version is independently readable while the replacement operation runs or has failed.
+    app.MapGet(path + "/saved", Func<Guid, Guid, IResult>(fun projectId documentId ->
+        jobs.Locked(fun () ->
+            match jobs.Capabilities.Find { Project = projectId; Document = documentId } with
+            | Some summary -> stateResult 200 (JobState.Finished summary)
+            | None -> problem 404 "no_summary" "No saved summary" null))) |> ignore
     // One entry per pair with a running, finished or failed summary, for the list markers.
     app.MapGet("/api/summaries", Func<IResult>(fun () ->
         let statusName (status: SummaryStatus) =
@@ -386,7 +396,8 @@ let map (app: WebApplication) (configuration: WorkspaceConfiguration) (vault: Ch
     mapBackground app jobs (fun () -> SummaryRepository.listKeys directory)
     // Published so tests can wait for a job to end (a handshake instead of polling).
     (app :> IApplicationBuilder).Properties["LexScholar.SummaryJobs"] <- box jobs
-    app.MapPost("/api/projects/{projectId:guid}/documents/{documentId:guid}/summary",
+    let mapRequest regenerate path =
+      app.MapPost(path,
                 Func<Guid, Guid, HttpContext, Task<IResult>>(fun projectId documentId context -> task {
         let! body = readBody context
         // One summary per document in a project (FR-011): a running or finished (stored included) summary for a pair that is
@@ -395,7 +406,8 @@ let map (app: WebApplication) (configuration: WorkspaceConfiguration) (vault: Ch
         let key = { Project = projectId; Document = documentId }
         let existing =
             match jobs.State key with
-            | Some (JobState.Running _ | JobState.Finished _ as state) when not (notAssociated directory projectId documentId) -> Some state
+            | Some (JobState.Running _ as state) when not (notAssociated directory projectId documentId) -> Some state
+            | Some (JobState.Finished _ as state) when not regenerate && not (notAssociated directory projectId documentId) -> Some state
             | _ -> None
         match existing with
         | _ when body.InvalidInstruction ->
@@ -430,5 +442,8 @@ let map (app: WebApplication) (configuration: WorkspaceConfiguration) (vault: Ch
                             // These two calls are the only paths to `summarizeOnce`, and both run after the local checks
                             // and after their own confirmation rule.
                             match destination with
-                            | Chatgpt -> return! summarizeViaPlan context vault jobs body projectId documentId readable
-                            | Configured -> return! summarizeConfigured context jobs configuration.Summary.Value body projectId documentId readable })) |> ignore
+                            | Chatgpt -> return! summarizeViaPlan regenerate context vault jobs body projectId documentId readable
+                            | Configured -> return! summarizeConfigured regenerate context jobs configuration.Summary.Value body projectId documentId readable })) |> ignore
+    let path = "/api/projects/{projectId:guid}/documents/{documentId:guid}/summary"
+    mapRequest false path
+    mapRequest true (path + "/regenerate")

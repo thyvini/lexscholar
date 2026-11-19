@@ -13,6 +13,7 @@ type StartOutcome =
     | AlreadyRunning
     | AlreadyFinished
     | NotAssociated
+    | NoSavedSummary
 
 /// The capabilities the registry needs; all are called inside its lock.
 type SummaryJobCapabilities =
@@ -70,16 +71,18 @@ type SummaryJobs(capabilities: SummaryJobCapabilities) =
     /// `prepareSend`) and the token its calls receive (`effective`: the source's own, or the plan run's, which sign-out
     /// cancels). Under the lock, in order: the pair is no longer in the project -> `NotAssociated`; a job is running ->
     /// `AlreadyRunning`; a failed job is replaced; a finished or stored summary -> `AlreadyFinished`; otherwise the job
-    /// starts and owns `source`. For any other outcome the caller still owns it.
-    member _.StartWith(key: SummaryKey, source: CancellationTokenSource, effective: CancellationToken, run: JobHandle -> Task<unit>) : StartOutcome =
+    /// starts and owns `source`. Explicit regeneration instead requires a stored summary and leaves it untouched until
+    /// successful completion; a running job still wins. For any other outcome the caller still owns the source.
+    member _.StartWith(key: SummaryKey, source: CancellationTokenSource, effective: CancellationToken, run: JobHandle -> Task<unit>, ?regenerate: bool) : StartOutcome =
         lock gate (fun () ->
             if not (capabilities.AssociationExists key) then NotAssociated
             else
                 match jobs.TryGetValue key with
                 | true, { State = JobState.Running _ } -> AlreadyRunning
-                | true, { State = JobState.Finished _ } -> AlreadyFinished
+                | _ when defaultArg regenerate false && (capabilities.Find key).IsNone -> NoSavedSummary
+                | true, { State = JobState.Finished _ } when not (defaultArg regenerate false) -> AlreadyFinished
                 // A failed job is replaced; a stored summary is as good as a finished job.
-                | _ when (capabilities.Find key).IsSome -> AlreadyFinished
+                | _ when not (defaultArg regenerate false) && (capabilities.Find key).IsSome -> AlreadyFinished
                 | _ ->
                     let job = { Id = Guid.NewGuid(); Source = source; Effective = effective; State = JobState.Running None; Run = Task.CompletedTask }
                     jobs[key] <- job
@@ -89,24 +92,25 @@ type SummaryJobs(capabilities: SummaryJobCapabilities) =
                     Started)
 
     /// `StartWith` for a job with its own token, linked to `stopping`, never to a request.
-    member this.Start(key: SummaryKey, stopping: CancellationToken, run: JobHandle -> Task<unit>) : StartOutcome =
+    member this.Start(key: SummaryKey, stopping: CancellationToken, run: JobHandle -> Task<unit>, ?regenerate: bool) : StartOutcome =
         let source = CancellationTokenSource.CreateLinkedTokenSource stopping
-        match this.StartWith(key, source, source.Token, run) with
+        match this.StartWith(key, source, source.Token, run, ?regenerate = regenerate) with
         | Started -> Started
         | refused ->
             source.Dispose()
             refused
 
     /// Creates the job for `key` already failed (a plan outcome decided before anything was sent). The same refusals as
-    /// `StartWith`: only a failed job is replaced.
-    member _.StartFailed(key: SummaryKey, code: string, detail: string) : StartOutcome =
+    /// `StartWith`, including explicit regeneration's durable-row requirement.
+    member _.StartFailed(key: SummaryKey, code: string, detail: string, ?regenerate: bool) : StartOutcome =
         lock gate (fun () ->
             if not (capabilities.AssociationExists key) then NotAssociated
             else
                 match jobs.TryGetValue key with
                 | true, { State = JobState.Running _ } -> AlreadyRunning
-                | true, { State = JobState.Finished _ } -> AlreadyFinished
-                | _ when (capabilities.Find key).IsSome -> AlreadyFinished
+                | _ when defaultArg regenerate false && (capabilities.Find key).IsNone -> NoSavedSummary
+                | true, { State = JobState.Finished _ } when not (defaultArg regenerate false) -> AlreadyFinished
+                | _ when not (defaultArg regenerate false) && (capabilities.Find key).IsSome -> AlreadyFinished
                 | _ ->
                     let source = new CancellationTokenSource()
                     source.Dispose()
@@ -116,7 +120,7 @@ type SummaryJobs(capabilities: SummaryJobCapabilities) =
 
     /// Finishes the job `id` of `key` with its summary; false when the registry no longer holds that job, or when its
     /// effective token is already cancelled (a plan job after sign-out): then the job ends `Failed signed_out` and
-    /// nothing is kept (research §3, AR 9). No sign-in lock is taken: a sign-out landing after this check is allowed to lose.
+    /// nothing new is kept (an earlier durable version is untouched). No sign-in lock is taken: a sign-out landing after this check is allowed to lose.
     member _.Complete(key: SummaryKey, id: Guid, summary: StoredSummary) : bool =
         lock gate (fun () ->
             match current key id with
@@ -173,6 +177,10 @@ type SummaryJobs(capabilities: SummaryJobCapabilities) =
         lock gate (fun () ->
             dropJob key
             capabilities.Delete key)
+
+    /// Cancels/dismisses only the transient operation. Never deletes a saved summary, even if completion won.
+    member _.Cancel(key: SummaryKey) : unit =
+        lock gate (fun () -> dropJob key)
 
     /// Removes the pair from the project (research §3 "Removal"): under the lock, drops and cancels its job, then runs
     /// `delete` (the association delete) and returns its result. The stored summary is NOT deleted here: its row goes with

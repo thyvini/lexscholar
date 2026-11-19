@@ -100,6 +100,82 @@ let ``invalid instruction never silently starts an uninstructed summary`` (field
     Assert.Contains("invalid_instruction", text)
     Assert.Empty(fake.Requests)
 
+[<Theory; Trait("Task", "T024")>]
+[<InlineData(false)>]
+[<InlineData(true)>]
+let ``regeneration preserves the saved row while running and cancel or shutdown keeps it across restart`` cancel =
+    use workspace = TemporaryWorkspace.Create()
+    let fake = new FakeChatService(WaitUntilCancelled)
+    let mutable saved = None
+    let mutable path = ""
+    let mutable key = Unchecked.defaultof<LexScholar.Domain.SummaryKey>
+    do
+        use harness = TestHarness.Start(workspace = workspace, settings = settings, summaryHandler = fake)
+        let project = seedProject harness.Root
+        let document = import harness.Client "article-en.pdf"
+        associate harness.Client project document
+        key <- { Project = project; Document = document }
+        let summary : LexScholar.Domain.StoredSummary =
+            { DocumentId = document; Points = [{ Text = "Original"; Pages = [1] }]
+              PagesCovered = [1]; UnreadablePages = []; OmittedPoints = 0
+              GeneratedAt = DateTimeOffset.UtcNow; ServiceHost = "old"; Model = "old" }
+        SummaryRepository.save harness.Root key summary
+        saved <- SummaryRepository.find harness.Root key
+        path <- $"/api/projects/{project}/documents/{document}/summary"
+        let status, _ = send harness.Client HttpMethod.Post (path + "/regenerate") None
+        Assert.Equal(HttpStatusCode.Accepted, status)
+        fake.Waiting.WaitAsync(TimeSpan.FromSeconds 30.).GetAwaiter().GetResult()
+        Assert.Equal(saved, SummaryRepository.find harness.Root key)
+        let repeat, _ = summarize harness.Client project document
+        Assert.Equal(HttpStatusCode.OK, repeat)
+        Assert.Equal(1, fake.Requests.Length)
+        if cancel then
+            let cancelled, _ = send harness.Client HttpMethod.Post (path + "/cancel") None
+            Assert.Equal(HttpStatusCode.NoContent, cancelled)
+            fake.Cancelled.WaitAsync(TimeSpan.FromSeconds 30.).GetAwaiter().GetResult()
+        Assert.Equal(saved, SummaryRepository.find harness.Root key)
+    use restarted = TestHarness.Start(workspace = workspace, settings = settings)
+    Assert.Equal(saved, SummaryRepository.find restarted.Root key)
+    let status, text = send restarted.Client HttpMethod.Get path None
+    Assert.Equal(HttpStatusCode.OK, status)
+    Assert.Contains("Original", text)
+
+[<Theory; Trait("Task", "T024")>]
+[<InlineData(false)>]
+[<InlineData(true)>]
+let ``replacement failure preserves SQLite content and success replaces it across restart`` success =
+    use workspace = TemporaryWorkspace.Create()
+    let fake = new FakeChatService(if success then Reply """{"points":[{"text":"Replacement","pages":[1]}]}""" else Status 500)
+    let mutable key = Unchecked.defaultof<LexScholar.Domain.SummaryKey>
+    let mutable expected = None
+    do
+        use harness = TestHarness.Start(workspace = workspace, settings = settings, summaryHandler = fake)
+        let project = seedProject harness.Root
+        let document = import harness.Client "article-en.pdf"
+        associate harness.Client project document
+        key <- { Project = project; Document = document }
+        let original : LexScholar.Domain.StoredSummary =
+            { DocumentId = document; Points = [{ Text = "Original"; Pages = [1] }]
+              PagesCovered = [1]; UnreadablePages = []; OmittedPoints = 0
+              GeneratedAt = DateTimeOffset.UtcNow; ServiceHost = "old"; Model = "old" }
+        SummaryRepository.save harness.Root key original
+        let path = $"/api/projects/{project}/documents/{document}/summary"
+        use unsafeResponse = harness.Client.PostAsync(path + "/regenerate", null).GetAwaiter().GetResult()
+        Assert.Equal(HttpStatusCode.Forbidden, unsafeResponse.StatusCode)
+        Assert.Empty(fake.Requests)
+        let status, _ = send harness.Client HttpMethod.Post (path + "/regenerate") None
+        Assert.Equal(HttpStatusCode.Accepted, status)
+        SummaryJobsAccess.settled harness.App project document |> fun work -> work.WaitAsync(TimeSpan.FromSeconds 30.).GetAwaiter().GetResult()
+        expected <- SummaryRepository.find harness.Root key
+        Assert.True(expected.IsSome)
+        if success then Assert.Equal("Replacement", expected.Value.Points.Head.Text)
+        else Assert.Equal("Original", expected.Value.Points.Head.Text)
+        let savedStatus, savedText = send harness.Client HttpMethod.Get (path + "/saved") None
+        Assert.Equal(HttpStatusCode.OK, savedStatus)
+        Assert.Contains(expected.Value.Points.Head.Text, savedText)
+    use restarted = TestHarness.Start(workspace = workspace, settings = settings)
+    Assert.Equal(expected, SummaryRepository.find restarted.Root key)
+
 let private expectProblem (fake: FakeChatService) (root: string) status code (actual: HttpStatusCode, text: string) =
     Assert.Equal(status, actual)
     use json = JsonDocument.Parse(text)
