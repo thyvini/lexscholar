@@ -44,7 +44,7 @@ let private projectRow (page: IPage) (name: string) = page.Locator("ul.projects 
 let private selectProject (page: IPage) (name: string) = task {
     let row = projectRow page name
     do! click (button row LexScholar.Client.Texts.select)
-    do! Assertions.Expect(row.Locator("strong.active")).ToHaveTextAsync(LexScholar.Client.Texts.active) }
+    do! Assertions.Expect(row).ToHaveClassAsync("selected") }
 
 let private createProject (page: IPage) (name: string) = task {
     do! page.GetByLabel(LexScholar.Client.Texts.projectName).FillAsync(name)

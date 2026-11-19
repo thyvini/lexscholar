@@ -986,17 +986,19 @@ module private Ui =
                                 attr.``class`` "projects"
                                 forEach model.Snapshot.Projects <| fun project ->
                                     li {
-                                        span { text project.Name }
-                                        summaryMarker (SummaryStatus.projectStatus state.Statuses.Entries project.Id)
-                                        cond (model.Snapshot.Active = Some project.Id) <| function
-                                            | true ->
-                                                concat {
-                                                    strong { attr.``class`` "active"; text Texts.active }
+                                        attr.``class`` (if model.Snapshot.Active = Some project.Id then "selected" else "")
+                                        "aria-current" => (if model.Snapshot.Active = Some project.Id then "true" else "false")
+                                        span { attr.``class`` "project-name"; text project.Name }
+                                        div {
+                                            attr.``class`` "project-metadata"
+                                            summaryMarker (SummaryStatus.projectStatus state.Statuses.Entries project.Id)
+                                            cond (model.Snapshot.Active = Some project.Id) <| function
+                                                | true ->
                                                     cond (state.Library.HasLoadedProject && state.Library.Project = Some project.Id) <| function
                                                         | true -> small { attr.``class`` "project-count"; text (string state.Library.Associations.Length) }
                                                         | false -> empty ()
-                                                }
-                                            | false -> button { attr.``type`` "button"; attr.disabled busy; on.click (fun _ -> dispatch (Select project.Id)); text Texts.select }
+                                                | false -> button { attr.``type`` "button"; attr.disabled busy; on.click (fun _ -> dispatch (Select project.Id)); text Texts.select }
+                                        }
                                     }
                             }
                             button { attr.``type`` "button"; attr.disabled busy; on.click (fun _ -> dispatch Reload); text Texts.refresh }

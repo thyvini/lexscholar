@@ -29,7 +29,7 @@ let private createProject (page: IPage) (name: string) = task {
 let private select (page: IPage) (name: string) = task {
     let row = page.Locator("ul.projects li").Filter(LocatorFilterOptions(HasText = name))
     do! Ui.click (Ui.button row Texts.select)
-    do! Assertions.Expect(row.Locator("strong.active")).ToHaveTextAsync(Texts.active) }
+    do! Assertions.Expect(row).ToHaveClassAsync("selected") }
 
 let private importFile (page: IPage) (name: string) = task {
     let input = page.GetByLabel(Texts.importPdf)

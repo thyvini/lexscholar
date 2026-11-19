@@ -33,7 +33,7 @@ let private answer = """{"points":[{"text":"Main idea","pages":[1,2]}]}"""
 let private selectProject (page: IPage) (name: string) = task {
     let row = page.Locator("ul.projects li").Filter(LocatorFilterOptions(HasText = name))
     do! click (button row LexScholar.Client.Texts.select)
-    do! Assertions.Expect(row.Locator("strong.active")).ToHaveTextAsync(LexScholar.Client.Texts.active) }
+    do! Assertions.Expect(row).ToHaveClassAsync("selected") }
 
 let private importAndAdd (page: IPage) (fileName: string) = task {
     do! click (button (page.Locator("body")) LexScholar.Client.Texts.library)
