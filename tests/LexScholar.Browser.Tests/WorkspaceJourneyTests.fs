@@ -42,6 +42,67 @@ let ``summary uses interface typography and PDF is a secondary link control`` (b
         do! Assertions.Expect(pdf).ToHaveCSSAsync("outline-style", "solid")
     })
 
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T018"); Trait("Category", "Browser")>]
+let ``project selection is tinted without an outline and sources follow the active project`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use harness = TestHarness.Start(serveClient = true)
+        let! page = openApp browser harness
+        do! Assertions.Expect(page.Locator(".selected")).ToHaveCountAsync(0)
+        do! SummaryJourneyTests.arrange page
+        let alpha = page.Locator("ul.projects li").Filter(LocatorFilterOptions(HasText = "Alpha"))
+        do! Assertions.Expect(alpha).ToHaveAttributeAsync("aria-current", "true")
+        do! Assertions.Expect(alpha).ToHaveCSSAsync("background-color", "rgb(229, 241, 242)")
+        do! Assertions.Expect(alpha).ToHaveCSSAsync("outline-style", "none")
+        do! Assertions.Expect(alpha).ToHaveCSSAsync("border-right-width", "0px")
+        // These are frame dividers, not selection borders.
+        do! Assertions.Expect(page.Locator(".project-column")).ToHaveCSSAsync("border-right-width", "1px")
+        do! Assertions.Expect(page.Locator(".document-column")).ToHaveCSSAsync("border-right-width", "1px")
+        do! page.GetByLabel(Texts.projectName).FillAsync("Beta")
+        do! click (button (page.Locator("body")) Texts.createProject)
+        let beta = page.Locator("ul.projects li").Filter(LocatorFilterOptions(HasText = "Beta"))
+        let selectBeta = button beta Texts.select
+        do! selectBeta.FocusAsync()
+        do! page.Keyboard.PressAsync("Shift+Tab")
+        do! page.Keyboard.PressAsync("Tab")
+        do! Assertions.Expect(selectBeta).ToBeFocusedAsync()
+        do! Assertions.Expect(selectBeta).ToHaveCSSAsync("outline-style", "solid")
+        do! selectBeta.PressAsync("Enter")
+        do! Assertions.Expect(beta).ToHaveAttributeAsync("aria-current", "true")
+        do! Assertions.Expect(alpha).ToHaveAttributeAsync("aria-current", "false")
+        do! Assertions.Expect(alpha).ToHaveCSSAsync("outline-style", "none")
+        do! Assertions.Expect(page.Locator("ul.project-documents li")).ToHaveCountAsync(0)
+        do! Assertions.Expect(page.GetByTestId("main").GetByRole(AriaRole.Heading, LocatorGetByRoleOptions(Name = "article-en.pdf", Exact = true))).ToHaveCountAsync(0)
+        do! click (button alpha Texts.select)
+        do! Assertions.Expect(listNamed page Texts.focusedSources).ToContainTextAsync("article-en.pdf")
+        do! Assertions.Expect(page.Locator("ul.project-documents li.selected")).ToHaveCountAsync(0)
+    })
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T018"); Trait("Category", "Browser")>]
+let ``source selection opens its main area and keeps focus distinct from selection`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use harness = TestHarness.Start(serveClient = true)
+        let! page = openApp browser harness
+        do! SummaryJourneyTests.arrange page
+        let source = page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))
+        let openSource = button source Texts.openDocument
+        do! Assertions.Expect(openSource).ToHaveAttributeAsync("aria-current", "true")
+        do! Assertions.Expect(source).ToHaveCSSAsync("outline-style", "solid")
+        do! click (button (page.Locator("body")) Texts.library)
+        do! Assertions.Expect(source).Not.ToHaveClassAsync("selected")
+        do! Assertions.Expect(source).ToHaveCSSAsync("outline-style", "none")
+        do! Assertions.Expect(openSource).ToHaveAttributeAsync("aria-current", "false")
+        do! openSource.FocusAsync()
+        do! page.Keyboard.PressAsync("Shift+Tab")
+        do! page.Keyboard.PressAsync("Tab")
+        do! Assertions.Expect(openSource).ToBeFocusedAsync()
+        do! Assertions.Expect(openSource).ToHaveCSSAsync("outline-style", "solid")
+        do! openSource.PressAsync("Enter")
+        do! Assertions.Expect(source).ToHaveClassAsync("selected")
+        do! Assertions.Expect(openSource).ToHaveAttributeAsync("aria-current", "true")
+        do! Assertions.Expect(page.GetByTestId("main").GetByRole(AriaRole.Heading, LocatorGetByRoleOptions(Name = "article-en.pdf", Exact = true))).ToBeVisibleAsync()
+        do! Assertions.Expect(page.GetByRole(AriaRole.Heading, PageGetByRoleOptions(Name = Texts.requestSummary, Exact = true))).ToBeVisibleAsync()
+    })
+
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T004"); Trait("Task", "T007"); Trait("Category", "Browser")>]
 let ``opening a document shows its summary request without an embedded reader`` (browserName: string) =
     withBrowser browserName (fun browser -> task {

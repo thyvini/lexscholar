@@ -544,6 +544,7 @@ module private Ui =
                                             strong { attr.``class`` "role"; text (roleLabel association.Role) }
                                             button {
                                                 attr.``type`` "button"
+                                                "aria-current" => (if not showLibrary && library.Opened = Some association.Document.Id then "true" else "false")
                                                 on.click (fun _ -> dispatch (Library.OpenDocument association.Document.Id))
                                                 text Texts.openDocument
                                             }
