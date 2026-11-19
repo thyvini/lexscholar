@@ -51,6 +51,7 @@ let private remove (page: IPage) (name: string) = task {
     do! Ui.click (Ui.button row Texts.openDocument)
     do! Ui.click (Ui.button row Texts.openDocument)
     do! (projectRow page name).GetByRole(AriaRole.Button, LocatorGetByRoleOptions(Name = Texts.remove)).ClickAsync()
+    do! Assertions.Expect(row).ToHaveCountAsync(0)
     do! Ui.click (Ui.button (page.Locator("body")) Texts.library) }
 
 let private noProjectDocuments (page: IPage) = page.GetByText(Texts.noDocuments)

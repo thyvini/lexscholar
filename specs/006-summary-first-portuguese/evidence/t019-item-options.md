@@ -24,3 +24,12 @@ Coordination: #127 initially overlapped `App.fs`, CSS, workspace journeys and fe
 - GREEN: `LOG=/tmp/opencode/t019-review-green.log scripts/check.sh T019 T002 T004 T015 T018 T033 T007` — 274 passed, zero failures/skips, warning-as-error build passed.
 - New Chromium/Firefox regressions cover library navigation with options previously open **and** closed, absence of source options in the library, first activation returning to the summary without options, second activation revealing them, and a failed project-selection HTTP request retaining the library and active project.
 - Full-suite CI and renewed GPT review remain required on the new PR head; no merge performed.
+
+## PR #128 re-review — late success overwrites newer navigation
+
+P2: **must fix**. Track the accepted project selection's pending open intent. Explicit library/source navigation cancels that intent; successful selection can still update the project but cannot close a subsequently opened library. Failure still preserves the current view and consumes the pending intent.
+
+- RED: `LOG=/tmp/opencode/t019-late-red.log scripts/check.sh T019` — 18 total, two assertion failures, zero skips. Both browsers held a real successful selection response, explicitly opened the library, released the response and observed the import view disappear.
+- GREEN: `LOG=/tmp/opencode/t019-late-final.log scripts/check.sh T019 T002 T004 T015 T018 T033 T007` — 276 passed, zero failures/skips; warning-as-error build passed. Includes failed-selection regressions and unchanged selection/option behavior.
+- The first broader run passed the new regressions but exposed a Firefox timing issue in the existing library-removal helper: it navigated before association removal completed. The helper now awaits the observable row removal before navigating; no assertion was removed.
+- Full-suite CI and GPT re-review remain required; no merge performed.

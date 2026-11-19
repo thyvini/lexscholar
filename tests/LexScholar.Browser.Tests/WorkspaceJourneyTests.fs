@@ -9,6 +9,35 @@ open LexScholar.Client
 open LexScholar.Server.Tests
 open LexScholar.Browser.Tests.Ui
 
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T019"); Trait("Category", "Browser")>]
+let ``late successful project selection preserves newer library navigation`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use harness = TestHarness.Start(serveClient = true)
+        let! page = openApp browser harness
+        do! SummaryJourneyTests.arrange page
+        do! page.GetByLabel(Texts.projectName).FillAsync("Beta")
+        do! click (button (page.Locator("body")) Texts.createProject)
+        let arrived = TaskCompletionSource<unit>()
+        let release = TaskCompletionSource<unit>()
+        let holdSelection (route: IRoute) : Task = task {
+            let! response = route.FetchAsync()
+            arrived.SetResult()
+            do! release.Task
+            do! route.FulfillAsync(RouteFulfillOptions(Response = response))
+        }
+        use! _ = page.RouteAsync("**/api/projects/*/active", Func<IRoute, Task>(holdSelection))
+        let beta = page.Locator("ul.projects li").Filter(LocatorFilterOptions(HasText = "Beta"))
+        do! click (button beta Texts.select)
+        do! arrived.Task
+        try
+            do! click (button (page.Locator("body")) Texts.library)
+            do! Assertions.Expect(page.GetByTestId("main").GetByLabel(Texts.importPdf)).ToBeVisibleAsync()
+        finally release.TrySetResult() |> ignore
+        do! Assertions.Expect(beta).ToHaveAttributeAsync("aria-current", "true")
+        do! Assertions.Expect(page.GetByTestId("main").GetByLabel(Texts.importPdf)).ToBeVisibleAsync()
+        do! Assertions.Expect(page.Locator(".breadcrumb")).ToContainTextAsync(Texts.library)
+    })
+
 [<Theory; InlineData("chromium", false); InlineData("chromium", true); InlineData("firefox", false); InlineData("firefox", true); Trait("Task", "T019"); Trait("Category", "Browser")>]
 let ``library hides source options and source activation opens before revealing`` (browserName: string, revealed: bool) =
     withBrowser browserName (fun browser -> task {

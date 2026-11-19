@@ -82,6 +82,8 @@ Errors are ProblemDetails with a `code` extension (`problem` helpers in the endp
 
 T019 review correction: `OpenDocument` always opens without disclosure; `RevealOptions` reveals only the opened association. The view chooses reveal only while the summary view is displayed, not merely because `Opened` remembers it. `ShowLibrary` sends `HideOptions`, retaining the remembered source/summary. A different-project selection exits the library only on successful `Selected`; failures keep the current view.
 
+`State.PendingProjectOpen` records the navigation intent of an accepted project selection, not a second selection workflow. Explicit library/source navigation cancels that intent; the late success still updates the active project but cannot replace the newer main-area choice. Selection success/failure consumes the intent.
+
 **F006 content navigation (T005).** `DocumentEndpoints.fs` replaces `ReaderEndpoints.fs`; for content requests accepting `text/html`, missing or unavailable documents return a Portuguese HTML page. Other callers retain the existing problem responses, and successful PDF delivery is unchanged.
 
 **F006 plan-only requests (T007).** `Summary.update` sends new requests only to `UsePlan` when the plan is available; a configured destination alone cannot start a request. The view offers sign-in when signed out, with no destination chooser or settings-file explanation. A stored summary still renders its recorded service host, model, date and context; plan attribution is shown for a stored summary only when its recorded host is `ChatGPT plan`, not based on the current sign-in. The server's configured-service path is unchanged.

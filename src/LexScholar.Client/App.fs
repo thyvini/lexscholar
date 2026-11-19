@@ -281,7 +281,7 @@ module ChatGptApi =
         return () }
 
 /// The whole page: projects, shared library and the opened document's summary.
-type State = { Projects: Model; Library: Library.Model; Summary: Summary.Model; ChatGpt: ChatGpt.Model; Statuses: SummaryStatus.Statuses; ShowLibrary: bool; Onboarding: bool option }
+type State = { Projects: Model; Library: Library.Model; Summary: Summary.Model; ChatGpt: ChatGpt.Model; Statuses: SummaryStatus.Statuses; ShowLibrary: bool; PendingProjectOpen: bool; Onboarding: bool option }
 
 type Msg =
     | FinishOnboarding
@@ -325,7 +325,8 @@ module private Ui =
     let private updateLibrary http message state =
         let library, effect = Library.update message state.Library
         let showLibrary = match message with Library.OpenDocument _ when library.Opened.IsSome -> false | _ -> state.ShowLibrary
-        { state with Library = library; ShowLibrary = showLibrary }, effect |> Option.map (libraryCommand http) |> Option.defaultValue Cmd.none
+        let pendingProjectOpen = match message with Library.OpenDocument _ when library.Opened.IsSome -> false | _ -> state.PendingProjectOpen
+        { state with Library = library; ShowLibrary = showLibrary; PendingProjectOpen = pendingProjectOpen }, effect |> Option.map (libraryCommand http) |> Option.defaultValue Cmd.none
 
     /// How often the open document's running summary is asked for (research §4).
     let private summaryPollMilliseconds = 2000
@@ -383,7 +384,7 @@ module private Ui =
         | FinishOnboarding -> state, Cmd.none
         | ShowLibrary ->
             let library, _ = Library.update Library.HideOptions state.Library
-            { state with ShowLibrary = true; Library = library }, Cmd.none
+            { state with ShowLibrary = true; Library = library; PendingProjectOpen = false }, Cmd.none
         | ChatGptMsg message ->
             let chatGpt, effect = ChatGpt.update message state.ChatGpt
             { state with ChatGpt = chatGpt }, chatGptCommand http navigation effect
@@ -412,9 +413,16 @@ module private Ui =
             let showLibrary =
                 match message with
                 | Select id when state.Projects.Busy.IsNone && state.Projects.Snapshot.Active = Some id -> false
-                | Selected (Ok ()) when state.Projects.Busy = Some Selecting -> false
+                | Selected (Ok ()) when state.Projects.Busy = Some Selecting && state.PendingProjectOpen -> false
                 | _ -> state.ShowLibrary
-            let state = { state with Projects = projects; Onboarding = onboarding; ShowLibrary = showLibrary }
+            let pendingProjectOpen =
+                // A selection response may update the active project, but may
+                // navigate only while its original open intent is still current.
+                match message, effect with
+                | _, Some (SendSelect _) -> true
+                | Selected _, _ when state.Projects.Busy = Some Selecting -> false
+                | _ -> state.PendingProjectOpen
+            let state = { state with Projects = projects; Onboarding = onboarding; ShowLibrary = showLibrary; PendingProjectOpen = pendingProjectOpen }
             let projectCommand = effect |> Option.map (command http >> Cmd.map ProjectsMsg) |> Option.defaultValue Cmd.none
             // The page's Refresh button also reloads both library lists, so a
             // failed load can be retried.
@@ -1126,7 +1134,7 @@ type App() =
                 let target = UriBuilder(entryUri)
                 target.Host <- "127.0.0.1"
                 target.Path <- "/index.html"
-                { Projects = { initial with Busy = Some Loading }; Library = Library.initial; Summary = Summary.initial; ChatGpt = ChatGpt.initial; Statuses = SummaryStatus.initialStatuses; ShowLibrary = false; Onboarding = None },
+                { Projects = { initial with Busy = Some Loading }; Library = Library.initial; Summary = Summary.initial; ChatGpt = ChatGpt.initial; Statuses = SummaryStatus.initialStatuses; ShowLibrary = false; PendingProjectOpen = false; Onboarding = None },
                 Cmd.ofEffect (fun _ -> this.Navigation.NavigateTo(target.Uri.ToString(), forceLoad = true, replace = true))
             else
                 let library, libraryEffect = Library.update Library.LoadLibrary Library.initial
@@ -1138,7 +1146,7 @@ type App() =
                 let chatGpt, chatGptEffect = ChatGpt.update ChatGpt.Load ChatGpt.initial
                 let statuses, statusEffect = SummaryStatus.updateStatuses SummaryStatus.Refresh SummaryStatus.initialStatuses
                 let chatGpt, _ = ChatGpt.update (ChatGpt.Returned returned) chatGpt
-                { Projects = { initial with Busy = Some Loading }; Library = library; Summary = Summary.initial; ChatGpt = chatGpt; Statuses = statuses; ShowLibrary = false; Onboarding = remembered },
+                { Projects = { initial with Busy = Some Loading }; Library = library; Summary = Summary.initial; ChatGpt = chatGpt; Statuses = statuses; ShowLibrary = false; PendingProjectOpen = false; Onboarding = remembered },
                 Cmd.batch [ Ui.command http Fetch |> Cmd.map ProjectsMsg
                             Ui.chatGptCommand http this.Navigation chatGptEffect
                             Ui.statusCommand http statusEffect
