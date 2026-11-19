@@ -93,6 +93,44 @@ let private runLong (reply: Summarize.ChatMessage list -> string) (sent: List<Su
           Report = fun progress -> reports.Add progress; Task.FromResult() }
     (Summarize.summarize capabilities 250 longPages CancellationToken.None).GetAwaiter().GetResult()
 
+[<Theory; Trait("Task", "T016")>]
+[<InlineData("An English source about legal research.")>]
+[<InlineData("Uma fonte em português sobre pesquisa jurídica.")>]
+[<InlineData("An English source. Uma fonte em português. Une source en français.")>]
+let ``single call requests Brazilian Portuguese regardless of source language`` source =
+    let sent = List()
+    let input = { Readable = [ page 1 source ]; Unreadable = [] }
+    let result =
+        (Summarize.summarize (capabilities (Ok (pointsJson [ "Síntese jurídica", [ 1 ] ])) sent)
+            12000 input CancellationToken.None).GetAwaiter().GetResult()
+    Assert.True(Result.isOk result)
+    let messages = Assert.Single(sent)
+    Assert.Contains("in Brazilian Portuguese, regardless of the source language", messages.[0].Content)
+    Assert.DoesNotContain("in the language of", messages.[0].Content)
+    Assert.Contains(source, messages.[1].Content)
+
+[<Fact; Trait("Task", "T016")>]
+let ``chunk intermediate and final combine calls all request Brazilian Portuguese`` () =
+    let sent, reports = List(), List()
+    let reply messages =
+        // Enough text to require intermediate reductions as well as the final combine.
+        pointsJson [ String('e', 80), citedIn messages ]
+    let input =
+        { Readable = [ for n in 1..6 -> page n (String.replicate 5 "An English source on legal research. ") ]
+          Unreadable = [] }
+    let caps : Summarize.Capabilities =
+        { ExtractPages = fun _ -> failwith "not used"
+          Complete = fun messages _ -> sent.Add messages; Task.FromResult (Ok (reply messages))
+          Report = fun progress -> reports.Add progress; Task.FromResult() }
+    let result = (Summarize.summarize caps 250 input CancellationToken.None).GetAwaiter().GetResult()
+    Assert.True(Result.isOk result)
+    Assert.Contains(sent, fun messages -> not (isCombine messages))
+    Assert.Contains(sent, fun messages -> isCombine messages && messages.[0].Content.Contains("at most 5 main points"))
+    Assert.Contains(sent, fun messages -> isCombine messages && messages.[0].Content.Contains("5 to 10 main points"))
+    for messages in sent do
+        Assert.Contains("in Brazilian Portuguese, regardless of the source language", messages.[0].Content)
+        Assert.DoesNotContain("in the language of", messages.[0].Content)
+
 [<Fact; Trait("Task", "T006")>]
 let ``a long document is mapped chunk by chunk, then combined, with progress`` () =
     let sent, reports = List(), List()

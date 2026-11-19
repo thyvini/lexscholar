@@ -70,6 +70,9 @@ let ``changing a role moves the document and leaves the other project unchanged`
         do! click (button (page.Locator("body")) Texts.createProject)
         let beta = page.Locator("ul.projects li").Filter(LocatorFilterOptions(HasText = "Beta"))
         do! click (button beta Texts.select)
+        // Selection changes the sidebar's loading status and button positions.
+        // Wait for its rendered result before clicking library navigation.
+        do! Assertions.Expect(beta).ToHaveClassAsync("selected")
         do! click (button (page.Locator("body")) Texts.library)
         let libraryRow = page.Locator("ul.documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))
         do! click (button libraryRow Texts.addReference)

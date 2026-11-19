@@ -48,6 +48,8 @@ Each task is one vertical slice and one PR: tests first (meaningful RED, then GR
 
   **T014 localhost-revisit correction**: bypassing active setup through a localhost revisit after project creation is must fix. Normalize **every** localhost app entry to numeric loopback before loading projects or reading setup state, replacing history and preserving query parameters; no project-count exception or origin coordination. Existing workspace data/workflows are unchanged, but its address normalizes as well. Regressions revisit localhost before and after finish, with Back/Forward through earlier unfinished entries. Final implementation is R10; the prior empty-workspace-only exception is superseded.
 
+- [x] T016 New summaries in Brazilian Portuguese regardless of source language ([evidence](evidence/t016-summary-language.md); bug [$153](https://thyago-cunha-dev.codecks.io/card/153), owner-approved correction, FR-016, R11). **Files**: `src/LexScholar.Application/Summarize.fs` (single, map and intermediate/final combine prompts); `tests/LexScholar.Application.Tests/SummarizeTests.fs` (English, Portuguese and mixed-language single-call inputs; all long-document stages); `tests/LexScholar.Server.Tests/BackgroundSummaryContractTests.fs` (tag existing English-content restart/no-new-request regression); `docs/agents/codebase.md`; F003 `spec.md`/`research.md` (explicit historical-rule supersession); F006 `spec.md`, `plan.md`, `research.md`, `quickstart.md`, this task and evidence. Existing stored summaries, source text, API, storage and destination handling remain unchanged. Fake replies prove instructions, not actual model compliance; real-plan validation remains T013. The owner approved this documented defect correction within F006.
+
 - [ ] T012 Code-map audit and manual validation. **Files**: `docs/agents/codebase.md` (audit the same-PR updates owned by earlier slices for accuracy and completeness; correct gaps, not defer their documentation here), `specs/006-summary-first-portuguese/evidence/t012-manual-validation.md` (quickstart steps 1–9 in Firefox and Chromium, including that each citation shows the cited page and historical configured-service provenance remains intact). Depends on T001–T011.
 - [ ] T013 Owner smoke check with her real ChatGPT plan, both browsers (SC-001–SC-006). **Files**: `specs/006-summary-first-portuguese/evidence/t013-owner-smoke-check.md`. Depends on T012.
 
@@ -74,6 +76,7 @@ All client slices T002–T011 except T005 share `App.fs`; code-map writers also 
 | FR-009 everything in Portuguese, server failures | T009, T010, T011 |
 | FR-010 dates | T001, T011 |
 | FR-011 no language choice | T001 (no setting exists; nothing to build) |
+| FR-016 new summaries in Brazilian Portuguese; stored content unchanged | T016 |
 | FR-012 glossary | T001, T009, T010 |
 | FR-013 pt-BR help link | T010 |
 | FR-014 F003–F005 unchanged | T004, T007, T008 (existing tests migrated, not weakened) |

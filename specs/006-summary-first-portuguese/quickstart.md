@@ -23,6 +23,7 @@ Use a throwaway data directory, never your real workspace: create a new one at t
 7. **Excluir (FR-006)**: "Excluir", then "Cancelar": the summary stays. "Excluir", then "Excluir": the request is shown again, also after a restart.
 7b. **Fechar**: on a failed summary, "Fechar" removes the failure at once, with no confirmation.
 8. **Only ChatGPT for new requests (FR-005)**: with a summary service in the settings file, new requests offer only her ChatGPT plan, with no configured-service choice or settings-file explanation. Open a stored configured-service summary: its recorded host, model, date and existing context remain visible, and it never shows "Usando seu plano ChatGPT · Gerenciar uso". Historical provenance is the explicit exception to hiding configured-service UI.
-9. **No English (SC-003)**: walk every screen and provoke an import failure (a non-PDF file) and a signed-out failure. Every text is Portuguese.
+9. **No English (SC-003)**: walk every screen and provoke an import failure (a non-PDF file) and a signed-out failure. Interface text is Portuguese; source file names, recorded provenance and historical summary content are preserved.
+10. **New summary language (FR-016, $153)**: through the real ChatGPT plan, summarize English, Portuguese and mixed-language documents, including a long document that requires chunking. New summary points must be in Brazilian Portuguese with valid citations. Open a pre-existing English summary: its text and provenance must remain unchanged, also after restart. Fake-service instruction tests do not replace this model-compliance check (T013).
 
 Record the results in `evidence/` (T012, T013).

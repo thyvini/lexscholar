@@ -1,5 +1,12 @@
 # Research: Summary first, in Portuguese (F006)
 
+## R11 — Brazilian Portuguese for all new summaries ($153, T016)
+
+- **Decision**: Owner clarification makes Brazilian Portuguese the output language of every new summary, whatever the source language. Replace the source/majority-language instruction in all three shared `Summarize.fs` prompts: single call, per-chunk map, and combine (both intermediate and final reductions). Both plan and configured-service paths use this workflow. This supersedes F003's language decision and F006's former F007 deferral; R7's unchanged backend refers to destination handling, not this later prompt correction.
+- **Why**: One instruction change per prompt is the smallest fix, with no language setting, detection, extra translation request, dependency or migration. Source text, citations, JSON parsing, storage and existing summaries remain unchanged.
+- **Alternatives**: Translate on display (changes historical summaries); translate in a second model call (extra cost and risk to citations); keep source language until F007 (contradicts the owner's confirmed requirement).
+- **Verification**: Capture instructions for English, Portuguese and mixed-language single-call inputs and for chunk/intermediate/final calls. Reuse the restart regression proving stored English text and provenance survive without service requests. Fake replies verify instructions and pipeline behavior, not actual model language compliance; the real-plan smoke check must confirm Portuguese output.
+
 Decisions for [plan.md](plan.md). Each has the decision, why, and the alternatives considered (constitution VI). The look comes from [mockups/README.md](mockups/README.md).
 
 ## R11. Consistent summary typography and PDF control (T017, $154)
