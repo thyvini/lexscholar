@@ -76,3 +76,49 @@ let ``project setup can finish without import or sign-in and existing workspaces
         do! Assertions.Expect(another.GetByText(Texts.welcome, PageGetByTextOptions(Exact = true))).ToHaveCountAsync(0)
         do! Assertions.Expect(another.Locator("ul.projects li")).ToContainTextAsync("Pesquisa")
     })
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T014"); Trait("Category", "Browser")>]
+let ``localhost onboarding survives the numeric loopback sign-in callback`` browserName =
+    Ui.withBrowser browserName (fun browser -> task {
+        use fake = new FakeOpenAi()
+        use harness = TestHarness.Start(serveClient = true, summaryHandler = fake)
+        let address = UriBuilder(harness.Client.BaseAddress)
+        address.Host <- "localhost"
+        let! context = browser.NewContextAsync()
+        let! page = context.NewPageAsync()
+        let! _ = page.GotoAsync(address.Uri.ToString())
+        do! Assertions.Expect(page.GetByRole(AriaRole.Heading, PageGetByRoleOptions(Name = Texts.welcome, Exact = true))).ToBeVisibleAsync()
+        do! page.GetByLabel(Texts.projectName).FillAsync("Pesquisa local")
+        do! Ui.click (Ui.button (page.Locator("body")) Texts.createProject)
+        do! Assertions.Expect(page.GetByText(Texts.projectCreated "Pesquisa local", PageGetByTextOptions(Exact = true))).ToBeVisibleAsync()
+        do! Ui.signInWithChatGpt page harness fake
+        do! Assertions.Expect(page.GetByRole(AriaRole.Heading, PageGetByRoleOptions(Name = Texts.welcome, Exact = true))).ToBeVisibleAsync()
+        do! Assertions.Expect(page.GetByText(Texts.signedIn, PageGetByTextOptions(Exact = true))).ToBeVisibleAsync()
+        Assert.Equal("127.0.0.1", Uri(page.Url).Host)
+        do! noMenus page
+        let! _ = page.ReloadAsync()
+        do! Assertions.Expect(page.GetByText(Texts.projectCreated "Pesquisa local", PageGetByTextOptions(Exact = true))).ToBeVisibleAsync()
+        do! noMenus page
+        do! Ui.click (Ui.button (page.Locator("body")) Texts.finishOnboarding)
+        do! Assertions.Expect(page.Locator("aside")).ToHaveCountAsync(2)
+    })
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T014"); Trait("Category", "Browser")>]
+let ``onboarding account failure offers retry and recovers sign-in`` browserName =
+    Ui.withBrowser browserName (fun browser -> task {
+        use harness = TestHarness.Start(serveClient = true)
+        let! context = browser.NewContextAsync(BrowserNewContextOptions(BaseURL = harness.Client.BaseAddress.ToString()))
+        let! page = context.NewPageAsync()
+        let fail (route: IRoute) =
+            route.FulfillAsync(RouteFulfillOptions(Status = 503, ContentType = "application/json", Body = "{}"))
+        use! _ = page.RouteAsync("**/api/summary/destinations", Func<IRoute, System.Threading.Tasks.Task>(fail))
+        let! _ = page.GotoAsync("/")
+        do! Assertions.Expect(page.GetByRole(AriaRole.Heading, PageGetByRoleOptions(Name = Texts.welcome, Exact = true))).ToBeVisibleAsync()
+        do! Assertions.Expect(page.GetByRole(AriaRole.Alert)).ToContainTextAsync(Texts.chatGptUnavailable.Trim())
+        do! noMenus page
+        do! page.UnrouteAsync("**/api/summary/destinations")
+        do! Ui.click (Ui.button (page.Locator(".onboarding")) Texts.retry)
+        do! Assertions.Expect(Ui.button (page.Locator(".onboarding")) Texts.signIn).ToBeVisibleAsync()
+        do! Assertions.Expect(page.GetByRole(AriaRole.Alert)).ToHaveCountAsync(0)
+        do! noMenus page
+    })

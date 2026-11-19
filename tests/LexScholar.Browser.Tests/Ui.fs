@@ -56,6 +56,7 @@ let signInWithChatGpt (page: IPage) (_harness: TestHarness) (fake: FakeOpenAi) =
     let query = System.Web.HttpUtility.ParseQueryString url.Query
     fake.Nonce <- query["nonce"]
     let state = Uri.EscapeDataString query["state"]
-    let! _ = page.GotoAsync($"/auth/callback?state={state}&code=code-1&client_id={fake.ClientId}")
+    let callback = query["redirect_uri"]
+    let! _ = page.GotoAsync($"{callback}?state={state}&code=code-1&client_id={fake.ClientId}")
     return ()
 }

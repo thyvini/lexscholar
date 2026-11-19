@@ -376,12 +376,20 @@ module private Ui =
         | Some ChatGpt.SendDismissWelcome -> Cmd.ofEffect (fun _ -> ChatGptApi.dismissWelcome http |> Async.StartImmediate)
         | None -> Cmd.none
 
-    let private updateCore http navigation msg state =
+    let private updateCore http (navigation: NavigationManager) msg state =
         match msg with
         | FinishOnboarding when state.Projects.HasLoaded && state.Projects.Busy.IsNone && state.Library.Busy.IsNone && state.ChatGpt.Status <> ChatGpt.Starting ->
             { state with Onboarding = Some false }, Cmd.none
         | FinishOnboarding -> state, Cmd.none
         | ShowLibrary -> { state with ShowLibrary = true }, Cmd.none
+        | ChatGptMsg ChatGpt.SignIn when state.Onboarding = Some true && Uri(navigation.Uri).Host = "localhost" ->
+            // The registered OAuth callback uses numeric loopback. Move this tab's setup
+            // there before authorization, since sessionStorage cannot cross origins.
+            let target = UriBuilder(navigation.Uri)
+            target.Host <- "127.0.0.1"
+            target.Query <- "onboarding=sign-in"
+            target.Fragment <- ""
+            state, Cmd.ofEffect (fun _ -> navigation.NavigateTo(target.Uri.ToString(), forceLoad = true))
         | ChatGptMsg message ->
             let chatGpt, effect = ChatGpt.update message state.ChatGpt
             { state with ChatGpt = chatGpt }, chatGptCommand http navigation effect
@@ -885,6 +893,7 @@ module private Ui =
                             | ChatGpt.SignedOut -> signInButton false (ChatGptMsg >> dispatch)
                             | ChatGpt.Starting -> signInButton true (ChatGptMsg >> dispatch)
                             | ChatGpt.SignedIn _ -> p { text Texts.signedIn }
+                            | ChatGpt.Unavailable -> chatGptAccount state.ChatGpt (ChatGptMsg >> dispatch)
                             | _ -> empty ()
                         small { text Texts.planRequired }
                     }
@@ -1076,23 +1085,37 @@ type App() =
                 | "finished" -> Some false
                 | _ -> None
             with _ -> None
+        let mutable resumeSignIn = false
         let start _ =
             let library, libraryEffect = Library.update Library.LoadLibrary Library.initial
             // Returning from ChatGPT: read the outcome once, then drop it from the address.
             let uri = Uri(this.Navigation.Uri)
             let query = System.Web.HttpUtility.ParseQueryString(uri.Query)
             let returned = match query.["chatgpt"] with null -> None | value -> Some value
-            if returned.IsSome then this.Navigation.NavigateTo(uri.GetLeftPart(UriPartial.Path), replace = true)
+            resumeSignIn <- query.["onboarding"] = "sign-in"
+            let onboarding =
+                if resumeSignIn then
+                    try js.InvokeVoid("sessionStorage.setItem", [| box "lexscholar.onboarding"; box "active" |])
+                    with _ -> ()
+                    Some true
+                else remembered
+            if returned.IsSome || resumeSignIn then this.Navigation.NavigateTo(uri.GetLeftPart(UriPartial.Path), replace = true)
             let chatGpt, chatGptEffect = ChatGpt.update ChatGpt.Load ChatGpt.initial
             let statuses, statusEffect = SummaryStatus.updateStatuses SummaryStatus.Refresh SummaryStatus.initialStatuses
             let chatGpt, _ = ChatGpt.update (ChatGpt.Returned returned) chatGpt
-            { Projects = { initial with Busy = Some Loading }; Library = library; Summary = Summary.initial; ChatGpt = chatGpt; Statuses = statuses; ShowLibrary = false; Onboarding = remembered },
+            { Projects = { initial with Busy = Some Loading }; Library = library; Summary = Summary.initial; ChatGpt = chatGpt; Statuses = statuses; ShowLibrary = false; Onboarding = onboarding },
             Cmd.batch [ Ui.command http Fetch |> Cmd.map ProjectsMsg
                         Ui.chatGptCommand http this.Navigation chatGptEffect
                         Ui.statusCommand http statusEffect
                         libraryEffect |> Option.map (Ui.libraryCommand http) |> Option.defaultValue Cmd.none ]
         let update msg state =
             let next, command = Ui.update http this.Navigation msg state
+            let next, command =
+                if resumeSignIn && next.ChatGpt.Status = ChatGpt.SignedOut then
+                    resumeSignIn <- false
+                    let next, signIn = Ui.update http this.Navigation (ChatGptMsg ChatGpt.SignIn) next
+                    next, Cmd.batch [ command; signIn ]
+                else next, command
             if next.Onboarding <> state.Onboarding then
                 try
                     js.InvokeVoid("sessionStorage.setItem", [| box "lexscholar.onboarding"; box (if next.Onboarding = Some true then "active" else "finished") |])
