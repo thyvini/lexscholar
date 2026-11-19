@@ -9,7 +9,7 @@ open LexScholar.Client
 open LexScholar.Server.Tests
 open LexScholar.Browser.Tests.Ui
 
-[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T004"); Trait("Category", "Browser")>]
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T004"); Trait("Task", "T007"); Trait("Category", "Browser")>]
 let ``opening a document shows its summary request without an embedded reader`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
         use harness = TestHarness.Start(serveClient = true)
@@ -24,7 +24,7 @@ let ``opening a document shows its summary request without an embedded reader`` 
         Assert.Empty(contentRequests)
     })
 
-[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T004"); Trait("Category", "Browser")>]
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T004"); Trait("Task", "T007"); Trait("Category", "Browser")>]
 let ``changing a role moves the document and leaves the other project unchanged`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
         use harness = TestHarness.Start(serveClient = true)
@@ -48,16 +48,18 @@ let ``changing a role moves the document and leaves the other project unchanged`
         do! Assertions.Expect(documentRow).ToContainTextAsync("Reference Source")
     })
 
-[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T006"); Trait("Category", "Browser")>]
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T006"); Trait("Task", "T007"); Trait("Category", "Browser")>]
 let ``changing a role moves the document while its summary stays visible`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
         let answer = """{"points":[{"text":"Retained point","pages":[1]}]}"""
-        use fake = new FakeChatService(Reply answer)
-        use harness = TestHarness.Start(serveClient = true, summaryHandler = fake,
-            settings = [ "LexScholar:Summary:Endpoint", "http://127.0.0.1:9/v1"; "LexScholar:Summary:Model", "test-model" ])
+        use fake = new FakeOpenAi(ResponsesScript.Completed answer)
+        use harness = TestHarness.Start(serveClient = true, summaryHandler = fake)
         let! page = openApp browser harness
         do! SummaryJourneyTests.arrange page
+        do! signInWithChatGpt page harness fake
+        do! click (button (page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))) "Open")
         do! click (button (page.Locator("body")) Texts.summarize)
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) "Send")
         let panel = page.Locator("section.summary")
         do! Assertions.Expect(panel).ToContainTextAsync("Retained point")
         let focused = listNamed page Texts.focusedSources
@@ -70,16 +72,18 @@ let ``changing a role moves the document while its summary stays visible`` (brow
         do! Assertions.Expect(panel).ToContainTextAsync("Retained point")
     })
 
-[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T003"); Trait("Category", "Browser")>]
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T003"); Trait("Task", "T007"); Trait("Category", "Browser")>]
 let ``PDF and citation links open the same document in fresh tabs and keep the summary visible`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
         let answer = """{"points":[{"text":"Range","pages":[1,2]},{"text":"Single","pages":[3]},{"text":"Separate","pages":[3,5]},{"text":"Last","pages":[12]}]}"""
-        use fake = new FakeChatService(Reply answer)
-        use harness = TestHarness.Start(serveClient = true, summaryHandler = fake,
-            settings = [ "LexScholar:Summary:Endpoint", "http://127.0.0.1:9/v1"; "LexScholar:Summary:Model", "test-model" ])
+        use fake = new FakeOpenAi(ResponsesScript.Completed answer)
+        use harness = TestHarness.Start(serveClient = true, summaryHandler = fake)
         let! page = openApp browser harness
         do! SummaryJourneyTests.arrange page
+        do! signInWithChatGpt page harness fake
+        do! click (button (page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))) "Open")
         do! click (button (page.Locator("body")) Texts.summarize)
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) "Send")
         let panel = page.Locator("section.summary")
         do! Assertions.Expect(panel).ToContainTextAsync("Generated summary")
         use! response = harness.Client.GetAsync("/api/documents")
@@ -110,7 +114,7 @@ let ``PDF and citation links open the same document in fresh tabs and keep the s
             printfn "%s %s: popup URL %s; href %s" browserName name popup.Url (content + fragment)
             // Bundled browsers download PDFs; href retains the fragment if navigation aborts.
             do! Assertions.Expect(panel).ToContainTextAsync("Generated by an AI service for your review.")
-            do! Assertions.Expect(panel.Locator(".summary-context")).ToContainTextAsync("test-model")
+            do! Assertions.Expect(panel.Locator(".summary-context")).ToContainTextAsync("ChatGPT plan")
             do! Assertions.Expect(points).ToHaveCountAsync(4)
         Assert.Equal(5, requests.Count)
         Assert.All(requests, fun url -> Assert.Equal(Uri(harness.Client.BaseAddress, content).AbsoluteUri, url))

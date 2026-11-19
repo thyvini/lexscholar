@@ -80,6 +80,8 @@ Errors are ProblemDetails with a `code` extension (`problem` helpers in the endp
 
 **F006 content navigation (T005).** `DocumentEndpoints.fs` replaces `ReaderEndpoints.fs`; for content requests accepting `text/html`, missing or unavailable documents return a Portuguese HTML page. Other callers retain the existing problem responses, and successful PDF delivery is unchanged.
 
+**F006 plan-only requests (T007).** `Summary.update` sends new requests only to `UsePlan` when the plan is available; a configured destination alone cannot start a request. The view offers sign-in when signed out, with no destination chooser or settings-file explanation. A stored summary still renders its recorded service host, model, date and context; plan attribution is shown for a stored summary only when its recorded host is `ChatGPT plan`, not based on the current sign-in. The server's configured-service path is unchanged.
+
 ## Request flow
 
 Client `update` returns an `Effect` → `App.fs` runs the HTTP call (`Api.*`) → host middleware (`HostSecurity.useSecurity`: error handler, Host and Origin checks, antiforgery on unsafe methods) → endpoint → Application workflow → Infrastructure functions → SQLite or files → `Result` → HTTP status and JSON → `App.fs` maps it to a `Message` → `update`.
@@ -121,6 +123,6 @@ Import (`ImportDocument.create`, `POST /api/documents`): stage at most MaxBytes 
 - Real child process (locks, startup failures): `ProcessHarness.HostProcess.Start(root, overrides)`.
 - State tests: drive `update` with messages and assert on the model and the returned effect; see `LibraryStateTests.fs` for helpers (`step`, `assertState`, request-number extractors).
 - Plan sign-in journey (`ChatGptJourneyTests.fs`): `FakeOpenAi` as `summaryHandler`; `page.RouteAsync("https://auth.openai.com/**", Func<IRoute, Task>(...))` captures the `authorizationUrl` (set `fake.Nonce` from its `nonce`), then `page.GotoAsync` the host's `/auth/callback?state=...&code=...&client_id=...`. The welcome dismissal is a background POST: wait for it (`WaitForResponseAsync`) before reloading.
-- F006 `Ui.fs` shares browser launch, app opening, role/name selectors, click and `signInWithChatGpt`; the latter intercepts authorization and returns through the local callback. `FakeOpenAi` supports `ResponsesScript.Hold text`, with `Waiting`, `Release()` and `Cancelled` handshakes for Responses requests.
+- F006 `Ui.fs` shares browser launch, app opening, role/name selectors, click and `signInWithChatGpt`; the latter intercepts authorization and returns through the local callback. `FakeOpenAi` supports `ResponsesScript.Hold text`, with `Waiting`, `Release()` and `Cancelled` handshakes for Responses requests; `UnstructuredStatus` reproduces the legacy fake's unstructured error body for the migrated failure journey.
 - Browser journeys: Playwright's auto-waiting `Assertions.Expect(...)`, never sleeps; helpers at the top of `ReaderJourneyTests.fs`.
 - Fixtures: `tests/Fixtures/` (`valid.pdf` and friends, provenance in its README).

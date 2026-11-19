@@ -35,7 +35,6 @@ let private click (control: ILocator) = task {
     do! Assertions.Expect(control).ToBeVisibleAsync()
     do! control.ClickAsync() }
 
-let private settings = [ "LexScholar:Summary:Endpoint", "http://127.0.0.1:9/v1"; "LexScholar:Summary:Model", "test-model" ]
 
 let private answer = """{"points":[{"text":"Main idea","pages":[1,2]}]}"""
 
@@ -77,17 +76,20 @@ let private expectCitation (page: IPage) = task {
     do! click citation
     do! Assertions.Expect(panel page).ToContainTextAsync("Main idea") }
 
-[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T002"); Trait("Task", "T004"); Trait("Category", "Browser")>]
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T002"); Trait("Task", "T004"); Trait("Task", "T007"); Trait("Category", "Browser")>]
 let ``a summary asked on one document is found on return after opening another document`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
-        use fake = new FakeChatService(Hold answer)
-        use harness = TestHarness.Start(serveClient = true, settings = settings, summaryHandler = fake)
+        use fake = new FakeOpenAi(ResponsesScript.Hold answer)
+        use harness = TestHarness.Start(serveClient = true, summaryHandler = fake)
         let! page = openApp browser harness
         do! createProject page "Alpha"
         do! importAndAdd page "article-en.pdf"
         do! importAndAdd page "article-pt.pdf"
         do! openDocument page "article-en.pdf"
+        do! Ui.signInWithChatGpt page harness fake
+        do! openDocument page "article-en.pdf"
         do! click (summarizeButton page)
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) "Send")
         do! fake.Waiting.WaitAsync(TimeSpan.FromSeconds 30.)
         do! openDocument page "article-pt.pdf"
         do! Assertions.Expect(panel page).ToHaveCountAsync(0)
@@ -99,18 +101,21 @@ let ``a summary asked on one document is found on return after opening another d
         do! expectCitation page
         do! Assertions.Expect(page.GetByTestId("main").Locator("iframe")).ToHaveCountAsync(0)
         Assert.False(fake.Cancelled.IsCompleted)
-        Assert.Equal(1, fake.Requests.Length) })
+        Assert.Equal(1, (fake.RequestsTo("api.openai.com", "/v1/responses")).Length) })
 
-[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T002"); Trait("Category", "Browser")>]
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T002"); Trait("Task", "T007"); Trait("Category", "Browser")>]
 let ``a summary asked in one project is found on return after switching project`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
-        use fake = new FakeChatService(Hold answer)
-        use harness = TestHarness.Start(serveClient = true, settings = settings, summaryHandler = fake)
+        use fake = new FakeOpenAi(ResponsesScript.Hold answer)
+        use harness = TestHarness.Start(serveClient = true, summaryHandler = fake)
         let! page = openApp browser harness
         do! createProject page "Alpha"
         do! importAndAdd page "article-en.pdf"
         do! openDocument page "article-en.pdf"
+        do! Ui.signInWithChatGpt page harness fake
+        do! openDocument page "article-en.pdf"
         do! click (summarizeButton page)
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) "Send")
         do! fake.Waiting.WaitAsync(TimeSpan.FromSeconds 30.)
         do! createProject page "Beta"
         do! Assertions.Expect(panel page).ToHaveCountAsync(0)
@@ -119,19 +124,22 @@ let ``a summary asked in one project is found on return after switching project`
         do! openDocument page "article-en.pdf"
         do! expectCitation page
         Assert.False(fake.Cancelled.IsCompleted)
-        Assert.Equal(1, fake.Requests.Length) })
+        Assert.Equal(1, (fake.RequestsTo("api.openai.com", "/v1/responses")).Length) })
 
-[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T004"); Trait("Category", "Browser")>]
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T004"); Trait("Task", "T007"); Trait("Category", "Browser")>]
 let ``returning to a document while its summary runs shows it running, and the summary appears without asking again`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
-        use fake = new FakeChatService(Hold answer)
-        use harness = TestHarness.Start(serveClient = true, settings = settings, summaryHandler = fake)
+        use fake = new FakeOpenAi(ResponsesScript.Hold answer)
+        use harness = TestHarness.Start(serveClient = true, summaryHandler = fake)
         let! page = openApp browser harness
         do! createProject page "Alpha"
         do! importAndAdd page "article-en.pdf"
         do! importAndAdd page "article-pt.pdf"
         do! openDocument page "article-en.pdf"
+        do! Ui.signInWithChatGpt page harness fake
+        do! openDocument page "article-en.pdf"
         do! click (summarizeButton page)
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) "Send")
         do! fake.Waiting.WaitAsync(TimeSpan.FromSeconds 30.)
         do! openDocument page "article-pt.pdf"
         do! openDocument page "article-en.pdf"
@@ -142,60 +150,70 @@ let ``returning to a document while its summary runs shows it running, and the s
         fake.Release()
         // No click: polling finds it.
         do! expectCitation page
-        Assert.Equal(1, fake.Requests.Length) })
+        Assert.Equal(1, (fake.RequestsTo("api.openai.com", "/v1/responses")).Length) })
 
-[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T005"); Trait("Category", "Browser")>]
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T005"); Trait("Task", "T007"); Trait("Category", "Browser")>]
 let ``a summary that fails while she is on another document shows its message on return and Try again replaces it`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
-        use fake = new FakeChatService(fun call -> if call = 1 then Status 400 else Reply answer)
-        use harness = TestHarness.Start(serveClient = true, settings = settings, summaryHandler = fake)
+        use fake = new FakeOpenAi(fun call -> if call = 1 then ResponsesScript.UnstructuredStatus 400 else ResponsesScript.Completed answer)
+        use harness = TestHarness.Start(serveClient = true, summaryHandler = fake)
         let! page = openApp browser harness
         do! createProject page "Alpha"
         do! importAndAdd page "article-en.pdf"
         do! importAndAdd page "article-pt.pdf"
         do! openDocument page "article-en.pdf"
+        do! Ui.signInWithChatGpt page harness fake
+        do! openDocument page "article-en.pdf"
         do! click (summarizeButton page)
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) "Send")
         do! openDocument page "article-pt.pdf"
         do! Assertions.Expect(panel page).ToHaveCountAsync(0)
         do! openDocument page "article-en.pdf"
         // The failure belongs to the job, so it is found whether it ended before or after her return.
-        let alert = page.GetByRole(AriaRole.Alert).Filter(LocatorFilterOptions(HasText = "MaxOutputTokens"))
+        let alert = page.GetByRole(AriaRole.Alert).Filter(LocatorFilterOptions(HasText = "The summary service"))
         do! Assertions.Expect(alert).ToBeVisibleAsync()
         do! click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = "Try again", Exact = true)))
         do! expectCitation page
-        Assert.Equal(2, fake.Requests.Length) })
+        Assert.Equal(2, (fake.RequestsTo("api.openai.com", "/v1/responses")).Length) })
 
-[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T008"); Trait("Category", "Browser")>]
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T008"); Trait("Task", "T007"); Trait("Category", "Browser")>]
 let ``Stop clears a running summary, the held call is cancelled and she can ask again`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
-        use fake = new FakeChatService(fun call -> if call = 1 then Hold answer else Reply answer)
-        use harness = TestHarness.Start(serveClient = true, settings = settings, summaryHandler = fake)
+        use fake = new FakeOpenAi(fun call -> if call = 1 then ResponsesScript.Hold answer else ResponsesScript.Completed answer)
+        use harness = TestHarness.Start(serveClient = true, summaryHandler = fake)
         let! page = openApp browser harness
         do! createProject page "Alpha"
         do! importAndAdd page "article-en.pdf"
         do! openDocument page "article-en.pdf"
+        do! Ui.signInWithChatGpt page harness fake
+        do! openDocument page "article-en.pdf"
         do! click (summarizeButton page)
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) "Send")
         do! fake.Waiting.WaitAsync(TimeSpan.FromSeconds 30.)
         do! click (button (page.GetByRole(AriaRole.Status).Filter(LocatorFilterOptions(HasText = "Summarizing"))) LexScholar.Client.Texts.stop)
         do! fake.Cancelled.WaitAsync(TimeSpan.FromSeconds 30.)
         do! Assertions.Expect(summarizeButton page).ToBeVisibleAsync()
         do! Assertions.Expect(page.GetByRole(AriaRole.Status).Filter(LocatorFilterOptions(HasText = "Summarizing"))).ToHaveCountAsync(0)
-        Assert.Equal(1, fake.Requests.Length)
+        Assert.Equal(1, (fake.RequestsTo("api.openai.com", "/v1/responses")).Length)
         do! click (summarizeButton page)
         do! expectCitation page
-        Assert.Equal(2, fake.Requests.Length) })
+        Assert.Equal(2, (fake.RequestsTo("api.openai.com", "/v1/responses")).Length) })
 
 let private documentRow (page: IPage) (fileName: string) = page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = fileName))
 
-[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T013"); Trait("Category", "Browser")>]
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T013"); Trait("Task", "T007"); Trait("Category", "Browser")>]
 let ``dismissing while the ask is still in flight stops the job that the late POST creates`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
-        use fake = new FakeChatService(fun call -> if call = 1 then Hold answer else Reply answer)
-        use harness = TestHarness.Start(serveClient = true, settings = settings, summaryHandler = fake)
+        use fake = new FakeOpenAi(fun call -> if call = 1 then ResponsesScript.Hold answer else ResponsesScript.Completed answer)
+        use harness = TestHarness.Start(serveClient = true, summaryHandler = fake)
         let! page = openApp browser harness
         do! createProject page "Alpha"
         do! importAndAdd page "article-en.pdf"
         do! openDocument page "article-en.pdf"
+        do! Ui.signInWithChatGpt page harness fake
+        do! openDocument page "article-en.pdf"
+        do! click (summarizeButton page)
+        do! Assertions.Expect(page.GetByRole(AriaRole.Alertdialog)).ToBeVisibleAsync()
         // Hold the POST in the browser: the DELETE reaches the server before any job exists, then the POST lands.
         let intercepted = TaskCompletionSource<IRoute>(TaskCreationOptions.RunContinuationsAsynchronously)
         let handler (route: IRoute) : Task =
@@ -211,11 +229,11 @@ let ``dismissing while the ask is still in flight stops the job that the late PO
             if response.Request.Method = "DELETE" then
                 deletes.Value <- deletes.Value + 1
                 (if deletes.Value = 1 then deleted else secondDeleted).TrySetResult() |> ignore)
-        do! click (summarizeButton page)
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) "Send")
         let! route = intercepted.Task.WaitAsync(TimeSpan.FromSeconds 30.)
         do! click (button (page.GetByRole(AriaRole.Status).Filter(LocatorFilterOptions(HasText = "Summarizing"))) "Dismiss")
         do! deleted.Task.WaitAsync(TimeSpan.FromSeconds 30.)
-        Assert.Equal(0, fake.Requests.Length)
+        Assert.Equal(0, (fake.RequestsTo("api.openai.com", "/v1/responses")).Length)
         do! route.ContinueAsync()
         // The POST creates the job after the first DELETE; the second DELETE stops it (whether or not its call reached the fake yet).
         do! secondDeleted.Task.WaitAsync(TimeSpan.FromSeconds 30.)
@@ -226,17 +244,20 @@ let ``dismissing while the ask is still in flight stops the job that the late PO
         do! Assertions.Expect((projectRow page "Alpha").Locator(".summary-marker")).ToHaveCountAsync(0) })
 
 
-[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T010"); Trait("Category", "Browser")>]
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T010"); Trait("Task", "T007"); Trait("Category", "Browser")>]
 let ``while viewing another document the marker of a running summary turns to finished without a reload`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
-        use fake = new FakeChatService(Hold answer)
-        use harness = TestHarness.Start(serveClient = true, settings = settings, summaryHandler = fake)
+        use fake = new FakeOpenAi(ResponsesScript.Hold answer)
+        use harness = TestHarness.Start(serveClient = true, summaryHandler = fake)
         let! page = openApp browser harness
         do! createProject page "Alpha"
         do! importAndAdd page "article-en.pdf"
         do! importAndAdd page "article-pt.pdf"
         do! openDocument page "article-en.pdf"
+        do! Ui.signInWithChatGpt page harness fake
+        do! openDocument page "article-en.pdf"
         do! click (summarizeButton page)
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) "Send")
         do! fake.Waiting.WaitAsync(TimeSpan.FromSeconds 30.)
         do! openDocument page "article-pt.pdf"
         // Viewing B: A's marker and the project's marker say running; B has none.
@@ -248,32 +269,38 @@ let ``while viewing another document the marker of a running summary turns to fi
         do! Assertions.Expect((documentRow page "article-en.pdf").Locator(".summary-marker")).ToHaveTextAsync(LexScholar.Client.Texts.summaryReady)
         do! Assertions.Expect((projectRow page "Alpha").Locator(".summary-marker")).ToHaveTextAsync(LexScholar.Client.Texts.summaryReady) })
 
-[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T010"); Trait("Category", "Browser")>]
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T010"); Trait("Task", "T007"); Trait("Category", "Browser")>]
 let ``a failed summary is marked failed in the list`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
-        use fake = new FakeChatService(fun _ -> Status 400)
-        use harness = TestHarness.Start(serveClient = true, settings = settings, summaryHandler = fake)
+        use fake = new FakeOpenAi(fun _ -> ResponsesScript.UnstructuredStatus 400)
+        use harness = TestHarness.Start(serveClient = true, summaryHandler = fake)
         let! page = openApp browser harness
         do! createProject page "Alpha"
         do! importAndAdd page "article-en.pdf"
         do! importAndAdd page "article-pt.pdf"
         do! openDocument page "article-en.pdf"
+        do! Ui.signInWithChatGpt page harness fake
+        do! openDocument page "article-en.pdf"
         do! click (summarizeButton page)
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) "Send")
         do! openDocument page "article-pt.pdf"
         do! Assertions.Expect((documentRow page "article-en.pdf").Locator(".summary-marker")).ToHaveTextAsync(LexScholar.Client.Texts.summaryFailed)
         do! Assertions.Expect((projectRow page "Alpha").Locator(".summary-marker")).ToHaveTextAsync(LexScholar.Client.Texts.summaryFailed) })
 
-[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T010"); Trait("Category", "Browser")>]
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T010"); Trait("Task", "T007"); Trait("Category", "Browser")>]
 let ``removing a document with a finished summary clears the project's marker`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
-        use fake = new FakeChatService(Reply answer)
-        use harness = TestHarness.Start(serveClient = true, settings = settings, summaryHandler = fake)
+        use fake = new FakeOpenAi(ResponsesScript.Completed answer)
+        use harness = TestHarness.Start(serveClient = true, summaryHandler = fake)
         let! page = openApp browser harness
         do! createProject page "Alpha"
         do! importAndAdd page "article-en.pdf"
         do! importAndAdd page "article-pt.pdf"
         do! openDocument page "article-en.pdf"
+        do! Ui.signInWithChatGpt page harness fake
+        do! openDocument page "article-en.pdf"
         do! click (summarizeButton page)
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) "Send")
         do! expectCitation page
         // Another document is open when the removal happens, so the view does not change.
         do! openDocument page "article-pt.pdf"
@@ -291,16 +318,20 @@ let private loseAnswer (route: IRoute) : Task =
             do! route.AbortAsync() }
     else route.ContinueAsync()
 
-[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T010"); Trait("Category", "Browser")>]
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T010"); Trait("Task", "T007"); Trait("Category", "Browser")>]
 let ``a lost answer to the summary request still shows the marker of the job the server started`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
-        use fake = new FakeChatService(Reply answer)
-        use harness = TestHarness.Start(serveClient = true, settings = settings, summaryHandler = fake)
+        use fake = new FakeOpenAi(ResponsesScript.Completed answer)
+        use harness = TestHarness.Start(serveClient = true, summaryHandler = fake)
         let! page = openApp browser harness
         do! createProject page "Alpha"
         do! importAndAdd page "article-en.pdf"
         do! openDocument page "article-en.pdf"
+        do! Ui.signInWithChatGpt page harness fake
+        do! openDocument page "article-en.pdf"
+        do! click (summarizeButton page)
+        do! Assertions.Expect(page.GetByRole(AriaRole.Alertdialog)).ToBeVisibleAsync()
         // The server gets the POST and starts the job, but the answer never reaches the page.
         use! _ = page.RouteAsync("**/summary", Func<IRoute, Task>(loseAnswer))
-        do! click (summarizeButton page)
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) "Send")
         do! Assertions.Expect((documentRow page "article-en.pdf").Locator(".summary-marker")).ToHaveTextAsync(LexScholar.Client.Texts.summaryReady) })
