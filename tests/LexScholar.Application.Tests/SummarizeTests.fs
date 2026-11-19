@@ -22,6 +22,28 @@ let private capabilities (answer: Result<string, Summarize.ServiceError>) (sent:
 let private run capabilities =
     (Summarize.summarize capabilities 12000 pages CancellationToken.None).GetAwaiter().GetResult()
 
+[<Fact; Trait("Task", "T023")>]
+let ``instructed failure drops all service text but keeps status and useful error categories`` () =
+    let secret = "PRIVATE-FOCUS-T023"
+    let errors =
+        [ for status in [400; 401; 429; 500] do
+              yield Summarize.ServiceError.ErrorStatus(status, Some ("Echo: " + secret)),
+                    Summarize.ServiceError.ErrorStatus(status, None)
+          for error in [ Summarize.ServiceError.UsageLimitReached; Summarize.ServiceError.SignedOut
+                         Summarize.ServiceError.NoPlanAccess; Summarize.ServiceError.Unreachable
+                         Summarize.ServiceError.TimedOut; Summarize.ServiceError.Redirected
+                         Summarize.ServiceError.UnusableOutput ] do
+              yield error, error ]
+    for error, expected in errors do
+        let caps = capabilities (Error error) (List())
+        let actual =
+            Summarize.summarizeWithInstruction caps 12000 pages (Some secret) CancellationToken.None
+            |> fun t -> t.GetAwaiter().GetResult()
+        Assert.Equal(Error (Summarize.SummaryFailure.ServiceFailed expected), actual)
+        Assert.DoesNotContain(secret, Summarize.failureDetail expected)
+        // Existing uninstructed requests retain F003's sanitized refusal behavior.
+        Assert.Equal(Error (Summarize.SummaryFailure.ServiceFailed error), run caps)
+
 [<Fact; Trait("Task", "T003")>]
 let ``the request has instructions and the readable pages under their own page markers`` () =
     let sent = List()

@@ -19,6 +19,14 @@ Application capture tests cover default/blank prompt equivalence and separate lo
 
 ## Limits and coordination
 
+### PR #133 review follow-up — failure echo (must fix)
+
+- Verdict: **must fix**, as requested. Service refusal prose could echo the sensitive instruction into retained job failure/status. For instructed requests, the Application completion wrapper now drops the entire `ErrorStatus` message (not substring redaction) before any failure reaches the registry. Numeric status and recognized error mappings remain intact; uninstructed behavior stays unchanged.
+- Meaningful RED: `scripts/check.sh T023` — 40 tests, four failed assertions showing the private instruction marker in job status for configured HTTP 400/429 and plan HTTP/SSE failures. Log: `/tmp/lexscholar-check.0xOy7j`.
+- GREEN: `scripts/check.sh T023 T010` — 104 tests, zero failures/skips, warnings-as-errors build passed.
+- Added workflow assertions for exact numeric status preservation, removal of service text and unchanged usage-limit/sign-out/no-access/transport categories; uninstructed refusal behavior remains. Server tests capture logs and inspect retained/returned failed status for both destinations, generic HTTP/SSE errors and recognized plan errors. The fake OpenAI adapter now allows a scripted refusal message to reproduce an echo.
+- Full CI remains the PR's responsibility; updated head pushed without merging.
+
 - Fake service responses prove transport/prompt construction and citation validation, not real-model compliance with requested focus or Portuguese; no claim of prompt-injection immunity.
 - No raw-instruction persistence/history or saved instruction metadata. Drafts disappear on navigation/reload; reproducing the exact focus requires re-entry. Generated summary content can reflect or echo user text and remains stored under existing summary rules.
 - Consent remains once per sign-in. Field hint and confirmation both disclose transmission; existing OpenAI account data controls still apply.

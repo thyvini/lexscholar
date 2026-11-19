@@ -80,6 +80,7 @@ type FakeOpenAi(responses: int -> ResponsesScript) =
     /// The client id the fake issues and the audience of its ID tokens.
     member val ClientId = "client-test" with get, set
     member val Email = "researcher@example.test" with get, set
+    member val SummaryErrorMessage = "service detail" with get, set
     /// Nonce placed in the ID token; tests copy it from the authorization URL.
     member val Nonce = "" with get, set
     member val Scope = "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct" with get, set
@@ -168,9 +169,9 @@ type FakeOpenAi(responses: int -> ResponsesScript) =
                       "response.completed", box {| ``type`` = "response.completed" |} ]
             | ResponsesScript.Failed code ->
                 return this.Sse
-                    [ "response.failed", box {| ``type`` = "response.failed"; response = {| error = {| code = code; message = "service detail" |} |} |} ]
+                    [ "response.failed", box {| ``type`` = "response.failed"; response = {| error = {| code = code; message = this.SummaryErrorMessage |} |} |} ]
             | ResponsesScript.Status (status, code) ->
-                return this.Json(status, JsonSerializer.Serialize({| error = {| code = code; message = "service detail" |} |}))
+                return this.Json(status, JsonSerializer.Serialize({| error = {| code = code; message = this.SummaryErrorMessage |} |}))
             | ResponsesScript.UnstructuredStatus status ->
                 return this.Json(status, """{"error":"service detail"}""")
             | ResponsesScript.WaitUntilCancelled ->
