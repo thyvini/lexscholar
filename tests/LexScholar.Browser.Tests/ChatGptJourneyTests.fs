@@ -83,7 +83,7 @@ let ``she signs in, summarizes on her plan, meets the usage limit and signs out`
             route.FulfillAsync(RouteFulfillOptions(Status = 200, ContentType = "text/html", Body = "<html><body>OpenAI</body></html>"))
         use! _ = page.RouteAsync("https://auth.openai.com/**", Func<IRoute, Task>(intercept))
         let! _ = page.GotoAsync("/")
-        do! Assertions.Expect(page.GetByRole(AriaRole.Heading, PageGetByRoleOptions(Name = LexScholar.Client.Texts.projects, Exact = true)).First).ToBeVisibleAsync()
+        do! Ui.enterWorkspace page
         do! arrange page
 
         // Not signed in: the sign-in action is offered, branded as OpenAI asks.

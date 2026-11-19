@@ -86,6 +86,8 @@ Errors are ProblemDetails with a `code` extension (`problem` helpers in the endp
 
 **F006 projects and library in Portuguese (T009).** `FailureTexts.fs`, compiled after `SummaryStatus.fs` and before `App.fs`, maps project and library failure unions to the Portuguese values in `Texts.fs`; unexpected failures use the generic message. With no projects the main area offers first-run project creation, library import navigation and ChatGPT sign-in using the existing actions.
 
+**F006 onboarding (T014).** `App.State.Onboarding` is undecided until projects load, then starts only for an empty workspace. The focused first-run page hides both sidebars and keeps its three cards after project creation; import and sign-in are optional, and only explicit skip/finish enters the workspace. `App` remembers active/finished setup in browser `sessionStorage` (no credentials or document data) across reload and the same-tab ChatGPT round trip. A new browser session with projects goes straight to the workspace. `Ui.enterWorkspace` explicitly skips optional setup for existing workspace journeys; `OnboardingJourneyTests` exercises setup itself in both browsers.
+
 **F006 summary and ChatGPT in Portuguese (T010).** `FailureTexts.summary` maps every summary failure to `Texts`, using the generic message for unrecognized service details. `App.fs` renders Portuguese summary context, progress, confirmation, account and notices; stored service host and model are preserved. The confirmation links to the Portuguese OpenAI help article.
 
 ## Request flow

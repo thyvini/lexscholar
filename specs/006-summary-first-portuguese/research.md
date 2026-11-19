@@ -2,6 +2,13 @@
 
 Decisions for [plan.md](plan.md). Each has the decision, why, and the alternatives considered (constitution VI). The look comes from [mockups/README.md](mockups/README.md).
 
+## R10. Owner-approved onboarding remediation (T014, $14z, $151)
+
+- **Decision**: track onboarding independently of project count. It starts after the first successful project-list load finds no projects, remains through creation/import/sign-in, and ends only on explicit skip/finish. Retain its active/finished flag in same-origin browser `sessionStorage` across reload and the same-tab authorization return. The three numbered cards follow screen 05, with the owner's additional completion action.
+- **Why**: project creation is step one, not completion. A session flag keeps a subsequent reload or ChatGPT callback from dropping the remaining optional steps without introducing server storage, migrations or auth changes.
+- **Alternatives**: project-count-only detection caused $151; an in-memory flag loses setup on authorization navigation; a persistent server marker adds storage and an endpoint for a session-only concern; `localStorage` outlives the setup session unnecessarily.
+- **Limits**: no credentials or document details go into the flag. A new session with existing projects bypasses onboarding; a new session with none offers it again. When browser storage is unavailable, setup works in memory, but a reload/authorization return with an already-created project may enter the workspace. Project creation does not auto-select or auto-associate imports; those existing behaviors remain unchanged.
+
 ## R1. Opening a PDF at a page in a new tab (FR-002, FR-003, SC-001)
 
 - **Decision**: "Abrir PDF" and every citation are plain links (`<a target="_blank" rel="noopener">`) to the document's existing content URL (`GET /api/documents/{id}/content`, served inline with range support). A citation adds the PDF open parameter `#page=N`, where N is the first page it cites. Nothing new on the server for the happy path.

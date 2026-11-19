@@ -30,7 +30,7 @@ let ``fonts are served locally and fake sign-in shows the current account`` (bro
         let urls = ConcurrentBag<string>()
         page.Request.Add(fun request -> urls.Add(request.Url))
         let! _ = page.GotoAsync("/")
-        do! Assertions.Expect(page.GetByRole(AriaRole.Heading, PageGetByRoleOptions(Name = Texts.projects, Exact = true)).First).ToBeVisibleAsync()
+        do! Ui.enterWorkspace page
         let! loaded = page.EvaluateAsync<bool>("async () => { await Promise.all([document.fonts.load('16px Inter'), document.fonts.load('16px \"Source Serif 4\"')]); return document.fonts.check('16px Inter') && document.fonts.check('16px \"Source Serif 4\"'); }")
         Assert.True(loaded)
         Assert.Contains(urls, fun url -> url.Contains("/fonts/inter/InterVariable.woff2"))

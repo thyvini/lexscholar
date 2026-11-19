@@ -18,11 +18,20 @@ let withBrowser (name: string) (journey: IBrowser -> Task) : Task = task {
     do! journey browser
 }
 
+/// Workspace journeys explicitly skip optional first-run setup.
+let enterWorkspace (page: IPage) = task {
+    do! Assertions.Expect(page.Locator(".workspace[data-ready='True']")).ToBeVisibleAsync()
+    let skip = page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = Texts.skipOnboarding, Exact = true))
+    let! visible = skip.IsVisibleAsync()
+    if visible then do! skip.ClickAsync()
+    do! Assertions.Expect(page.GetByRole(AriaRole.Heading, PageGetByRoleOptions(Name = Texts.projects, Exact = true)).First).ToBeVisibleAsync()
+}
+
 let openApp (browser: IBrowser) (harness: TestHarness) = task {
     let! context = browser.NewContextAsync(BrowserNewContextOptions(BaseURL = harness.Client.BaseAddress.ToString()))
     let! page = context.NewPageAsync()
     let! _ = page.GotoAsync("/")
-    do! Assertions.Expect(page.GetByRole(AriaRole.Heading, PageGetByRoleOptions(Name = Texts.projects, Exact = true)).First).ToBeVisibleAsync()
+    do! enterWorkspace page
     return page
 }
 

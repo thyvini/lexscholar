@@ -11,6 +11,7 @@ open Elmish
 open Microsoft.AspNetCore.Components
 open Microsoft.AspNetCore.Components.Forms
 open Microsoft.AspNetCore.Components.WebAssembly.Http
+open Microsoft.JSInterop
 open LexScholar.Domain
 open LexScholar.Client.Projects
 
@@ -280,9 +281,10 @@ module ChatGptApi =
         return () }
 
 /// The whole page: projects, shared library and the opened document's summary.
-type State = { Projects: Model; Library: Library.Model; Summary: Summary.Model; ChatGpt: ChatGpt.Model; Statuses: SummaryStatus.Statuses; ShowLibrary: bool }
+type State = { Projects: Model; Library: Library.Model; Summary: Summary.Model; ChatGpt: ChatGpt.Model; Statuses: SummaryStatus.Statuses; ShowLibrary: bool; Onboarding: bool option }
 
 type Msg =
+    | FinishOnboarding
     | ShowLibrary
     | ProjectsMsg of Message
     | LibraryMsg of Library.Message
@@ -376,6 +378,9 @@ module private Ui =
 
     let private updateCore http navigation msg state =
         match msg with
+        | FinishOnboarding when state.Projects.HasLoaded && state.Projects.Busy.IsNone && state.Library.Busy.IsNone && state.ChatGpt.Status <> ChatGpt.Starting ->
+            { state with Onboarding = Some false }, Cmd.none
+        | FinishOnboarding -> state, Cmd.none
         | ShowLibrary -> { state with ShowLibrary = true }, Cmd.none
         | ChatGptMsg message ->
             let chatGpt, effect = ChatGpt.update message state.ChatGpt
@@ -399,7 +404,10 @@ module private Ui =
             Cmd.batch [ summaryCommand http effect; chatGptCommand http navigation chatGptEffect ]
         | ProjectsMsg message ->
             let projects, effect = Projects.update message state.Projects
-            let state = { state with Projects = projects }
+            let onboarding =
+                if state.Onboarding.IsNone && projects.HasLoaded then Some projects.Snapshot.Projects.IsEmpty
+                else state.Onboarding
+            let state = { state with Projects = projects; Onboarding = onboarding }
             let projectCommand = effect |> Option.map (command http >> Cmd.map ProjectsMsg) |> Option.defaultValue Cmd.none
             // The page's Refresh button also reloads both library lists, so a
             // failed load can be retried.
@@ -811,6 +819,7 @@ module private Ui =
                 input {
                     attr.id "project-name"
                     attr.``type`` "text"
+                    attr.placeholder Texts.projectNameExample
                     bind.input.string model.Name (dispatch << NameChanged)
                     attr.disabled busy
                 }
@@ -821,9 +830,81 @@ module private Ui =
                 | None -> empty ()
         }
 
+    let private onboardingView (state: State) dispatch =
+        section {
+            attr.``class`` "onboarding"
+            h2 { text Texts.welcome }
+            p { attr.``class`` "onboarding-intro"; text Texts.welcomeIntro }
+            section {
+                attr.``class`` "onboarding-step"
+                span { attr.``class`` "step-number"; text "1" }
+                div {
+                    h3 { text Texts.firstProject }
+                    p { text Texts.firstProjectHelp }
+                    cond state.Projects.Snapshot.Projects <| function
+                        | project :: _ -> p { "role" => "status"; text (Texts.projectCreated project.Name) }
+                        | [] -> projectForm state.Projects (ProjectsMsg >> dispatch)
+                }
+            }
+            section {
+                attr.``class`` "onboarding-step"
+                span { attr.``class`` "step-number"; text "2" }
+                div {
+                    h3 { text Texts.importPdfs }
+                    p { text Texts.importPdfsHelp }
+                    label { attr.``class`` "file-button"; "for" => "onboarding-file"; text Texts.choosePdfs }
+                    comp<InputFile> {
+                        "id" => "onboarding-file"
+                        "class" => "onboarding-file"
+                        "aria-label" => Texts.choosePdfs
+                        "accept" => ".pdf,application/pdf"
+                        "disabled" => state.Library.Busy.IsSome
+                        attr.callback "OnChange" (fun (event: InputFileChangeEventArgs) -> dispatch (LibraryMsg (Library.Upload event.File)))
+                    }
+                    cond state.Library.Busy <| function
+                        | Some Library.Uploading -> p { "role" => "status"; text Texts.importing }
+                        | _ -> empty ()
+                    cond state.Library.Notice <| function
+                        | Some (Library.Imported doc) -> p { "role" => "status"; text (Texts.imported doc.FileName) }
+                        | Some (Library.Reused doc) -> p { "role" => "status"; text (Texts.reused doc.FileName) }
+                        | None -> empty ()
+                    cond state.Library.Error <| function
+                        | Some failure -> p { "role" => "alert"; text (FailureTexts.library failure) }
+                        | None -> empty ()
+                }
+            }
+            section {
+                attr.``class`` "onboarding-step"
+                span { attr.``class`` "step-number"; text "3" }
+                div {
+                    h3 { text Texts.signInForSummaries }
+                    p { text Texts.signInHelp }
+                    div {
+                        attr.``class`` "onboarding-signin"
+                        cond state.ChatGpt.Status <| function
+                            | ChatGpt.SignedOut -> signInButton false (ChatGptMsg >> dispatch)
+                            | ChatGpt.Starting -> signInButton true (ChatGptMsg >> dispatch)
+                            | ChatGpt.SignedIn _ -> p { text Texts.signedIn }
+                            | _ -> empty ()
+                        small { text Texts.planRequired }
+                    }
+                }
+            }
+            div {
+                attr.``class`` "onboarding-actions"
+                button {
+                    attr.``type`` "button"
+                    attr.disabled (state.Projects.Busy.IsSome || state.Library.Busy.IsSome || state.ChatGpt.Status = ChatGpt.Starting)
+                    on.click (fun _ -> dispatch FinishOnboarding)
+                    text (if state.Projects.Snapshot.Projects.IsEmpty then Texts.skipOnboarding else Texts.finishOnboarding)
+                }
+            }
+        }
+
     let view (state: State) dispatch =
         let model = state.Projects
         let busy = model.Busy.IsSome
+        let onboarding = state.Onboarding <> Some false
         let projectName =
             model.Snapshot.Projects
             |> List.tryFind (fun p -> Some p.Id = model.Snapshot.Active)
@@ -837,16 +918,17 @@ module private Ui =
         let dispatch' = dispatch
         let dispatch = ProjectsMsg >> dispatch'
         div {
-            attr.``class`` "workspace"
+            attr.``class`` (if onboarding then "workspace onboarding-workspace" else "workspace")
+            "data-ready" => string model.HasLoaded
             header {
                 attr.``class`` "top-bar"
                 h1 { text Texts.appName }
                 span {
                     attr.``class`` "breadcrumb"
-                    text breadcrumb
+                    text (if onboarding then "" else breadcrumb)
                 }
                 cond state.ChatGpt.Status <| function
-                    | ChatGpt.SignedIn account ->
+                    | ChatGpt.SignedIn account when not onboarding ->
                         concat {
                             span { attr.``class`` "signed-in"; text Texts.signedIn }
                             elt "details" {
@@ -860,124 +942,140 @@ module private Ui =
                                 }
                             }
                         }
-                    | ChatGpt.SignedOut when (state.ShowLibrary || not model.Snapshot.Projects.IsEmpty) && (state.ShowLibrary || opened.IsNone) ->
+                    | ChatGpt.SignedOut when not onboarding && (state.ShowLibrary || not model.Snapshot.Projects.IsEmpty) && (state.ShowLibrary || opened.IsNone) ->
                         signInButton false (ChatGptMsg >> dispatch')
-                    | ChatGpt.Starting when (state.ShowLibrary || not model.Snapshot.Projects.IsEmpty) && (state.ShowLibrary || opened.IsNone) ->
+                    | ChatGpt.Starting when not onboarding && (state.ShowLibrary || not model.Snapshot.Projects.IsEmpty) && (state.ShowLibrary || opened.IsNone) ->
                         signInButton true (ChatGptMsg >> dispatch')
                     | _ -> empty ()
             }
-            aside {
-            attr.``class`` "project-column"
-            cond (model.HasLoaded && model.Snapshot.Projects.IsEmpty && not state.ShowLibrary) <| function
-                | true -> empty ()
-                | false -> projectForm model dispatch
-            section {
-                h2 { text Texts.projects }
-                cond model.Busy <| function
-                    | Some Loading -> p { "role" => "status"; text Texts.loadingProjects }
-                    | Some Selecting -> p { "role" => "status"; text Texts.selectingProject }
-                    | _ -> empty ()
-                cond (model.HasLoaded && model.Snapshot.Projects.IsEmpty && model.Busy <> Some Loading) <| function
-                    | true -> p { text Texts.noProjects }
-                    | false -> empty ()
-                ul {
-                    attr.``class`` "projects"
-                    forEach model.Snapshot.Projects <| fun project ->
-                        li {
-                            span { text project.Name }
-                            summaryMarker (SummaryStatus.projectStatus state.Statuses.Entries project.Id)
-                            cond (model.Snapshot.Active = Some project.Id) <| function
-                                 | true ->
-                                     concat {
-                                         strong { attr.``class`` "active"; text Texts.active }
-                                         cond (state.Library.HasLoadedProject && state.Library.Project = Some project.Id) <| function
-                                             | true -> small { attr.``class`` "project-count"; text (string state.Library.Associations.Length) }
-                                             | false -> empty ()
-                                     }
-                                 | false -> button { attr.``type`` "button"; attr.disabled busy; on.click (fun _ -> dispatch (Select project.Id)); text Texts.select }
-                        }
+            cond onboarding <| function
+             | true ->
+                main {
+                    "data-testid" => "main"
+                    chatGptBanner state.ChatGpt (ChatGptMsg >> dispatch')
+                    cond model.HasLoaded <| function
+                        | true -> onboardingView state dispatch'
+                        | false ->
+                            concat {
+                                p { "role" => "status"; text Texts.loadingProjects }
+                                cond model.Error <| function
+                                    | Some failure ->
+                                        concat {
+                                            p { "role" => "alert"; text (FailureTexts.project failure) }
+                                            button { on.click (fun _ -> dispatch Reload); text Texts.refresh }
+                                        }
+                                    | None -> empty ()
+                            }
                 }
-                button { attr.``type`` "button"; attr.disabled busy; on.click (fun _ -> dispatch Reload); text Texts.refresh }
-            }
-            button {
-                attr.``type`` "button"
-                "aria-label" => Texts.library
-                attr.``class`` (if state.ShowLibrary then "library-navigation selected" else "library-navigation")
-                on.click (fun _ -> dispatch' ShowLibrary)
-                text Texts.library
-                cond state.Library.HasLoadedLibrary <| function
-                    | true -> small { attr.``class`` "library-count"; text (string state.Library.Documents.Length) }
-                    | false -> empty ()
-            }
-            }
-            aside {
-                attr.``class`` "document-column"
-                h2 { text (projectName |> Option.defaultValue Texts.projects) }
-                cond state.Library.HasLoadedProject <| function
-                    | true -> p { attr.``class`` "document-count"; text (Texts.documentCount state.Library.Associations.Length) }
-                    | false -> empty ()
-                button { attr.``type`` "button"; on.click (fun _ -> dispatch' ShowLibrary); text Texts.addDocuments }
-                projectDocuments state.Library state.ShowLibrary state.Statuses.Entries (LibraryMsg >> dispatch')
-            }
-            main {
-            "data-testid" => "main"
-            attr.``class`` "main-column"
-            chatGptBanner state.ChatGpt (ChatGptMsg >> dispatch')
-            cond (model.HasLoaded && model.Snapshot.Projects.IsEmpty && not state.ShowLibrary) <| function
-                | true ->
-                    section {
-                        h2 { text Texts.welcome }
-                        h3 { text Texts.firstProject }
+             | false ->
+                concat {
+                    aside {
+                        attr.``class`` "project-column"
                         projectForm model dispatch
-                        h3 { text Texts.importPdfs }
-                        button { attr.``type`` "button"; on.click (fun _ -> dispatch' ShowLibrary); text Texts.choosePdfs }
-                        h3 { text Texts.signInForSummaries }
-                        cond state.ChatGpt.Status <| function
-                            | ChatGpt.SignedOut -> signInButton false (ChatGptMsg >> dispatch')
-                            | ChatGpt.Starting -> signInButton true (ChatGptMsg >> dispatch')
-                            | _ -> empty ()
-                        p { text Texts.planRequired }
-                    }
-                | false -> empty ()
-            cond state.ShowLibrary <| function
-                | true -> libraryView state.Library (LibraryMsg >> dispatch')
-                | false -> empty ()
-            cond (not state.ShowLibrary && opened.IsNone) <| function
-                | true -> p { attr.``class`` "empty-main"; text Texts.chooseDocument }
-                | false -> empty ()
-            cond state.Library.RoleError <| function
-                | Some failure ->
-                    p {
-                        "role" => "alert"
-                        attr.``class`` "error"
-                        text (FailureTexts.library failure)
-                    }
-                | None -> empty ()
-            cond (if state.ShowLibrary then None else opened) <| function
-                | Some association ->
-                    section {
-                        let document = association.Document
-                        let role = if association.Role = FocusedSource then Texts.focusedSource else Texts.referenceSource
-                        attr.``class`` "card"
-                        div {
-                            attr.``class`` "document-heading"
-                            h2 { text document.FileName }
-                            a { attr.href document.ContentUrl; "target" => "_blank"; "rel" => "noopener"; text Texts.openPdf }
+                        section {
+                            h2 { text Texts.projects }
+                            cond model.Busy <| function
+                                | Some Loading -> p { "role" => "status"; text Texts.loadingProjects }
+                                | Some Selecting -> p { "role" => "status"; text Texts.selectingProject }
+                                | _ -> empty ()
+                            cond (model.HasLoaded && model.Snapshot.Projects.IsEmpty && model.Busy <> Some Loading) <| function
+                                | true -> p { text Texts.noProjects }
+                                | false -> empty ()
+                            ul {
+                                attr.``class`` "projects"
+                                forEach model.Snapshot.Projects <| fun project ->
+                                    li {
+                                        span { text project.Name }
+                                        summaryMarker (SummaryStatus.projectStatus state.Statuses.Entries project.Id)
+                                        cond (model.Snapshot.Active = Some project.Id) <| function
+                                            | true ->
+                                                concat {
+                                                    strong { attr.``class`` "active"; text Texts.active }
+                                                    cond (state.Library.HasLoadedProject && state.Library.Project = Some project.Id) <| function
+                                                        | true -> small { attr.``class`` "project-count"; text (string state.Library.Associations.Length) }
+                                                        | false -> empty ()
+                                                }
+                                            | false -> button { attr.``type`` "button"; attr.disabled busy; on.click (fun _ -> dispatch (Select project.Id)); text Texts.select }
+                                    }
+                            }
+                            button { attr.``type`` "button"; attr.disabled busy; on.click (fun _ -> dispatch Reload); text Texts.refresh }
                         }
-                        p { text (Texts.documentDetails document.PageCount role projectLabel) }
-                        chatGptAccount state.ChatGpt (ChatGptMsg >> dispatch')
-                        summaryView document state.Summary state.ChatGpt (SummaryMsg >> dispatch') (ChatGptMsg >> dispatch')
+                        button {
+                            attr.``type`` "button"
+                            "aria-label" => Texts.library
+                            attr.``class`` (if state.ShowLibrary then "library-navigation selected" else "library-navigation")
+                            on.click (fun _ -> dispatch' ShowLibrary)
+                            text Texts.library
+                            cond state.Library.HasLoadedLibrary <| function
+                                | true -> small { attr.``class`` "library-count"; text (string state.Library.Documents.Length) }
+                                | false -> empty ()
+                        }
                     }
-                | None -> empty ()
-            }
+                    aside {
+                        attr.``class`` "document-column"
+                        h2 { text (projectName |> Option.defaultValue Texts.projects) }
+                        cond state.Library.HasLoadedProject <| function
+                            | true -> p { attr.``class`` "document-count"; text (Texts.documentCount state.Library.Associations.Length) }
+                            | false -> empty ()
+                        button { attr.``type`` "button"; on.click (fun _ -> dispatch' ShowLibrary); text Texts.addDocuments }
+                        projectDocuments state.Library state.ShowLibrary state.Statuses.Entries (LibraryMsg >> dispatch')
+                    }
+                    main {
+                        "data-testid" => "main"
+                        attr.``class`` "main-column"
+                        chatGptBanner state.ChatGpt (ChatGptMsg >> dispatch')
+                        cond state.ShowLibrary <| function
+                            | true -> libraryView state.Library (LibraryMsg >> dispatch')
+                            | false -> empty ()
+                        cond (not state.ShowLibrary && opened.IsNone) <| function
+                            | true -> p { attr.``class`` "empty-main"; text Texts.chooseDocument }
+                            | false -> empty ()
+                        cond state.Library.RoleError <| function
+                            | Some failure ->
+                                p {
+                                    "role" => "alert"
+                                    attr.``class`` "error"
+                                    text (FailureTexts.library failure)
+                                }
+                            | None -> empty ()
+                        cond (if state.ShowLibrary then None else opened) <| function
+                            | Some association ->
+                                section {
+                                    let document = association.Document
+                                    let role = if association.Role = FocusedSource then Texts.focusedSource else Texts.referenceSource
+                                    attr.``class`` "card"
+                                    div {
+                                        attr.``class`` "document-heading"
+                                        h2 { text document.FileName }
+                                        a { attr.href document.ContentUrl; "target" => "_blank"; "rel" => "noopener"; text Texts.openPdf }
+                                    }
+                                    p { text (Texts.documentDetails document.PageCount role projectLabel) }
+                                    chatGptAccount state.ChatGpt (ChatGptMsg >> dispatch')
+                                    summaryView document state.Summary state.ChatGpt (SummaryMsg >> dispatch') (ChatGptMsg >> dispatch')
+                                }
+                            | None -> empty ()
+                    }
+                }
         }
 
 type App() =
     inherit ProgramComponent<State, Msg>()
     [<Inject>]
     member val Navigation = Unchecked.defaultof<NavigationManager> with get, set
+    [<Inject>]
+    member val JavaScript = Unchecked.defaultof<IJSRuntime> with get, set
     override this.Program =
         let http = new HttpClient(BaseAddress = Uri(this.Navigation.BaseUri))
+        // Session-scoped only: keep this setup across the sign-in navigation and reload,
+        // but never infer that an existing workspace needs onboarding in a new tab.
+        let js = this.JavaScript :?> IJSInProcessRuntime
+        let remembered =
+            try
+                match js.Invoke<string>("sessionStorage.getItem", [| box "lexscholar.onboarding" |]) with
+                | "active" -> Some true
+                | "finished" -> Some false
+                | _ -> None
+            with _ -> None
         let start _ =
             let library, libraryEffect = Library.update Library.LoadLibrary Library.initial
             // Returning from ChatGPT: read the outcome once, then drop it from the address.
@@ -988,9 +1086,16 @@ type App() =
             let chatGpt, chatGptEffect = ChatGpt.update ChatGpt.Load ChatGpt.initial
             let statuses, statusEffect = SummaryStatus.updateStatuses SummaryStatus.Refresh SummaryStatus.initialStatuses
             let chatGpt, _ = ChatGpt.update (ChatGpt.Returned returned) chatGpt
-            { Projects = { initial with Busy = Some Loading }; Library = library; Summary = Summary.initial; ChatGpt = chatGpt; Statuses = statuses; ShowLibrary = false },
+            { Projects = { initial with Busy = Some Loading }; Library = library; Summary = Summary.initial; ChatGpt = chatGpt; Statuses = statuses; ShowLibrary = false; Onboarding = remembered },
             Cmd.batch [ Ui.command http Fetch |> Cmd.map ProjectsMsg
                         Ui.chatGptCommand http this.Navigation chatGptEffect
                         Ui.statusCommand http statusEffect
                         libraryEffect |> Option.map (Ui.libraryCommand http) |> Option.defaultValue Cmd.none ]
-        Program.mkProgram start (Ui.update http this.Navigation) Ui.view
+        let update msg state =
+            let next, command = Ui.update http this.Navigation msg state
+            if next.Onboarding <> state.Onboarding then
+                try
+                    js.InvokeVoid("sessionStorage.setItem", [| box "lexscholar.onboarding"; box (if next.Onboarding = Some true then "active" else "finished") |])
+                with _ -> ()
+            next, command
+        Program.mkProgram start update Ui.view

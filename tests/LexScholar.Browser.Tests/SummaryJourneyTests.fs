@@ -28,7 +28,7 @@ let private openApp (browser: IBrowser) (harness: TestHarness) = task {
     let! context = browser.NewContextAsync(BrowserNewContextOptions(BaseURL = harness.Client.BaseAddress.ToString()))
     let! page = context.NewPageAsync()
     let! _ = page.GotoAsync("/")
-    do! Assertions.Expect(page.GetByRole(AriaRole.Heading, PageGetByRoleOptions(Name = LexScholar.Client.Texts.projects, Exact = true)).First).ToBeVisibleAsync()
+    do! Ui.enterWorkspace page
     return page }
 
 let private button (scope: ILocator) (name: string) =

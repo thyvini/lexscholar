@@ -4,6 +4,14 @@ open System
 open System.Globalization
 
 let appName = "LexScholar"
+let welcomeIntro = "Reúna suas fontes em um só lugar e obtenha resumos que citam as páginas de onde cada ponto vem. Seus documentos ficam neste computador."
+let firstProjectHelp = "Um projeto reúne as fontes de um trabalho."
+let projectNameExample = "ex.: Dissertação"
+let projectCreated name = $"Projeto criado: {name}"
+let importPdfsHelp = "Eles vão para uma biblioteca compartilhada, e qualquer projeto pode usá-los."
+let signInHelp = "Entre uma vez e os resumos usam seu próprio plano do ChatGPT. Nada é enviado antes da sua confirmação."
+let finishOnboarding = "Concluir"
+let skipOnboarding = "Pular por enquanto"
 let space = " "
 let citationSeparator = ", "
 let detailSeparator = " · "
