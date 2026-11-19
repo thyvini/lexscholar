@@ -9,6 +9,110 @@ open LexScholar.Client
 open LexScholar.Server.Tests
 open LexScholar.Browser.Tests.Ui
 
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T019"); Trait("Category", "Browser")>]
+let ``late successful project selection preserves newer library navigation`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use harness = TestHarness.Start(serveClient = true)
+        let! page = openApp browser harness
+        do! SummaryJourneyTests.arrange page
+        do! page.GetByLabel(Texts.projectName).FillAsync("Beta")
+        do! click (button (page.Locator("body")) Texts.createProject)
+        let arrived = TaskCompletionSource<unit>()
+        let release = TaskCompletionSource<unit>()
+        let holdSelection (route: IRoute) : Task = task {
+            let! response = route.FetchAsync()
+            arrived.SetResult()
+            do! release.Task
+            do! route.FulfillAsync(RouteFulfillOptions(Response = response))
+        }
+        use! _ = page.RouteAsync("**/api/projects/*/active", Func<IRoute, Task>(holdSelection))
+        let beta = page.Locator("ul.projects li").Filter(LocatorFilterOptions(HasText = "Beta"))
+        do! click (button beta Texts.select)
+        do! arrived.Task
+        try
+            do! click (button (page.Locator("body")) Texts.library)
+            do! Assertions.Expect(page.GetByTestId("main").GetByLabel(Texts.importPdf)).ToBeVisibleAsync()
+        finally release.TrySetResult() |> ignore
+        do! Assertions.Expect(beta).ToHaveAttributeAsync("aria-current", "true")
+        do! Assertions.Expect(page.GetByTestId("main").GetByLabel(Texts.importPdf)).ToBeVisibleAsync()
+        do! Assertions.Expect(page.Locator(".breadcrumb")).ToContainTextAsync(Texts.library)
+    })
+
+[<Theory; InlineData("chromium", false); InlineData("chromium", true); InlineData("firefox", false); InlineData("firefox", true); Trait("Task", "T019"); Trait("Category", "Browser")>]
+let ``library hides source options and source activation opens before revealing`` (browserName: string, revealed: bool) =
+    withBrowser browserName (fun browser -> task {
+        use harness = TestHarness.Start(serveClient = true)
+        let! page = openApp browser harness
+        do! SummaryJourneyTests.arrange page
+        let row = page.Locator("ul.project-documents li")
+        let source = button row Texts.openDocument
+        if revealed then
+            do! click source
+            do! Assertions.Expect(button row Texts.remove).ToBeVisibleAsync()
+        do! click (button (page.Locator("body")) Texts.library)
+        do! Assertions.Expect(source).ToHaveAttributeAsync("aria-expanded", "false")
+        do! Assertions.Expect(button row Texts.remove).ToHaveCountAsync(0)
+        do! source.PressAsync("Enter")
+        do! Assertions.Expect(page.GetByTestId("main").GetByRole(AriaRole.Heading, LocatorGetByRoleOptions(Name = "article-en.pdf", Exact = true))).ToBeVisibleAsync()
+        do! Assertions.Expect(source).ToHaveAttributeAsync("aria-expanded", "false")
+        do! Assertions.Expect(button row Texts.remove).ToHaveCountAsync(0)
+        do! source.PressAsync("Enter")
+        do! Assertions.Expect(source).ToHaveAttributeAsync("aria-expanded", "true")
+        do! Assertions.Expect(button row Texts.remove).ToBeVisibleAsync()
+    })
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T019"); Trait("Category", "Browser")>]
+let ``failed project selection preserves the visible library`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use harness = TestHarness.Start(serveClient = true)
+        let! page = openApp browser harness
+        do! SummaryJourneyTests.arrange page
+        do! page.GetByLabel(Texts.projectName).FillAsync("Beta")
+        do! click (button (page.Locator("body")) Texts.createProject)
+        do! click (button (page.Locator("body")) Texts.library)
+        let failSelection (route: IRoute) : Task =
+            route.FulfillAsync(RouteFulfillOptions(Status = 500, ContentType = "application/json", Body = "{}"))
+        use! _ = page.RouteAsync("**/api/projects/*/active", Func<IRoute, Task>(failSelection))
+        let beta = page.Locator("ul.projects li").Filter(LocatorFilterOptions(HasText = "Beta"))
+        do! click (button beta Texts.select)
+        let import = page.GetByTestId("main").GetByLabel(Texts.importPdf)
+        do! Assertions.Expect(page.GetByRole(AriaRole.Alert)).ToBeVisibleAsync()
+        do! Assertions.Expect(import).ToBeVisibleAsync()
+        do! Assertions.Expect(page.Locator("ul.projects li").Filter(LocatorFilterOptions(HasText = "Alpha"))).ToHaveAttributeAsync("aria-current", "true")
+    })
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T019"); Trait("Category", "Browser")>]
+let ``item names open and repeated activation reveals guarded options`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use harness = TestHarness.Start(serveClient = true)
+        let! page = openApp browser harness
+        do! SummaryJourneyTests.arrange page
+        let row = page.Locator("ul.project-documents li")
+        let source = row.GetByRole(AriaRole.Button, LocatorGetByRoleOptions(Name = "article-en.pdf", Exact = true))
+        do! Assertions.Expect(source).ToBeVisibleAsync()
+        do! Assertions.Expect(row.GetByRole(AriaRole.Button, LocatorGetByRoleOptions(Name = Texts.openDocument, Exact = true))).ToHaveCountAsync(0)
+        do! Assertions.Expect(button row Texts.remove).ToHaveCountAsync(0)
+        do! source.FocusAsync()
+        do! page.Keyboard.PressAsync("Enter")
+        do! Assertions.Expect(source).ToBeFocusedAsync()
+        do! Assertions.Expect(source).ToHaveAttributeAsync("aria-expanded", "true")
+        do! Assertions.Expect(button row Texts.makeReference).ToBeVisibleAsync()
+        do! click (button row Texts.makeReference)
+        do! Assertions.Expect(listNamed page Texts.referenceSources).ToContainTextAsync("article-en.pdf")
+        do! Assertions.Expect(link (page.GetByTestId("main")) Texts.openPdf).ToBeVisibleAsync()
+        do! click (button row Texts.remove)
+        do! Assertions.Expect(row).ToHaveCountAsync(0)
+        do! click (button (page.Locator("body")) Texts.library)
+        do! Assertions.Expect(page.Locator("ul.documents")).ToContainTextAsync("article-en.pdf")
+        let project = page.Locator("ul.projects li")
+        let name = project.GetByRole(AriaRole.Button, LocatorGetByRoleOptions(Name = "Alpha", Exact = true))
+        do! name.FocusAsync()
+        do! page.Keyboard.PressAsync("Space")
+        do! Assertions.Expect(name).ToBeFocusedAsync()
+        do! Assertions.Expect(name).ToHaveAttributeAsync("aria-expanded", "true")
+        do! Assertions.Expect(button project Texts.refresh).ToBeVisibleAsync()
+    })
+
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T017"); Trait("Category", "Browser")>]
 let ``summary uses interface typography and PDF is a secondary link control`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
@@ -125,6 +229,7 @@ let ``changing a role moves the document and leaves the other project unchanged`
         let! page = openApp browser harness
         do! SummaryJourneyTests.arrange page
         let documentRow = page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))
+        do! click (button documentRow Texts.openDocument)
         do! click (button documentRow Texts.makeReference)
         do! Assertions.Expect(documentRow).ToContainTextAsync(Texts.referenceSource)
         do! page.GetByLabel(Texts.projectName).FillAsync("Beta")
@@ -138,6 +243,8 @@ let ``changing a role moves the document and leaves the other project unchanged`
         let libraryRow = page.Locator("ul.documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))
         do! click (button libraryRow Texts.addReference)
         do! Assertions.Expect(documentRow).ToContainTextAsync(Texts.referenceSource)
+        do! click (button documentRow Texts.openDocument)
+        do! click (button documentRow Texts.openDocument)
         do! click (button documentRow Texts.makeFocused)
         do! Assertions.Expect(documentRow).ToContainTextAsync(Texts.focusedSource)
         let alpha = page.Locator("ul.projects li").Filter(LocatorFilterOptions(HasText = "Alpha"))
@@ -163,6 +270,7 @@ let ``changing a role moves the document while its summary stays visible`` (brow
         let reference = listNamed page Texts.referenceSources
         let row (list: ILocator) = list.Locator("li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))
         do! Assertions.Expect(row focused).ToHaveCountAsync(1)
+        do! click (button (row focused) Texts.openDocument)
         do! click (button (row focused) Texts.makeReference)
         do! Assertions.Expect(row focused).ToHaveCountAsync(0)
         do! Assertions.Expect(row reference).ToHaveCountAsync(1)

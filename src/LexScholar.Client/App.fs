@@ -281,7 +281,7 @@ module ChatGptApi =
         return () }
 
 /// The whole page: projects, shared library and the opened document's summary.
-type State = { Projects: Model; Library: Library.Model; Summary: Summary.Model; ChatGpt: ChatGpt.Model; Statuses: SummaryStatus.Statuses; ShowLibrary: bool; Onboarding: bool option }
+type State = { Projects: Model; Library: Library.Model; Summary: Summary.Model; ChatGpt: ChatGpt.Model; Statuses: SummaryStatus.Statuses; ShowLibrary: bool; PendingProjectOpen: bool; Onboarding: bool option }
 
 type Msg =
     | FinishOnboarding
@@ -325,7 +325,8 @@ module private Ui =
     let private updateLibrary http message state =
         let library, effect = Library.update message state.Library
         let showLibrary = match message with Library.OpenDocument _ when library.Opened.IsSome -> false | _ -> state.ShowLibrary
-        { state with Library = library; ShowLibrary = showLibrary }, effect |> Option.map (libraryCommand http) |> Option.defaultValue Cmd.none
+        let pendingProjectOpen = match message with Library.OpenDocument _ when library.Opened.IsSome -> false | _ -> state.PendingProjectOpen
+        { state with Library = library; ShowLibrary = showLibrary; PendingProjectOpen = pendingProjectOpen }, effect |> Option.map (libraryCommand http) |> Option.defaultValue Cmd.none
 
     /// How often the open document's running summary is asked for (research §4).
     let private summaryPollMilliseconds = 2000
@@ -381,7 +382,9 @@ module private Ui =
         | FinishOnboarding when state.Projects.HasLoaded && state.Projects.Busy.IsNone && state.Library.Busy.IsNone && state.ChatGpt.Status <> ChatGpt.Starting ->
             { state with Onboarding = Some false }, Cmd.none
         | FinishOnboarding -> state, Cmd.none
-        | ShowLibrary -> { state with ShowLibrary = true }, Cmd.none
+        | ShowLibrary ->
+            let library, _ = Library.update Library.HideOptions state.Library
+            { state with ShowLibrary = true; Library = library; PendingProjectOpen = false }, Cmd.none
         | ChatGptMsg message ->
             let chatGpt, effect = ChatGpt.update message state.ChatGpt
             { state with ChatGpt = chatGpt }, chatGptCommand http navigation effect
@@ -407,7 +410,19 @@ module private Ui =
             let onboarding =
                 if state.Onboarding.IsNone && projects.HasLoaded then Some projects.Snapshot.Projects.IsEmpty
                 else state.Onboarding
-            let state = { state with Projects = projects; Onboarding = onboarding }
+            let showLibrary =
+                match message with
+                | Select id when state.Projects.Busy.IsNone && state.Projects.Snapshot.Active = Some id -> false
+                | Selected (Ok ()) when state.Projects.Busy = Some Selecting && state.PendingProjectOpen -> false
+                | _ -> state.ShowLibrary
+            let pendingProjectOpen =
+                // A selection response may update the active project, but may
+                // navigate only while its original open intent is still current.
+                match message, effect with
+                | _, Some (SendSelect _) -> true
+                | Selected _, _ when state.Projects.Busy = Some Selecting -> false
+                | _ -> state.PendingProjectOpen
+            let state = { state with Projects = projects; Onboarding = onboarding; ShowLibrary = showLibrary; PendingProjectOpen = pendingProjectOpen }
             let projectCommand = effect |> Option.map (command http >> Cmd.map ProjectsMsg) |> Option.defaultValue Cmd.none
             // The page's Refresh button also reloads both library lists, so a
             // failed load can be retried.
@@ -538,29 +553,39 @@ module private Ui =
                                     forEach (library.Associations |> List.filter (fun association -> association.Role = role)) <| fun association ->
                                         li {
                                             attr.``class`` (if not showLibrary && library.Opened = Some association.Document.Id then "selected" else "")
-                                            span { text association.Document.FileName }
+                                            button {
+                                                attr.``type`` "button"
+                                                attr.``class`` "item-open"
+                                                "aria-current" => (if not showLibrary && library.Opened = Some association.Document.Id then "true" else "false")
+                                                "aria-expanded" => (if library.Options = Some association.Document.Id then "true" else "false")
+                                                on.click (fun _ ->
+                                                    if not showLibrary && library.Opened = Some association.Document.Id then
+                                                        dispatch (Library.RevealOptions association.Document.Id)
+                                                    else dispatch (Library.OpenDocument association.Document.Id))
+                                                text association.Document.FileName
+                                            }
                                             small { text (Texts.pageCount association.Document.PageCount) }
                                             summaryMarker (SummaryStatus.documentStatus statuses project association.Document.Id)
                                             strong { attr.``class`` "role"; text (roleLabel association.Role) }
-                                            button {
-                                                attr.``type`` "button"
-                                                "aria-current" => (if not showLibrary && library.Opened = Some association.Document.Id then "true" else "false")
-                                                on.click (fun _ -> dispatch (Library.OpenDocument association.Document.Id))
-                                                text Texts.openDocument
-                                            }
-                                            button {
-                                                attr.``type`` "button"
-                                                attr.disabled (busy || library.ChangingRole.IsSome)
-                                                let role = if association.Role = FocusedSource then ReferenceSource else FocusedSource
-                                                on.click (fun _ -> dispatch (Library.ChangeRole (association.Document.Id, role)))
-                                                text (if role = FocusedSource then Texts.makeFocused else Texts.makeReference)
-                                            }
-                                            button {
-                                                attr.``type`` "button"
-                                                attr.disabled busy
-                                                on.click (fun _ -> dispatch (Library.Remove association.Document.Id))
-                                                text Texts.remove
-                                            }
+                                            cond (library.Options = Some association.Document.Id) <| function
+                                                | true ->
+                                                    div {
+                                                        attr.``class`` "item-options"
+                                                        button {
+                                                            attr.``type`` "button"
+                                                            attr.disabled (busy || library.ChangingRole.IsSome)
+                                                            let role = if association.Role = FocusedSource then ReferenceSource else FocusedSource
+                                                            on.click (fun _ -> dispatch (Library.ChangeRole (association.Document.Id, role)))
+                                                            text (if role = FocusedSource then Texts.makeFocused else Texts.makeReference)
+                                                        }
+                                                        button {
+                                                            attr.``type`` "button"
+                                                            attr.disabled busy
+                                                            on.click (fun _ -> dispatch (Library.Remove association.Document.Id))
+                                                            text Texts.remove
+                                                        }
+                                                    }
+                                                | false -> empty ()
                                         }
                                 }
                             }
@@ -989,7 +1014,14 @@ module private Ui =
                                     li {
                                         attr.``class`` (if model.Snapshot.Active = Some project.Id then "selected" else "")
                                         "aria-current" => (if model.Snapshot.Active = Some project.Id then "true" else "false")
-                                        span { attr.``class`` "project-name"; text project.Name }
+                                        button {
+                                            attr.``type`` "button"
+                                            attr.``class`` "project-name item-open"
+                                            attr.disabled busy
+                                            "aria-expanded" => (if model.Options = Some project.Id then "true" else "false")
+                                            on.click (fun _ -> dispatch (Select project.Id))
+                                            text project.Name
+                                        }
                                         div {
                                             attr.``class`` "project-metadata"
                                             summaryMarker (SummaryStatus.projectStatus state.Statuses.Entries project.Id)
@@ -998,8 +1030,15 @@ module private Ui =
                                                     cond (state.Library.HasLoadedProject && state.Library.Project = Some project.Id) <| function
                                                         | true -> small { attr.``class`` "project-count"; text (string state.Library.Associations.Length) }
                                                         | false -> empty ()
-                                                | false -> button { attr.``type`` "button"; attr.disabled busy; on.click (fun _ -> dispatch (Select project.Id)); text Texts.select }
+                                                | false -> empty ()
                                         }
+                                        cond (model.Options = Some project.Id) <| function
+                                            | true ->
+                                                div {
+                                                    attr.``class`` "item-options"
+                                                    button { attr.``type`` "button"; attr.disabled busy; on.click (fun _ -> dispatch Reload); text Texts.refresh }
+                                                }
+                                            | false -> empty ()
                                     }
                             }
                             button { attr.``type`` "button"; attr.disabled busy; on.click (fun _ -> dispatch Reload); text Texts.refresh }
@@ -1095,7 +1134,7 @@ type App() =
                 let target = UriBuilder(entryUri)
                 target.Host <- "127.0.0.1"
                 target.Path <- "/index.html"
-                { Projects = { initial with Busy = Some Loading }; Library = Library.initial; Summary = Summary.initial; ChatGpt = ChatGpt.initial; Statuses = SummaryStatus.initialStatuses; ShowLibrary = false; Onboarding = None },
+                { Projects = { initial with Busy = Some Loading }; Library = Library.initial; Summary = Summary.initial; ChatGpt = ChatGpt.initial; Statuses = SummaryStatus.initialStatuses; ShowLibrary = false; PendingProjectOpen = false; Onboarding = None },
                 Cmd.ofEffect (fun _ -> this.Navigation.NavigateTo(target.Uri.ToString(), forceLoad = true, replace = true))
             else
                 let library, libraryEffect = Library.update Library.LoadLibrary Library.initial
@@ -1107,7 +1146,7 @@ type App() =
                 let chatGpt, chatGptEffect = ChatGpt.update ChatGpt.Load ChatGpt.initial
                 let statuses, statusEffect = SummaryStatus.updateStatuses SummaryStatus.Refresh SummaryStatus.initialStatuses
                 let chatGpt, _ = ChatGpt.update (ChatGpt.Returned returned) chatGpt
-                { Projects = { initial with Busy = Some Loading }; Library = library; Summary = Summary.initial; ChatGpt = chatGpt; Statuses = statuses; ShowLibrary = false; Onboarding = remembered },
+                { Projects = { initial with Busy = Some Loading }; Library = library; Summary = Summary.initial; ChatGpt = chatGpt; Statuses = statuses; ShowLibrary = false; PendingProjectOpen = false; Onboarding = remembered },
                 Cmd.batch [ Ui.command http Fetch |> Cmd.map ProjectsMsg
                             Ui.chatGptCommand http this.Navigation chatGptEffect
                             Ui.statusCommand http statusEffect

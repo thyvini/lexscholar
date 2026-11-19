@@ -9,6 +9,10 @@
 
 Decisions for [plan.md](plan.md). Each has the decision, why, and the alternatives considered (constitution VI). The look comes from [mockups/README.md](mockups/README.md).
 
+## R13. Name activation and existing inline options (T019, $156)
+
+Owner-approved direction: clicking an item opens it; clicking the already-open item reveals options. Use native buttons for project/source names, not click handlers on list items, so keyboard activation and focus work without recreating control semantics. Keep options inline and report their presence with `aria-expanded`; no popup/menu keyboard protocol is needed. Source options reuse type change/removal; projects offer only the existing refresh action because rename/delete workflows do not exist. Separate source-list `Abrir` is removed; main-view `Abrir PDF` is unchanged. Option identity lives alongside the existing opened/active identity and clears on navigation/removal; no new storage, API or mutation workflow.
+
 ## R11. Consistent summary typography and PDF control (T017, $154)
 
 - **Decision**: summary points and their citations use the same Inter stack as the interface. This owner clarification supersedes the serif points in screen 06 and the mockup README, without changing onboarding typography. Keep citations italic, underlined and accent-colored.

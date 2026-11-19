@@ -8,6 +8,20 @@ let step msg model = update msg model
 let id = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 let snapshot = { Projects = [ { Id = id; Name = "First" } ]; Active = Some id }
 
+[<Fact; Trait("Task", "T019")>]
+let ``active project reveals existing options without selecting again and busy selection is guarded`` () =
+    let active = { initial with Snapshot = snapshot; HasLoaded = true }
+    let options, effect = update (Select id) active
+    Assert.Equal(Some id, options.Options)
+    Assert.True(effect.IsNone)
+    let otherId = Guid.NewGuid()
+    let selecting, effect = update (Select otherId) options
+    Assert.True(selecting.Options.IsNone)
+    Assert.Equal(Some (SendSelect otherId), effect)
+    let ignored, effect = update (Select id) selecting
+    Assert.Equal(selecting, ignored)
+    Assert.True(effect.IsNone)
+
 [<Fact; Trait("Task", "T018")>]
 let ``initial load starts empty and requests projects`` () =
     let model, effect = step Reload initial

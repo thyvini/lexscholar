@@ -35,7 +35,10 @@ let openApp (browser: IBrowser) (harness: TestHarness) = task {
     return page
 }
 
-let button (scope: ILocator) (name: string) = scope.GetByRole(AriaRole.Button, LocatorGetByRoleOptions(Name = name, Exact = true))
+// Older journeys describe the action; the row's name is now its sole open control.
+let button (scope: ILocator) (name: string) =
+    if name = Texts.openDocument || name = Texts.select then scope.Locator("button.item-open")
+    else scope.GetByRole(AriaRole.Button, LocatorGetByRoleOptions(Name = name, Exact = true))
 let link (scope: ILocator) (name: string) = scope.GetByRole(AriaRole.Link, LocatorGetByRoleOptions(Name = name, Exact = true))
 let region (page: IPage) (name: string) = page.GetByRole(AriaRole.Region, PageGetByRoleOptions(Name = name, Exact = true))
 let listNamed (page: IPage) (name: string) = page.GetByRole(AriaRole.List, PageGetByRoleOptions(Name = name, Exact = true))

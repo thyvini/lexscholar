@@ -38,6 +38,9 @@ body { margin: 0; }
 .document-column .project-documents li > span:first-child { flex-basis: 100%; font-weight: 600; }
 .document-column .project-documents .role { font-size: .75rem; }
 .document-column .project-documents button { font-size: .75rem; padding: .35rem; }
+.projects .item-open, .document-column .project-documents .item-open { display: block; width: 100%; text-align: left; font: inherit; font-weight: 600; color: inherit; background: transparent; border: 0; padding: .25rem; overflow-wrap: anywhere; }
+.item-open:hover { text-decoration: underline; }
+.item-options { display: flex; flex-wrap: wrap; gap: .4rem; width: 100%; }
 .summary-marker { color: var(--success); }
 @media (max-width: 900px) { .workspace { grid-template-columns: 180px 240px minmax(300px, 1fr); } .main-column { padding: 1rem; } }
 h1 { margin-bottom: .15rem; }

@@ -29,7 +29,8 @@ let private createProject (page: IPage) (name: string) = task {
 let private select (page: IPage) (name: string) = task {
     let row = page.Locator("ul.projects li").Filter(LocatorFilterOptions(HasText = name))
     do! Ui.click (Ui.button row Texts.select)
-    do! Assertions.Expect(row).ToHaveClassAsync("selected") }
+    do! Assertions.Expect(row).ToHaveClassAsync("selected")
+    do! Ui.click (Ui.button (page.Locator("body")) Texts.library) }
 
 let private importFile (page: IPage) (name: string) = task {
     let input = page.GetByLabel(Texts.importPdf)
@@ -45,8 +46,13 @@ let private addToProject (page: IPage) (name: string) (role: string) = task {
     do! (libraryRow page name).GetByRole(AriaRole.Button, LocatorGetByRoleOptions(Name = (if role = Texts.focusedSource then Texts.addFocused else Texts.addReference))).ClickAsync()
     do! Assertions.Expect(projectRow page name).ToContainTextAsync(role) }
 
-let private remove (page: IPage) (name: string) =
-    (projectRow page name).GetByRole(AriaRole.Button, LocatorGetByRoleOptions(Name = Texts.remove)).ClickAsync()
+let private remove (page: IPage) (name: string) = task {
+    let row = projectRow page name
+    do! Ui.click (Ui.button row Texts.openDocument)
+    do! Ui.click (Ui.button row Texts.openDocument)
+    do! (projectRow page name).GetByRole(AriaRole.Button, LocatorGetByRoleOptions(Name = Texts.remove)).ClickAsync()
+    do! Assertions.Expect(row).ToHaveCountAsync(0)
+    do! Ui.click (Ui.button (page.Locator("body")) Texts.library) }
 
 let private noProjectDocuments (page: IPage) = page.GetByText(Texts.noDocuments)
 
@@ -161,7 +167,7 @@ let ``workspace groups sources and opens the library in the main column`` (brows
         do! Assertions.Expect(page.Locator(".project-count")).ToHaveTextAsync("2")
         do! Assertions.Expect(page.Locator(".document-column")).ToContainTextAsync(Texts.documentCount 2)
         do! Assertions.Expect(page.Locator(".library-count")).ToHaveTextAsync("2")
-        do! (projectRow page "valid.pdf").GetByRole(AriaRole.Button, LocatorGetByRoleOptions(Name = Texts.openDocument, Exact = true)).ClickAsync()
+        do! Ui.click (Ui.button (projectRow page "valid.pdf") Texts.openDocument)
         do! Assertions.Expect(page.GetByTestId("main").GetByRole(AriaRole.Heading, LocatorGetByRoleOptions(Name = "valid.pdf", Exact = true))).ToBeVisibleAsync()
         do! Assertions.Expect(page.Locator(".breadcrumb")).ToContainTextAsync("Alpha / valid.pdf")
         do! Ui.click (Ui.button (page.Locator("body")) Texts.library)
