@@ -484,7 +484,7 @@ module private Ui =
                     attr.``class`` "documents"
                     forEach library.Documents <| fun document ->
                         li {
-                            span { text document.FileName; " "; small { text $"({Texts.pageCount document.PageCount})" } }
+                            span { text document.FileName; text Texts.space; small { text (Texts.parenthesizedPageCount document.PageCount) } }
                             // Bolero's cond needs a union or bool, so the checks are nested.
                             cond library.Project <| function
                                 | None -> empty ()
@@ -560,7 +560,7 @@ module private Ui =
 
     /// The context needed to understand and reproduce a summary (FR-008).
     let summaryContext (document: Library.Document) (generated: Summary.Generated) =
-        let generatedAt = generated.GeneratedAt.LocalDateTime.ToString("yyyy-MM-dd HH:mm")
+        let generatedAt = Texts.dateTime generated.GeneratedAt
         let unreadable = if generated.UnreadablePages.IsEmpty then "" else Texts.unreadable (Texts.pages (generated.UnreadablePages |> List.distinct |> List.sort))
         let omitted = if generated.OmittedPoints = 0 then "" else Texts.omittedPoints generated.OmittedPoints
         Texts.covered document.FileName (Texts.pages (generated.PagesCovered |> List.distinct |> List.sort)) + unreadable + Texts.provenance generatedAt generated.Model generated.ServiceHost + omitted
@@ -609,7 +609,7 @@ module private Ui =
             |> List.rev
             |> List.map List.rev
         forEach (List.indexed runs) <| fun (index, run) -> concat {
-            if index > 0 then text ", "
+            if index > 0 then text Texts.citationSeparator
             a {
                 attr.``class`` "citation"
                 attr.href $"{contentUrl}#page={List.head run}"
@@ -642,7 +642,7 @@ module private Ui =
                 forEach generated.Points <| fun point ->
                     li {
                         span { attr.``class`` "point-text"; text point.Text }
-                        " "
+                        text Texts.space
                         citations document.ContentUrl point.Pages
                     }
             }
@@ -774,7 +774,7 @@ module private Ui =
                         cond (failure = Summary.UsageLimitReached) <| function
                             | true -> usageLink Texts.manageUsage
                             | false -> empty ()
-                        " "
+                        text Texts.space
                         button {
                             attr.``type`` "button"
                             attr.``class`` "summary-retry"
@@ -795,7 +795,7 @@ module private Ui =
                 | Summary.ConfirmingDelete generated -> summaryPanel document generated dispatch
                 | _ -> empty ()
             cond (match summary.State with Summary.Idle -> summary.Available.Plan | Summary.Shown generated | Summary.ConfirmingDelete generated -> generated.ServiceHost = "ChatGPT plan" | _ -> false) <| function
-                | true -> span { attr.``class`` "summary-using-plan"; text Texts.usingPlan; text " · "; usageLink Texts.manageUsage }
+                | true -> span { attr.``class`` "summary-using-plan"; text Texts.usingPlan; text Texts.detailSeparator; usageLink Texts.manageUsage }
                 | false -> empty ()
         }
 
@@ -833,14 +833,14 @@ module private Ui =
         let location =
             if state.ShowLibrary then Some Texts.library
             else opened |> Option.map (fun item -> item.Document.FileName)
-        let breadcrumb = [ projectName; location ] |> List.choose id |> String.concat " / "
+        let breadcrumb = [ projectName; location ] |> List.choose id |> String.concat Texts.breadcrumbSeparator
         let dispatch' = dispatch
         let dispatch = ProjectsMsg >> dispatch'
         div {
             attr.``class`` "workspace"
             header {
                 attr.``class`` "top-bar"
-                h1 { "LexScholar" }
+                h1 { text Texts.appName }
                 span {
                     attr.``class`` "breadcrumb"
                     text breadcrumb
@@ -964,7 +964,7 @@ module private Ui =
                             h2 { text document.FileName }
                             a { attr.href document.ContentUrl; "target" => "_blank"; "rel" => "noopener"; text Texts.openPdf }
                         }
-                        p { text $"{Texts.pageCount document.PageCount} · {role} {Texts.inProject} {projectLabel}" }
+                        p { text (Texts.documentDetails document.PageCount role projectLabel) }
                         chatGptAccount state.ChatGpt (ChatGptMsg >> dispatch')
                         summaryView document state.Summary state.ChatGpt (SummaryMsg >> dispatch') (ChatGptMsg >> dispatch')
                     }

@@ -3,6 +3,11 @@ module LexScholar.Client.Texts
 open System
 open System.Globalization
 
+let appName = "LexScholar"
+let space = " "
+let citationSeparator = ", "
+let detailSeparator = " · "
+let breadcrumbSeparator = " / "
 let projects = "Projetos"
 let library = "Biblioteca"
 let focusedSource = "Fonte principal"
@@ -93,6 +98,8 @@ let pages values =
 
 let pageCount n = if n = 1 then "1 página" else $"{n} páginas"
 let documentCount n = if n = 1 then "1 documento" else $"{n} documentos"
+let parenthesizedPageCount n = $"({pageCount n})"
+let documentDetails count role project = $"{pageCount count} · {role} {inProject} {project}"
 let dateTime (value: DateTimeOffset) = value.LocalDateTime.ToString("dd/MM/yyyy HH:mm", CultureInfo.InvariantCulture)
 
 let requestDescription = "Sem instrução, você recebe os pontos principais. Cada ponto cita as páginas de onde vem."
