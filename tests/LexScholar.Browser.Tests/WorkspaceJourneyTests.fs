@@ -9,6 +9,54 @@ open LexScholar.Client
 open LexScholar.Server.Tests
 open LexScholar.Browser.Tests.Ui
 
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T022"); Trait("Category", "Browser")>]
+let ``account disclosure floats without moving the workspace and retains keyboard sign out`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use fake = new FakeOpenAi(ResponsesScript.Completed """{"points":[]}""")
+        use harness = TestHarness.Start(serveClient = true, summaryHandler = fake)
+        let! page = openApp browser harness
+        do! SummaryJourneyTests.arrange page
+        do! signInWithChatGpt page harness fake
+        let header = page.Locator(".top-bar")
+        let details = header.Locator("details")
+        let account = details.Locator("summary")
+        let signOut = button details Texts.signOut
+        do! Assertions.Expect(account).ToHaveAccessibleNameAsync(Texts.account)
+        for width in [ 1440; 1000 ] do
+            do! page.SetViewportSizeAsync(width, 900)
+            do! Assertions.Expect(signOut).ToBeHiddenAsync()
+            let! before = header.BoundingBoxAsync()
+            let! mainBefore = page.GetByTestId("main").BoundingBoxAsync()
+            do! click account
+            do! Assertions.Expect(signOut).ToBeVisibleAsync()
+            let! after = header.BoundingBoxAsync()
+            let! mainAfter = page.GetByTestId("main").BoundingBoxAsync()
+            Assert.True(abs (before.Height - after.Height) < 1.0f, "Opening Conta must not expand the top bar")
+            Assert.Equal(mainBefore.Y, mainAfter.Y)
+            Assert.Equal(mainBefore.Height, mainAfter.Height)
+            let panel = details.Locator(".account-panel")
+            do! Assertions.Expect(panel).ToHaveCSSAsync("position", "absolute")
+            do! Assertions.Expect(panel).ToHaveCSSAsync("background-color", "rgb(255, 255, 255)")
+            do! Assertions.Expect(panel).ToHaveCSSAsync("border-top-width", "1px")
+            let! panelBox = panel.BoundingBoxAsync()
+            let! triggerBox = account.BoundingBoxAsync()
+            Assert.True(panelBox.Y >= triggerBox.Y + triggerBox.Height)
+            Assert.True(abs (panelBox.X + panelBox.Width - triggerBox.X - triggerBox.Width) < 1.0f)
+            let! unobscured = signOut.EvaluateAsync<bool>("element => { const r = element.getBoundingClientRect(); return element.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)); }")
+            Assert.True(unobscured, "The floating sign-out control must be above workspace content")
+            do! account.FocusAsync()
+            do! page.Keyboard.PressAsync("Enter")
+            do! Assertions.Expect(signOut).ToBeHiddenAsync()
+            do! Assertions.Expect(account).ToBeFocusedAsync()
+        do! page.Keyboard.PressAsync("Space")
+        do! Assertions.Expect(signOut).ToBeVisibleAsync()
+        do! page.Keyboard.PressAsync("Tab")
+        do! Assertions.Expect(signOut).ToBeFocusedAsync()
+        do! page.Keyboard.PressAsync("Enter")
+        do! Assertions.Expect(details).ToHaveCountAsync(0)
+        do! Assertions.Expect(header.Locator(".signed-in")).ToHaveCountAsync(0)
+    })
+
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T021"); Trait("Category", "Browser")>]
 let ``unbroken project names keep the PDF control visible and keyboard reachable across widths`` (browserName: string) =
     withBrowser browserName (fun browser -> task {

@@ -18,7 +18,8 @@ body { margin: 0; }
 .signed-in { margin-left: auto; color: var(--success); font-size: .85rem; }
 .top-bar details { position: relative; margin-left: auto; }
 .signed-in + details { margin-left: 0; }
-.top-bar details[open] { padding: .5rem; background: var(--surface); border: 1px solid var(--border); }
+.account-panel { position: absolute; top: calc(100% + .5rem); right: 0; z-index: 10; min-width: 14rem; max-width: calc(100vw - 3rem); box-sizing: border-box; padding: 1rem; background: var(--surface); border: 1px solid var(--border); border-radius: .5rem; box-shadow: 0 8px 24px rgb(0 0 0 / .12); }
+.account-panel p { margin: 0 0 .75rem; overflow-wrap: anywhere; }
 .top-bar summary { cursor: pointer; }
 .project-column, .document-column { padding: 1.25rem .75rem; border-right: 1px solid var(--border); min-width: 0; }
 .project-column { background: var(--sidebar); }

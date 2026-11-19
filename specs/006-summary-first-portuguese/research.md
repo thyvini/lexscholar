@@ -19,6 +19,12 @@ Owner-approved direction: clicking an item opens it; clicking the already-open i
 - **Why**: native modality supplies the top layer, backdrop, background inertness and Escape behavior in both supported browsers. The existing Elmish state still decides whether the dialog exists and whether a request is sent. Scoped styles supply the info note, action order and primary Send without changing other buttons or summary layout. Inter remains the interface font.
 - **Alternatives**: a fixed-position div would need manual background inertness and modal semantics; a component library adds an unnecessary dependency; an `open` attribute alone is nonmodal. Delete confirmation is out of this slice.
 
+## R15. Floating account disclosure (T022)
+
+- **Decision**: retain the native `details`/`summary` account disclosure and wrap only its account name/sign-out contents in an absolutely positioned panel below and right-aligned to the trigger. Move the open-state surface/border/padding from `details` to the panel and give it a stacking level above workspace content.
+- **Why**: in-flow children expanded the entire top bar. This CSS/markup correction preserves native keyboard/accessibility behavior and the guarded sign-out workflow without new client state or scripts.
+- **Alternatives**: a custom ARIA menu adds a different keyboard protocol and needless state; making the whole disclosure absolute would unnecessarily reposition the trigger.
+
 ## R11. Consistent summary typography and PDF control (T017, $154)
 
 - **Decision**: summary points and their citations use the same Inter stack as the interface. This owner clarification supersedes the serif points in screen 06 and the mockup README, without changing onboarding typography. Keep citations italic, underlined and accent-colored.
