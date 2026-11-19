@@ -25,3 +25,13 @@ let ``glossary has the exact prescribed wording`` () =
     Assert.Equal("Gerado para sua revisão. Não verificado.", Texts.generated)
     Assert.Equal("Continuar com o ChatGPT", Texts.signIn)
     Assert.Equal("Usando seu plano ChatGPT", Texts.usingPlan)
+
+[<Fact; Trait("Task", "T009")>]
+let ``project and library failures have Portuguese messages and unknown codes are generic`` () =
+    let libraryFailures = [ Library.NotAPdf; Library.CorruptPdf; Library.EncryptedPdf; Library.TooLarge; Library.TooManyPages; Library.DuplicateAssociation; Library.InvalidRole; Library.NotFound; Library.DocumentNotFound; Library.RequestFailed ]
+    for failure in libraryFailures do Assert.False(System.String.IsNullOrWhiteSpace(FailureTexts.library failure))
+    let projectFailures = [ Projects.InvalidName; Projects.DuplicateName; Projects.NotFound; Projects.RequestFailed ]
+    for failure in projectFailures do Assert.False(System.String.IsNullOrWhiteSpace(FailureTexts.project failure))
+    Assert.Equal("Esse arquivo não é um PDF. Escolha um arquivo PDF.", FailureTexts.library Library.NotAPdf)
+    Assert.Equal(Texts.genericFailure, Library.parseFailure 400 "{\"code\":\"unknown\"}" |> FailureTexts.library)
+    Assert.Equal(Texts.genericFailure, FailureTexts.project Projects.RequestFailed)

@@ -52,6 +52,21 @@ let private expectSelectable (page: IPage) (name: string) =
 let private select (page: IPage) (name: string) =
     Ui.click (Ui.button (row page name) Texts.select)
 
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T009"); Trait("Category", "Browser")>]
+let ``first run introduces the three steps`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use workspace = TemporaryWorkspace.Create()
+        use harness = startHost workspace
+        let! _, page = openApp browser harness
+        do! Assertions.Expect(page.GetByText("Boas-vindas ao LexScholar", PageGetByTextOptions(Exact = true))).ToBeVisibleAsync()
+        do! Assertions.Expect(page.GetByText("Crie seu primeiro projeto", PageGetByTextOptions(Exact = true))).ToBeVisibleAsync()
+        do! Assertions.Expect(page.GetByText("Importe seus PDFs", PageGetByTextOptions(Exact = true))).ToBeVisibleAsync()
+        do! Assertions.Expect(page.GetByText("Entre para gerar resumos", PageGetByTextOptions(Exact = true))).ToBeVisibleAsync()
+        do! Assertions.Expect(page.GetByText("Requer um plano ChatGPT Plus ou Pro.", PageGetByTextOptions(Exact = true))).ToBeVisibleAsync()
+        do! Assertions.Expect(Ui.button (page.Locator("body")) Texts.signIn).ToBeVisibleAsync()
+        do! Ui.click (Ui.button (page.Locator("body")) Texts.choosePdfs)
+        do! Assertions.Expect(page.GetByLabel(Texts.importPdf)).ToBeVisibleAsync() })
+
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T019"); Trait("Task", "T002"); Trait("Category", "Browser")>]
 let ``empty workspace shows the project-list empty state`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
@@ -119,10 +134,10 @@ let ``top bar exposes the signed-in account and sign-out`` (browserName: string)
         do! select page "Alpha"
         do! expectActive page "Alpha"
         do! Ui.click (Ui.button (page.Locator("body")) Texts.library)
-        do! page.GetByLabel("Import a PDF").SetInputFilesAsync(IO.Path.Combine(AppContext.BaseDirectory, "Fixtures", "valid.pdf"))
-        do! Assertions.Expect(page.GetByText("Imported valid.pdf.")).ToBeVisibleAsync()
-        do! Ui.click (Ui.button (page.Locator("ul.documents li")) "Add as Focused Source")
-        do! Ui.click (Ui.button (page.Locator("ul.project-documents li")) "Open")
+        do! page.GetByLabel(Texts.importPdf).SetInputFilesAsync(IO.Path.Combine(AppContext.BaseDirectory, "Fixtures", "valid.pdf"))
+        do! Assertions.Expect(page.GetByText((Texts.imported "valid.pdf"))).ToBeVisibleAsync()
+        do! Ui.click (Ui.button (page.Locator("ul.documents li")) Texts.addFocused)
+        do! Ui.click (Ui.button (page.Locator("ul.project-documents li")) Texts.openDocument)
         do! Assertions.Expect(page.GetByTestId("main").GetByRole(AriaRole.Heading, LocatorGetByRoleOptions(Name = "valid.pdf", Exact = true))).ToBeVisibleAsync()
         do! Ui.signInWithChatGpt page harness fake
         do! Assertions.Expect(bar.GetByText(Texts.signedIn, LocatorGetByTextOptions(Exact = true))).ToBeVisibleAsync()

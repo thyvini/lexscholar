@@ -1,5 +1,6 @@
 module LexScholar.Browser.Tests.ChatGptJourneyTests
 
+open LexScholar.Client
 open System
 open System.IO
 open System.Text.RegularExpressions
@@ -38,7 +39,7 @@ let private usageUrl = "https://chatgpt.com/settings/usage"
 
 let private openDocument (page: IPage) (fileName: string) = task {
     let row = page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = fileName))
-    do! click (button row "Open")
+    do! click (button row Texts.openDocument)
     do! Assertions.Expect(page.GetByTestId("main").Locator("iframe")).ToHaveCountAsync(0) }
 
 /// Opens article-en.pdf as a project document of an active project.
@@ -49,17 +50,17 @@ let private arrange (page: IPage) = task {
     do! click (button row LexScholar.Client.Texts.select)
     do! Assertions.Expect(row.Locator("strong.active")).ToHaveTextAsync(LexScholar.Client.Texts.active)
     do! click (button (page.Locator("body")) LexScholar.Client.Texts.library)
-    let input = page.GetByLabel("Import a PDF")
+    let input = page.GetByLabel(Texts.importPdf)
     do! Assertions.Expect(input).ToBeVisibleAsync()
     do! input.SetInputFilesAsync(Path.Combine(AppContext.BaseDirectory, "Fixtures", "summary", "article-en.pdf"))
-    do! Assertions.Expect(page.GetByText("Imported article-en.pdf.")).ToBeVisibleAsync()
-    do! click (button (page.Locator("ul.documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))) "Add as Focused Source")
-    do! Assertions.Expect(page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))).ToContainTextAsync("Focused Source")
+    do! Assertions.Expect(page.GetByText((Texts.imported "article-en.pdf"))).ToBeVisibleAsync()
+    do! click (button (page.Locator("ul.documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))) Texts.addFocused)
+    do! Assertions.Expect(page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))).ToContainTextAsync(Texts.focusedSource)
     // A second document: a finished summary answers a repeated ask of the same document (F004), so the usage limit needs its own.
     do! input.SetInputFilesAsync(Path.Combine(AppContext.BaseDirectory, "Fixtures", "summary", "article-pt.pdf"))
-    do! Assertions.Expect(page.GetByText("Imported article-pt.pdf.")).ToBeVisibleAsync()
-    do! click (button (page.Locator("ul.documents li").Filter(LocatorFilterOptions(HasText = "article-pt.pdf"))) "Add as Focused Source")
-    do! Assertions.Expect(page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = "article-pt.pdf"))).ToContainTextAsync("Focused Source")
+    do! Assertions.Expect(page.GetByText((Texts.imported "article-pt.pdf"))).ToBeVisibleAsync()
+    do! click (button (page.Locator("ul.documents li").Filter(LocatorFilterOptions(HasText = "article-pt.pdf"))) Texts.addFocused)
+    do! Assertions.Expect(page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = "article-pt.pdf"))).ToContainTextAsync(Texts.focusedSource)
     do! openDocument page "article-en.pdf" }
 
 let private summarize (page: IPage) = click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = LexScholar.Client.Texts.summarize, Exact = true)))

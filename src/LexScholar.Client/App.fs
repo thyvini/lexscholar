@@ -440,29 +440,9 @@ module private Ui =
         let summary, effects = Summary.followOpened state.Library state.Summary
         { state with Summary = summary }, Cmd.batch [ command; yield! effects |> List.map (Some >> summaryCommand http) ]
 
-    let errorText = function
-        | InvalidName -> "Enter a project name that is not blank."
-        | DuplicateName -> "A project with this name already exists."
-        | NotFound -> "That project is no longer available. Refresh the list and try again."
-        | RequestFailed -> "The request failed. Please try again."
-
-    let libraryErrorText = function
-        | Library.NotAPdf -> "That file is not a PDF. Choose a PDF file."
-        | Library.CorruptPdf -> "That PDF is damaged or cannot be read."
-        | Library.EncryptedPdf -> "Encrypted or password-protected PDFs cannot be imported."
-        | Library.TooLarge -> "That PDF is larger than the configured size limit."
-        | Library.TooManyPages -> "That PDF has more pages than the configured page limit."
-        | Library.DuplicateAssociation -> "That document is already in this project."
-        | Library.InvalidRole -> "Choose Focused Source or Reference Source."
-        | Library.NotFound -> "That project or document is no longer available. Refresh and try again."
-        | Library.DocumentNotFound -> "That document is no longer in the library. Refresh and try again."
-        | Library.RequestFailed -> "The request failed. Please try again."
-
     let roleLabel = function
-        | FocusedSource -> "Focused Source"
-        | ReferenceSource -> "Reference Source"
-
-    let pages count = if count = 1 then "1 page" else $"{count} pages"
+        | FocusedSource -> Texts.focusedSource
+        | ReferenceSource -> Texts.referenceSource
 
     /// The marker of a running, finished or failed summary (FR-008); nothing when there is none.
     let summaryMarker (status: SummaryStatus.Status option) =
@@ -479,7 +459,7 @@ module private Ui =
             section {
                 attr.``class`` "card"
                 h2 { text Texts.library }
-                label { "for" => "library-file"; "Import a PDF" }
+                label { "for" => "library-file"; text Texts.importPdf }
                 comp<InputFile> {
                     "id" => "library-file"
                     "accept" => ".pdf,application/pdf"
@@ -487,30 +467,30 @@ module private Ui =
                     attr.callback "OnChange" (fun (event: InputFileChangeEventArgs) -> dispatch (Library.Upload event.File))
                 }
                 cond library.Busy <| function
-                    | Some Library.Uploading -> p { "role" => "status"; "Importing…" }
+                    | Some Library.Uploading -> p { "role" => "status"; text Texts.importing }
                     | _ -> empty ()
                 cond library.Notice <| function
-                    | Some (Library.Imported document) -> p { "role" => "status"; text $"Imported {document.FileName}." }
+                    | Some (Library.Imported document) -> p { "role" => "status"; text (Texts.imported document.FileName) }
                     | Some (Library.Reused document) ->
-                        p { "role" => "status"; text $"Already in the library: {document.FileName}. The existing document was reused." }
+                        p { "role" => "status"; text (Texts.reused document.FileName) }
                     | None -> empty ()
                 cond library.Error <| function
-                    | Some error -> p { attr.``class`` "error"; "role" => "alert"; text (libraryErrorText error) }
+                    | Some error -> p { attr.``class`` "error"; "role" => "alert"; text (FailureTexts.library error) }
                     | None -> empty ()
                 cond (library.HasLoadedLibrary && library.Documents.IsEmpty) <| function
-                    | true -> p { "No documents in the library yet." }
+                    | true -> p { text Texts.emptyLibrary }
                     | false -> empty ()
                 ul {
                     attr.``class`` "documents"
                     forEach library.Documents <| fun document ->
                         li {
-                            span { text document.FileName; " "; small { text $"({pages document.PageCount})" } }
+                            span { text document.FileName; " "; small { text $"({Texts.pageCount document.PageCount})" } }
                             // Bolero's cond needs a union or bool, so the checks are nested.
                             cond library.Project <| function
                                 | None -> empty ()
                                 | Some _ ->
                                     cond (associated.Contains document.Id) <| function
-                                        | true -> small { "In this project" }
+                                        | true -> small { text Texts.inThisProject }
                                         | false ->
                                             span {
                                                 attr.``class`` "actions"
@@ -519,7 +499,7 @@ module private Ui =
                                                         attr.``type`` "button"
                                                         attr.disabled busy
                                                         on.click (fun _ -> dispatch (Library.Associate (document.Id, role)))
-                                                        text $"Add as {roleLabel role}"
+                                                        text (if role = FocusedSource then Texts.addFocused else Texts.addReference)
                                                     }
                                             }
                         }
@@ -536,7 +516,7 @@ module private Ui =
                 | Some project ->
                     concat {
                         cond library.LoadingProject <| function
-                            | true -> p { "role" => "status"; "Loading project documents…" }
+                            | true -> p { "role" => "status"; text Texts.loadingDocuments }
                             | false -> empty ()
                         cond (library.HasLoadedProject && library.Associations.IsEmpty) <| function
                             | true -> p { text Texts.noDocuments }
@@ -557,7 +537,7 @@ module private Ui =
                                             button {
                                                 attr.``type`` "button"
                                                 on.click (fun _ -> dispatch (Library.OpenDocument association.Document.Id))
-                                                "Open"
+                                                text Texts.openDocument
                                             }
                                             button {
                                                 attr.``type`` "button"
@@ -570,7 +550,7 @@ module private Ui =
                                                 attr.``type`` "button"
                                                 attr.disabled busy
                                                 on.click (fun _ -> dispatch (Library.Remove association.Document.Id))
-                                                "Remove"
+                                                text Texts.remove
                                             }
                                         }
                                 }
@@ -832,6 +812,28 @@ module private Ui =
                 | false -> empty ()
         }
 
+    let private projectForm (model: Projects.Model) dispatch =
+        let busy = model.Busy.IsSome
+        section {
+            attr.``class`` "create-project"
+            h2 { text Texts.createProject }
+            form {
+                on.submit (fun _ -> dispatch Create)
+                "onsubmit:preventDefault" => true
+                label { "for" => "project-name"; text Texts.projectName }
+                input {
+                    attr.id "project-name"
+                    attr.``type`` "text"
+                    bind.input.string model.Name (dispatch << NameChanged)
+                    attr.disabled busy
+                }
+                button { attr.``type`` "submit"; attr.disabled busy; text Texts.createProject }
+            }
+            cond model.Error <| function
+                | Some error -> p { attr.``class`` "error"; "role" => "alert"; text (FailureTexts.project error) }
+                | None -> empty ()
+        }
+
     let view (state: State) dispatch =
         let model = state.Projects
         let busy = model.Busy.IsSome
@@ -875,30 +877,14 @@ module private Ui =
             }
             aside {
             attr.``class`` "project-column"
-            section {
-                attr.``class`` "create-project"
-                h2 { text Texts.createProject }
-                form {
-                    on.submit (fun _ -> dispatch Create)
-                    "onsubmit:preventDefault" => true
-                    label { "for" => "project-name"; text Texts.projectName }
-                    input {
-                        attr.id "project-name"
-                        attr.``type`` "text"
-                        bind.input.string model.Name (dispatch << NameChanged)
-                        attr.disabled busy
-                    }
-                    button { attr.``type`` "submit"; attr.disabled busy; text Texts.createProject }
-                }
-                cond model.Error <| function
-                    | Some error -> p { attr.``class`` "error"; "role" => "alert"; text (errorText error) }
-                    | None -> empty ()
-            }
+            cond (model.HasLoaded && model.Snapshot.Projects.IsEmpty && not state.ShowLibrary) <| function
+                | true -> empty ()
+                | false -> projectForm model dispatch
             section {
                 h2 { text Texts.projects }
                 cond model.Busy <| function
-                    | Some Loading -> p { "role" => "status"; "Loading projects…" }
-                    | Some Selecting -> p { "role" => "status"; "Selecting project…" }
+                    | Some Loading -> p { "role" => "status"; text Texts.loadingProjects }
+                    | Some Selecting -> p { "role" => "status"; text Texts.selectingProject }
                     | _ -> empty ()
                 cond (model.HasLoaded && model.Snapshot.Projects.IsEmpty && model.Busy <> Some Loading) <| function
                     | true -> p { text Texts.noProjects }
@@ -946,6 +932,22 @@ module private Ui =
             "data-testid" => "main"
             attr.``class`` "main-column"
             chatGptBanner state.ChatGpt (ChatGptMsg >> dispatch')
+            cond (model.HasLoaded && model.Snapshot.Projects.IsEmpty && not state.ShowLibrary) <| function
+                | true ->
+                    section {
+                        h2 { text Texts.welcome }
+                        h3 { text Texts.firstProject }
+                        projectForm model dispatch
+                        h3 { text Texts.importPdfs }
+                        button { attr.``type`` "button"; on.click (fun _ -> dispatch' ShowLibrary); text Texts.choosePdfs }
+                        h3 { text Texts.signInForSummaries }
+                        cond state.ChatGpt.Status <| function
+                            | ChatGpt.SignedOut -> signInButton false (ChatGptMsg >> dispatch')
+                            | ChatGpt.Starting -> signInButton true (ChatGptMsg >> dispatch')
+                            | _ -> empty ()
+                        p { text Texts.planRequired }
+                    }
+                | false -> empty ()
             cond state.ShowLibrary <| function
                 | true -> libraryView state.Library (LibraryMsg >> dispatch')
                 | false -> empty ()
@@ -953,11 +955,11 @@ module private Ui =
                 | true -> p { attr.``class`` "empty-main"; text Texts.chooseDocument }
                 | false -> empty ()
             cond state.Library.RoleError <| function
-                | Some _ ->
+                | Some failure ->
                     p {
                         "role" => "alert"
                         attr.``class`` "error"
-                        text Texts.genericFailure
+                        text (FailureTexts.library failure)
                     }
                 | None -> empty ()
             cond (if state.ShowLibrary then None else opened) <| function

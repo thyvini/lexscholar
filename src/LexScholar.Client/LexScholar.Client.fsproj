@@ -10,6 +10,7 @@
     <Compile Include="Summary.fs" />
     <Compile Include="ChatGpt.fs" />
     <Compile Include="SummaryStatus.fs" />
+    <Compile Include="FailureTexts.fs" />
     <Compile Include="App.fs" />
     <Compile Include="Program.fs" />
     <ProjectReference Include="../LexScholar.Domain/LexScholar.Domain.fsproj" />
