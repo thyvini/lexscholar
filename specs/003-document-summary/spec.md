@@ -1,6 +1,6 @@
 # Feature Specification: Document Summary with Page References
 
-> Historical language rule superseded by [F006 FR-015](../006-summary-first-portuguese/spec.md) ($153, T016): every new summary is in Brazilian Portuguese regardless of source language. The source/majority-language wording below records the original F003 decision, not the current requirement. Existing stored summaries remain unchanged.
+> Historical language rule superseded by [F006 FR-016](../006-summary-first-portuguese/spec.md) ($153, T016): every new summary is in Brazilian Portuguese regardless of source language. The source/majority-language wording below records the original F003 decision, not the current requirement. Existing stored summaries remain unchanged.
 
 **Feature Branch**: `docs/f003-document-summary`
 
