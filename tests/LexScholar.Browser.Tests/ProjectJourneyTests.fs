@@ -43,14 +43,31 @@ let private createProject (page: IPage) (name: string) = task {
 
 let private expectActive (page: IPage) (name: string) = task {
     do! Assertions.Expect(row page name).ToHaveCountAsync(1)
-    do! Assertions.Expect((row page name).Locator("strong.active")).ToHaveTextAsync(Texts.active)
-    do! Assertions.Expect(page.Locator("strong.active")).ToHaveCountAsync(1) }
+    do! Assertions.Expect(row page name).ToHaveClassAsync("selected")
+    do! Assertions.Expect(page.Locator("ul.projects li.selected")).ToHaveCountAsync(1) }
 
 let private expectSelectable (page: IPage) (name: string) =
     Assertions.Expect(Ui.button (row page name) Texts.select).ToBeVisibleAsync()
 
 let private select (page: IPage) (name: string) =
     Ui.click (Ui.button (row page name) Texts.select)
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T015"); Trait("Category", "Browser")>]
+let ``active project title has its own line above metadata`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use workspace = TemporaryWorkspace.Create()
+        use harness = startHost workspace
+        let! _, page = openApp browser harness
+        do! createProject page "Dissertação"
+        do! select page "Dissertação"
+        let project = row page "Dissertação"
+        do! Assertions.Expect(project.Locator(".project-name")).ToHaveTextAsync("Dissertação")
+        do! Assertions.Expect(project.Locator(".project-metadata .project-count")).ToHaveTextAsync("0")
+        do! Assertions.Expect(project.Locator("strong.active")).ToHaveCountAsync(0)
+        let! title = project.Locator(".project-name").BoundingBoxAsync()
+        let! metadata = project.Locator(".project-metadata").BoundingBoxAsync()
+        Assert.True(metadata.Y >= title.Y + title.Height)
+    })
 
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T009"); Trait("Category", "Browser")>]
 let ``first run introduces the three steps`` (browserName: string) =
@@ -81,7 +98,7 @@ let ``empty workspace shows the project-list empty state`` (browserName: string)
         let! _, page = openApp browser harness
         do! Assertions.Expect(emptyState page).ToBeVisibleAsync()
         do! Assertions.Expect(page.Locator("ul.projects li")).ToHaveCountAsync(0)
-        do! Assertions.Expect(page.Locator("strong.active")).ToHaveCountAsync(0) })
+        do! Assertions.Expect(page.Locator("ul.projects li.selected")).ToHaveCountAsync(0) })
 
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T019"); Trait("Task", "T002"); Trait("Category", "Browser")>]
 let ``creating and selecting projects shows the active project`` (browserName: string) =
@@ -95,7 +112,7 @@ let ``creating and selecting projects shows the active project`` (browserName: s
         do! Assertions.Expect(page.Locator("ul.projects li")).ToHaveCountAsync(2)
         do! Assertions.Expect(emptyState page).ToHaveCountAsync(0)
         // Creation does not activate a project.
-        do! Assertions.Expect(page.Locator("strong.active")).ToHaveCountAsync(0)
+        do! Assertions.Expect(page.Locator("ul.projects li.selected")).ToHaveCountAsync(0)
         do! expectSelectable page "Alpha"
         do! expectSelectable page "Beta"
 

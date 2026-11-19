@@ -40,7 +40,7 @@ let ``fonts are served locally and fake sign-in shows the current account`` (bro
         do! page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = Texts.createProject)).ClickAsync()
         let project = page.Locator("ul.projects li").Filter(LocatorFilterOptions(HasText = "Alpha"))
         do! click (button project Texts.select)
-        do! Assertions.Expect(project.Locator("strong.active")).ToHaveTextAsync(Texts.active)
+        do! Assertions.Expect(project).ToHaveClassAsync("selected")
         do! click (button (page.Locator("body")) Texts.library)
         do! Assertions.Expect(page.GetByLabel(Texts.importPdf)).ToBeVisibleAsync()
         do! page.GetByLabel(Texts.importPdf).SetInputFilesAsync(Path.Combine(AppContext.BaseDirectory, "Fixtures", "valid.pdf"))

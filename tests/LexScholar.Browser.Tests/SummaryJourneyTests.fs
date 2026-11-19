@@ -48,7 +48,7 @@ let arrange (page: IPage) = task {
     do! page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = LexScholar.Client.Texts.createProject)).ClickAsync()
     let row = page.Locator("ul.projects li").Filter(LocatorFilterOptions(HasText = "Alpha"))
     do! click (button row LexScholar.Client.Texts.select)
-    do! Assertions.Expect(row.Locator("strong.active")).ToHaveTextAsync(LexScholar.Client.Texts.active)
+    do! Assertions.Expect(row).ToHaveClassAsync("selected")
     do! click (button (page.Locator("body")) LexScholar.Client.Texts.library)
     let input = page.GetByLabel(Texts.importPdf)
     do! Assertions.Expect(input).ToBeVisibleAsync()
