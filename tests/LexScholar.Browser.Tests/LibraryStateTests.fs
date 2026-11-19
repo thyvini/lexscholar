@@ -30,9 +30,17 @@ let ``source options follow only the opened association and clear on navigation 
     Assert.Equal(Some paper.Id, opened.Opened)
     Assert.True(opened.Options.IsNone)
     Assert.True(effect.IsNone)
-    let options, effect = update (OpenDocument paper.Id) opened
+    let options, effect = update (RevealOptions paper.Id) opened
     Assert.Equal(Some paper.Id, options.Options)
     Assert.True(effect.IsNone)
+    let hidden, effect = update HideOptions options
+    Assert.Equal(Some paper.Id, hidden.Opened)
+    Assert.True(hidden.Options.IsNone)
+    Assert.True(effect.IsNone)
+    let reopened, _ = update (OpenDocument paper.Id) options
+    Assert.True(reopened.Options.IsNone)
+    let wrongOptions, _ = update (RevealOptions notes.Id) opened
+    Assert.Equal(opened, wrongOptions)
     let invalid, _ = update (OpenDocument (Guid.NewGuid())) options
     Assert.Equal(options, invalid)
     let other, _ = update (OpenDocument notes.Id) options

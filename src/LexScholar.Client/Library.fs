@@ -65,6 +65,8 @@ type Message =
     /// Reloads only the active project's documents, for example after a role change.
     | ReloadProject
     | OpenDocument of Guid
+    | RevealOptions of Guid
+    | HideOptions
     | ChangeRole of Guid * DocumentRole
     | RoleChanged of Guid * Result<unit, Failure>
     | Upload of IBrowserFile
@@ -180,7 +182,10 @@ let update (message: Message) (model: Model) : Model * Effect option =
         let model, request = nextProject model
         model, Some (FetchProject (model.Project.Value, request))
     | OpenDocument id when model.Project.IsSome && (model.Associations |> List.exists (fun item -> item.Document.Id = id)) ->
-        { model with Opened = Some id; Options = (if model.Opened = Some id then Some id else None); RoleError = None }, None
+        { model with Opened = Some id; Options = None; RoleError = None }, None
+    | RevealOptions id when model.Opened = Some id && (model.Associations |> List.exists (fun item -> item.Document.Id = id)) ->
+        { model with Options = Some id }, None
+    | HideOptions -> { model with Options = None }, None
     | ChangeRole (id, role) when model.Project.IsSome && model.ChangingRole.IsNone ->
         { model with ChangingRole = Some id; RoleStale = false; RoleError = None },
         Some (SendRole (model.Project.Value, id, role))

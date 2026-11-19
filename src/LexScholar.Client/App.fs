@@ -381,7 +381,9 @@ module private Ui =
         | FinishOnboarding when state.Projects.HasLoaded && state.Projects.Busy.IsNone && state.Library.Busy.IsNone && state.ChatGpt.Status <> ChatGpt.Starting ->
             { state with Onboarding = Some false }, Cmd.none
         | FinishOnboarding -> state, Cmd.none
-        | ShowLibrary -> { state with ShowLibrary = true }, Cmd.none
+        | ShowLibrary ->
+            let library, _ = Library.update Library.HideOptions state.Library
+            { state with ShowLibrary = true; Library = library }, Cmd.none
         | ChatGptMsg message ->
             let chatGpt, effect = ChatGpt.update message state.ChatGpt
             { state with ChatGpt = chatGpt }, chatGptCommand http navigation effect
@@ -409,7 +411,8 @@ module private Ui =
                 else state.Onboarding
             let showLibrary =
                 match message with
-                | Select _ when state.Projects.Busy.IsNone -> false
+                | Select id when state.Projects.Busy.IsNone && state.Projects.Snapshot.Active = Some id -> false
+                | Selected (Ok ()) when state.Projects.Busy = Some Selecting -> false
                 | _ -> state.ShowLibrary
             let state = { state with Projects = projects; Onboarding = onboarding; ShowLibrary = showLibrary }
             let projectCommand = effect |> Option.map (command http >> Cmd.map ProjectsMsg) |> Option.defaultValue Cmd.none
@@ -547,7 +550,10 @@ module private Ui =
                                                 attr.``class`` "item-open"
                                                 "aria-current" => (if not showLibrary && library.Opened = Some association.Document.Id then "true" else "false")
                                                 "aria-expanded" => (if library.Options = Some association.Document.Id then "true" else "false")
-                                                on.click (fun _ -> dispatch (Library.OpenDocument association.Document.Id))
+                                                on.click (fun _ ->
+                                                    if not showLibrary && library.Opened = Some association.Document.Id then
+                                                        dispatch (Library.RevealOptions association.Document.Id)
+                                                    else dispatch (Library.OpenDocument association.Document.Id))
                                                 text association.Document.FileName
                                             }
                                             small { text (Texts.pageCount association.Document.PageCount) }

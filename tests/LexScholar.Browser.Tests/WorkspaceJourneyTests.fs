@@ -9,6 +9,49 @@ open LexScholar.Client
 open LexScholar.Server.Tests
 open LexScholar.Browser.Tests.Ui
 
+[<Theory; InlineData("chromium", false); InlineData("chromium", true); InlineData("firefox", false); InlineData("firefox", true); Trait("Task", "T019"); Trait("Category", "Browser")>]
+let ``library hides source options and source activation opens before revealing`` (browserName: string, revealed: bool) =
+    withBrowser browserName (fun browser -> task {
+        use harness = TestHarness.Start(serveClient = true)
+        let! page = openApp browser harness
+        do! SummaryJourneyTests.arrange page
+        let row = page.Locator("ul.project-documents li")
+        let source = button row Texts.openDocument
+        if revealed then
+            do! click source
+            do! Assertions.Expect(button row Texts.remove).ToBeVisibleAsync()
+        do! click (button (page.Locator("body")) Texts.library)
+        do! Assertions.Expect(source).ToHaveAttributeAsync("aria-expanded", "false")
+        do! Assertions.Expect(button row Texts.remove).ToHaveCountAsync(0)
+        do! source.PressAsync("Enter")
+        do! Assertions.Expect(page.GetByTestId("main").GetByRole(AriaRole.Heading, LocatorGetByRoleOptions(Name = "article-en.pdf", Exact = true))).ToBeVisibleAsync()
+        do! Assertions.Expect(source).ToHaveAttributeAsync("aria-expanded", "false")
+        do! Assertions.Expect(button row Texts.remove).ToHaveCountAsync(0)
+        do! source.PressAsync("Enter")
+        do! Assertions.Expect(source).ToHaveAttributeAsync("aria-expanded", "true")
+        do! Assertions.Expect(button row Texts.remove).ToBeVisibleAsync()
+    })
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T019"); Trait("Category", "Browser")>]
+let ``failed project selection preserves the visible library`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use harness = TestHarness.Start(serveClient = true)
+        let! page = openApp browser harness
+        do! SummaryJourneyTests.arrange page
+        do! page.GetByLabel(Texts.projectName).FillAsync("Beta")
+        do! click (button (page.Locator("body")) Texts.createProject)
+        do! click (button (page.Locator("body")) Texts.library)
+        let failSelection (route: IRoute) : Task =
+            route.FulfillAsync(RouteFulfillOptions(Status = 500, ContentType = "application/json", Body = "{}"))
+        use! _ = page.RouteAsync("**/api/projects/*/active", Func<IRoute, Task>(failSelection))
+        let beta = page.Locator("ul.projects li").Filter(LocatorFilterOptions(HasText = "Beta"))
+        do! click (button beta Texts.select)
+        let import = page.GetByTestId("main").GetByLabel(Texts.importPdf)
+        do! Assertions.Expect(page.GetByRole(AriaRole.Alert)).ToBeVisibleAsync()
+        do! Assertions.Expect(import).ToBeVisibleAsync()
+        do! Assertions.Expect(page.Locator("ul.projects li").Filter(LocatorFilterOptions(HasText = "Alpha"))).ToHaveAttributeAsync("aria-current", "true")
+    })
+
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T019"); Trait("Category", "Browser")>]
 let ``item names open and repeated activation reveals guarded options`` (browserName: string) =
     withBrowser browserName (fun browser -> task {

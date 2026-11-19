@@ -15,3 +15,12 @@ Project-operation limitation: no project rename/delete workflow exists. The only
 Existing journeys keep action-based helpers but target the sole name button for opening/selecting. Source-option journeys explicitly open/re-activate before role changes or removal. The background marker-removal journey opens the summarized source before removing it, since options belong only to the opened source; marker assertions remain.
 
 Coordination: #127 initially overlapped `App.fs`, CSS, workspace journeys and feature artifacts. After its merge, rebased onto `7600e76`: retained project tint without outline, source selection outline, both selection regressions, and transferred its source `aria-current` from the removed `Abrir` control to the name button. Retained #125's Firefox active-project wait. No branch merge or PR was performed.
+
+## PR #128 review corrections
+
+- P1 (remembered source incorrectly discloses options on return from library): **must fix**. Opening and revealing are separate messages; the view reveals only when the source is actually displayed. Library navigation clears disclosure without clearing the remembered source or summary.
+- P2 (failed project selection prematurely closes library): **must fix**. Selecting a different project keeps the current view until the existing selection workflow reports success. Selecting the already-active project still opens immediately.
+- RED: `LOG=/tmp/opencode/t019-review-red2.log scripts/check.sh T019` — 16 total, six assertion failures, zero skips. Both browsers reproduced hidden-options failure after returning to a remembered source, retained disclosure while in the library, and the missing import view after a failed project selection. An earlier run hit the command time limit after capturing the four source failures; it is not counted as the complete RED.
+- GREEN: `LOG=/tmp/opencode/t019-review-green.log scripts/check.sh T019 T002 T004 T015 T018 T033 T007` — 274 passed, zero failures/skips, warning-as-error build passed.
+- New Chromium/Firefox regressions cover library navigation with options previously open **and** closed, absence of source options in the library, first activation returning to the summary without options, second activation revealing them, and a failed project-selection HTTP request retaining the library and active project.
+- Full-suite CI and renewed GPT review remain required on the new PR head; no merge performed.
