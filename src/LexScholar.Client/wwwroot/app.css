@@ -88,6 +88,7 @@ small { color: #596778; }
 .summary-points li + li { margin-top: 1.5rem; }
 .summary-using-plan { display: block; color: var(--text-muted); font-size: .8rem; line-height: 1.6; }
 .document-heading { display: flex; justify-content: space-between; align-items: start; gap: 1rem; }
+.document-heading > div { min-width: 0; overflow-wrap: anywhere; }
 .document-heading h2 { margin: 0; overflow-wrap: anywhere; }
 .document-heading p { margin: .5rem 0 0; color: var(--text-muted); font-size: .85rem; }
 .open-pdf { display: inline-flex; align-items: center; gap: .5rem; flex-shrink: 0; padding: .5rem .8rem; border: 1px solid var(--control-border); border-radius: .4rem; background: var(--surface); color: var(--text); font: inherit; text-decoration: none; white-space: nowrap; }

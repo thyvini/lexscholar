@@ -10,6 +10,43 @@ open LexScholar.Server.Tests
 open LexScholar.Browser.Tests.Ui
 
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T021"); Trait("Category", "Browser")>]
+let ``unbroken project names keep the PDF control visible and keyboard reachable across widths`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use harness = TestHarness.Start(serveClient = true)
+        let! page = openApp browser harness
+        do! SummaryJourneyTests.arrange page
+        let name = String.replicate 120 "Projeto"
+        do! page.GetByLabel(Texts.projectName).FillAsync(name)
+        do! click (button (page.Locator("body")) Texts.createProject)
+        let project = page.Locator("ul.projects li").Filter(LocatorFilterOptions(HasText = name))
+        do! click (button project Texts.select)
+        do! Assertions.Expect(project).ToHaveAttributeAsync("aria-current", "true")
+        do! click (button (page.Locator("body")) Texts.library)
+        do! click (button (page.Locator("ul.documents li")) Texts.addFocused)
+        do! click (button (page.Locator("ul.project-documents li")) Texts.openDocument)
+        let heading = page.GetByTestId("main").Locator(".document-heading")
+        let pdf = link heading Texts.openPdf
+        do! Assertions.Expect(heading.Locator("p")).ToContainTextAsync(name)
+        for width in [ 1440; 1000; 900; 800; 1440 ] do
+            do! page.SetViewportSizeAsync(width, 900)
+            let! fits = heading.EvaluateAsync<bool>("""element => {
+                const pdf = element.querySelector('.open-pdf').getBoundingClientRect();
+                const heading = element.getBoundingClientRect();
+                const details = element.querySelector('p');
+                return pdf.left >= heading.left && pdf.right <= heading.right + 1
+                    && pdf.right <= window.innerWidth && details.scrollWidth <= details.clientWidth + 1;
+            }""")
+            Assert.True(fits, $"PDF and complete project details must fit the heading at {width}px")
+            do! pdf.FocusAsync()
+            do! page.Keyboard.PressAsync("Tab")
+            do! page.Keyboard.PressAsync("Shift+Tab")
+            do! Assertions.Expect(pdf).ToBeFocusedAsync()
+            do! Assertions.Expect(pdf).ToHaveCSSAsync("outline-style", "solid")
+            do! Assertions.Expect(pdf).ToHaveAttributeAsync("target", "_blank")
+            do! Assertions.Expect(pdf).ToHaveAttributeAsync("rel", "noopener")
+    })
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T021"); Trait("Category", "Browser")>]
 let ``document heading sits above separate request and summary cards`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
         use fake = new FakeOpenAi(ResponsesScript.Completed """{"points":[{"text":"First point","pages":[1]},{"text":"Second point","pages":[2]}]}""")

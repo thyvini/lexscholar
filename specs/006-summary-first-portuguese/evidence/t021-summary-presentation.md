@@ -20,3 +20,11 @@ No confirmation-dialog code or CSS was edited. T020 / PR #129 changes `App.fs` a
 PR #130 was conflicting after release advanced to `3117253`. Saved `backup/t021-before-t020-integration`, then rebased onto that release commit. Resolved `App.fs`, `app.css` and `tasks.md`, retaining both slices, including T020's `summary-request` focus-return ID and all modal styles. Its JavaScript, host script registration and modal journeys remain unchanged.
 
 `LOG=/tmp/opencode/t021-t020-integration-green.log scripts/check.sh T021 T020 T017 T003 T007 T008` — warning-as-error build passed; 305 tests passed, 0 failed, 0 skipped. Local `git merge-tree --write-tree HEAD origin/release/0.4.0` is clean. Push uses an explicit lease against the previously verified PR head `77dc8c18e6739b888bd08724166af0914c9af727`; CI must run again on the new head.
+
+### PR #130 re-review — long project details
+
+P2 verdict: **must fix**. An unbroken project name gave the document-heading text flex item an excessive minimum width, pushing `Abrir PDF` out of view. Allow that item to shrink and wrap its contents anywhere; retain the PDF anchor's size, native semantics and focus treatment.
+
+- RED: `LOG=/tmp/opencode/t021-long-name-red.log scripts/check.sh T021` — warning-as-error build passed; 35 tests, 2 failed, 0 skipped. Both browsers reported that the PDF/details did not fit at 1440px with a real 840-character unbroken project name.
+- GREEN: `LOG=/tmp/opencode/t021-long-name-green.log scripts/check.sh T021 T020 T017` — warning-as-error build passed; 57 tests passed, 0 failed, 0 skipped. The new regression checks the complete details and PDF bounds at 1440, 1000, 900 and 800px and back to desktop, plus keyboard focus/outline and preserved new-tab attributes. Existing modal and typography checks remain green.
+- CI/full suite remains required on the updated PR head; not run locally.
