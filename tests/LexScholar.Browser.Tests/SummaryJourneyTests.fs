@@ -62,7 +62,7 @@ let arrange (page: IPage) = task {
 
 let private panel (page: IPage) = page.Locator("section.summary")
 
-[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T007"); Trait("Category", "Browser")>]
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T007"); Trait("Task", "T011"); Trait("Category", "Browser")>]
 let ``historical configured service summary retains its recorded provenance`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
         use fake = new FakeOpenAi(ResponsesScript.Completed answer)
@@ -78,7 +78,7 @@ let ``historical configured service summary retains its recorded provenance`` (b
         let! documentBody = documents.Content.ReadAsStringAsync()
         use documentJson = System.Text.Json.JsonDocument.Parse(documentBody)
         let document = documentJson.RootElement.[0].GetProperty("id").GetGuid()
-        let generatedAt = DateTimeOffset(2026, 11, 14, 18, 54, 0, TimeSpan.Zero)
+        let generatedAt = DateTimeOffset(DateTime(2026, 11, 14, 18, 54, 0, DateTimeKind.Local))
         let key: LexScholar.Domain.SummaryKey = { Project = project; Document = document }
         let summary: LexScholar.Domain.StoredSummary =
             { DocumentId = document; Points = [ { Text = "Historical point"; Pages = [ 1 ] } ]
@@ -90,7 +90,7 @@ let ``historical configured service summary retains its recorded provenance`` (b
         let context = (panel page).Locator(".summary-context")
         do! Assertions.Expect(context).ToContainTextAsync("archive.example.test:8080")
         do! Assertions.Expect(context).ToContainTextAsync("historic-model")
-        do! Assertions.Expect(context).ToContainTextAsync(generatedAt.LocalDateTime.ToString("yyyy-MM-dd HH:mm"))
+        do! Assertions.Expect(context).ToContainTextAsync("14/11/2026 18:54")
         do! Assertions.Expect(context).ToContainTextAsync("pp. 1–2")
         do! Assertions.Expect(context).ToContainTextAsync("Sem texto")
         do! Assertions.Expect(context).ToContainTextAsync("1 ponto gerado")
