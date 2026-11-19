@@ -77,7 +77,7 @@ let ``project setup can finish without import or sign-in and existing workspaces
         do! Assertions.Expect(another.Locator(".workspace[data-ready='True']")).ToBeVisibleAsync()
         do! Assertions.Expect(another.GetByText(Texts.welcome, PageGetByTextOptions(Exact = true))).ToHaveCountAsync(0)
         do! Assertions.Expect(another.Locator("ul.projects li")).ToContainTextAsync("Pesquisa")
-        Assert.Equal("localhost", Uri(another.Url).Host)
+        Assert.Equal("127.0.0.1", Uri(another.Url).Host)
     })
 
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T014"); Trait("Category", "Browser")>]
@@ -261,4 +261,37 @@ let ``localhost setup redirect replaces history so Back cannot bypass unfinished
         let! _ = page.ReloadAsync()
         do! Assertions.Expect(page.GetByText(Texts.projectCreated "Pesquisa em andamento", PageGetByTextOptions(Exact = true))).ToBeVisibleAsync()
         do! noMenus page
+    })
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T014"); Trait("Category", "Browser")>]
+let ``localhost revisits and Back respect active and completed setup in the same tab`` browserName =
+    Ui.withBrowser browserName (fun browser -> task {
+        use harness = TestHarness.Start(serveClient = true)
+        let! page = openFirstRun browser harness
+        do! page.GetByLabel(Texts.projectName).FillAsync("Pesquisa revisitada")
+        do! Ui.click (Ui.button (page.Locator("body")) Texts.createProject)
+        do! Assertions.Expect(page.GetByText(Texts.projectCreated "Pesquisa revisitada", PageGetByTextOptions(Exact = true))).ToBeVisibleAsync()
+        let source = UriBuilder(harness.Client.BaseAddress)
+        source.Host <- "localhost"
+        let! _ = page.GotoAsync(source.Uri.ToString())
+        do! Assertions.Expect(page.GetByRole(AriaRole.Heading, PageGetByRoleOptions(Name = Texts.welcome, Exact = true))).ToBeVisibleAsync()
+        do! Assertions.Expect(page.GetByText(Texts.projectCreated "Pesquisa revisitada", PageGetByTextOptions(Exact = true))).ToBeVisibleAsync()
+        do! noMenus page
+        let! _ = page.GoBackAsync()
+        do! Assertions.Expect(page.GetByRole(AriaRole.Heading, PageGetByRoleOptions(Name = Texts.welcome, Exact = true))).ToBeVisibleAsync()
+        do! noMenus page
+        let! _ = page.GoForwardAsync()
+        do! Assertions.Expect(page.GetByRole(AriaRole.Heading, PageGetByRoleOptions(Name = Texts.welcome, Exact = true))).ToBeVisibleAsync()
+        do! noMenus page
+        do! Ui.click (Ui.button (page.Locator("body")) Texts.finishOnboarding)
+        do! Assertions.Expect(page.Locator("aside")).ToHaveCountAsync(2)
+        let! _ = page.GotoAsync(source.Uri.ToString())
+        do! Assertions.Expect(page.Locator("aside")).ToHaveCountAsync(2)
+        do! Assertions.Expect(page.GetByText(Texts.welcome, PageGetByTextOptions(Exact = true))).ToHaveCountAsync(0)
+        let! _ = page.GoBackAsync()
+        do! Assertions.Expect(page.Locator("aside")).ToHaveCountAsync(2)
+        do! Assertions.Expect(page.GetByText(Texts.welcome, PageGetByTextOptions(Exact = true))).ToHaveCountAsync(0)
+        let! _ = page.GoBackAsync()
+        do! Assertions.Expect(page.Locator("aside")).ToHaveCountAsync(2)
+        do! Assertions.Expect(page.GetByText(Texts.welcome, PageGetByTextOptions(Exact = true))).ToHaveCountAsync(0)
     })

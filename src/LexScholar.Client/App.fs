@@ -1067,8 +1067,9 @@ type App() =
     member val JavaScript = Unchecked.defaultof<IJSRuntime> with get, set
     override this.Program =
         let http = new HttpClient(BaseAddress = Uri(this.Navigation.BaseUri))
-        // Setup lives only at the fixed OAuth callback origin. Existing localhost
-        // workspaces stay there, but a new setup moves before any project is created.
+        // One app origin owns both workspace and setup. Normalize localhost before
+        // reading its state or loading data, matching the fixed OAuth callback origin.
+        let entryUri = Uri(this.Navigation.Uri)
         let js = this.JavaScript :?> IJSInProcessRuntime
         let remembered =
             if Uri(this.Navigation.Uri).Host = "localhost" then None
@@ -1080,34 +1081,32 @@ type App() =
                     | _ -> None
                 with _ -> None
         let start _ =
-            let library, libraryEffect = Library.update Library.LoadLibrary Library.initial
-            // Returning from ChatGPT: read the outcome once, then drop it from the address.
-            let uri = Uri(this.Navigation.Uri)
-            let query = System.Web.HttpUtility.ParseQueryString(uri.Query)
-            let returned = match query.["chatgpt"] with null -> None | value -> Some value
-            if returned.IsSome then this.Navigation.NavigateTo(uri.GetLeftPart(UriPartial.Path), replace = true)
-            let chatGpt, chatGptEffect = ChatGpt.update ChatGpt.Load ChatGpt.initial
-            let statuses, statusEffect = SummaryStatus.updateStatuses SummaryStatus.Refresh SummaryStatus.initialStatuses
-            let chatGpt, _ = ChatGpt.update (ChatGpt.Returned returned) chatGpt
-            { Projects = { initial with Busy = Some Loading }; Library = library; Summary = Summary.initial; ChatGpt = chatGpt; Statuses = statuses; ShowLibrary = false; Onboarding = remembered },
-            Cmd.batch [ Ui.command http Fetch |> Cmd.map ProjectsMsg
-                        Ui.chatGptCommand http this.Navigation chatGptEffect
-                        Ui.statusCommand http statusEffect
-                        libraryEffect |> Option.map (Ui.libraryCommand http) |> Option.defaultValue Cmd.none ]
-        let update msg state =
-            let next, command = Ui.update http this.Navigation msg state
-            if next.Onboarding = Some true && Uri(this.Navigation.Uri).Host = "localhost" then
-                let target = UriBuilder(this.Navigation.Uri)
+            if entryUri.Host = "localhost" then
+                let target = UriBuilder(entryUri)
                 target.Host <- "127.0.0.1"
                 target.Path <- "/index.html"
-                target.Query <- ""
-                target.Fragment <- ""
-                { next with Onboarding = None },
-                Cmd.batch [ command; Cmd.ofEffect (fun _ -> this.Navigation.NavigateTo(target.Uri.ToString(), forceLoad = true, replace = true)) ]
+                { Projects = { initial with Busy = Some Loading }; Library = Library.initial; Summary = Summary.initial; ChatGpt = ChatGpt.initial; Statuses = SummaryStatus.initialStatuses; ShowLibrary = false; Onboarding = None },
+                Cmd.ofEffect (fun _ -> this.Navigation.NavigateTo(target.Uri.ToString(), forceLoad = true, replace = true))
             else
-                if next.Onboarding <> state.Onboarding then
-                    try
-                        js.InvokeVoid("sessionStorage.setItem", [| box "lexscholar.onboarding"; box (if next.Onboarding = Some true then "active" else "finished") |])
-                    with _ -> ()
-                next, command
+                let library, libraryEffect = Library.update Library.LoadLibrary Library.initial
+                // Returning from ChatGPT: read the outcome once, then drop it from the address.
+                let uri = Uri(this.Navigation.Uri)
+                let query = System.Web.HttpUtility.ParseQueryString(uri.Query)
+                let returned = match query.["chatgpt"] with null -> None | value -> Some value
+                if returned.IsSome then this.Navigation.NavigateTo(uri.GetLeftPart(UriPartial.Path), replace = true)
+                let chatGpt, chatGptEffect = ChatGpt.update ChatGpt.Load ChatGpt.initial
+                let statuses, statusEffect = SummaryStatus.updateStatuses SummaryStatus.Refresh SummaryStatus.initialStatuses
+                let chatGpt, _ = ChatGpt.update (ChatGpt.Returned returned) chatGpt
+                { Projects = { initial with Busy = Some Loading }; Library = library; Summary = Summary.initial; ChatGpt = chatGpt; Statuses = statuses; ShowLibrary = false; Onboarding = remembered },
+                Cmd.batch [ Ui.command http Fetch |> Cmd.map ProjectsMsg
+                            Ui.chatGptCommand http this.Navigation chatGptEffect
+                            Ui.statusCommand http statusEffect
+                            libraryEffect |> Option.map (Ui.libraryCommand http) |> Option.defaultValue Cmd.none ]
+        let update msg state =
+            let next, command = Ui.update http this.Navigation msg state
+            if next.Onboarding <> state.Onboarding then
+                try
+                    js.InvokeVoid("sessionStorage.setItem", [| box "lexscholar.onboarding"; box (if next.Onboarding = Some true then "active" else "finished") |])
+                with _ -> ()
+            next, command
         Program.mkProgram start update Ui.view
