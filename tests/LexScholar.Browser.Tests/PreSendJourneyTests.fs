@@ -49,7 +49,7 @@ let private openDocument (page: IPage) (fileName: string) = task {
     do! click (button row Texts.openDocument)
     do! Assertions.Expect(page.GetByTestId("main").Locator("iframe")).ToHaveCountAsync(0) }
 
-[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T011"); Trait("Task", "T007"); Trait("Category", "Browser")>]
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T011"); Trait("Task", "T007"); Trait("Task", "T010"); Trait("Category", "Browser")>]
 let ``leaving a document while the confirmation is open sends nothing and she returns to an idle document`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
         use fake = new FakeOpenAi(ResponsesScript.Completed answer)
@@ -69,6 +69,8 @@ let ``leaving a document while the confirmation is open sends nothing and she re
         do! Ui.signInWithChatGpt page harness fake
         do! openDocument page "article-en.pdf"
         do! click summarize
+        do! Assertions.Expect(dialog).ToHaveAccessibleNameAsync("Enviar documentos ao ChatGPT?")
+        do! Assertions.Expect(dialog.GetByRole(AriaRole.Link)).ToHaveAttributeAsync("href", "https://help.openai.com/pt-br/articles/20001542-using-your-chatgpt-plan-in-other-apps-and-sites")
         do! Assertions.Expect(dialog).ToContainTextAsync("article-en.pdf")
         do! openDocument page "article-pt.pdf"
         do! Assertions.Expect(dialog).ToHaveCountAsync(0)

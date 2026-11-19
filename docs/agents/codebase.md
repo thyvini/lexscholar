@@ -86,6 +86,8 @@ Errors are ProblemDetails with a `code` extension (`problem` helpers in the endp
 
 **F006 projects and library in Portuguese (T009).** `FailureTexts.fs`, compiled after `SummaryStatus.fs` and before `App.fs`, maps project and library failure unions to the Portuguese values in `Texts.fs`; unexpected failures use the generic message. With no projects the main area offers first-run project creation, library import navigation and ChatGPT sign-in using the existing actions.
 
+**F006 summary and ChatGPT in Portuguese (T010).** `FailureTexts.summary` maps every summary failure to `Texts`, using the generic message for unrecognized service details. `App.fs` renders Portuguese summary context, progress, confirmation, account and notices; stored service host and model are preserved. The confirmation links to the Portuguese OpenAI help article.
+
 ## Request flow
 
 Client `update` returns an `Effect` → `App.fs` runs the HTTP call (`Api.*`) → host middleware (`HostSecurity.useSecurity`: error handler, Host and Origin checks, antiforgery on unsafe methods) → endpoint → Application workflow → Infrastructure functions → SQLite or files → `Result` → HTTP status and JSON → `App.fs` maps it to a `Message` → `update`.

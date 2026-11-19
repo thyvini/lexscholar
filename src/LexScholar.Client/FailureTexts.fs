@@ -17,3 +17,15 @@ let project = function
     | Projects.DuplicateName -> Texts.duplicateProjectName
     | Projects.NotFound -> Texts.missingProject
     | Projects.RequestFailed -> Texts.genericFailure
+
+let summary = function
+    | Summary.NotConfigured -> Texts.summaryNotConfigured
+    | Summary.Unavailable -> Texts.summaryUnavailable
+    | Summary.NoText -> Texts.summaryNoText
+    | Summary.NotEnoughText -> Texts.summaryNotEnoughText
+    | Summary.TooManyPages -> Texts.summaryTooManyPages
+    | Summary.UsageLimitReached -> Texts.summaryUsageLimit
+    | Summary.SignedOut -> Texts.summarySignedOut
+    | Summary.NoPlanAccess -> Texts.summaryNoPlan
+    | Summary.DestinationRequired -> Texts.summaryDestination
+    | Summary.ServiceFailed _ | Summary.RequestFailed | Summary.ConfirmationRequired _ -> Texts.genericFailure
