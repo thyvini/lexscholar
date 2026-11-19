@@ -129,14 +129,16 @@ let ``she signs in, summarizes on her plan, meets the usage limit and signs out`
         do! Assertions.Expect(using.GetByRole(AriaRole.Link, LocatorGetByRoleOptions(Name = LexScholar.Client.Texts.manageUsage))).ToHaveAttributeAsync("href", usageUrl)
 
         // Asking again after dismissing (which deletes the stored summary, F004) goes straight through, with no confirmation.
-        do! click (button (panel page) "Dismiss")
+        do! click (button (panel page) LexScholar.Client.Texts.delete)
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) LexScholar.Client.Texts.delete)
         do! summarize page
         do! Assertions.Expect(panel page).ToContainTextAsync("Generated summary")
         do! Assertions.Expect(dialog).ToHaveCountAsync(0)
         Assert.Equal(2, (fake.RequestsTo("api.openai.com", "/v1/responses")).Length)
 
         // The usage limit, on the other document, points at her usage settings and keeps her signed in.
-        do! click (button (panel page) "Dismiss")
+        do! click (button (panel page) LexScholar.Client.Texts.delete)
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) LexScholar.Client.Texts.delete)
         do! openDocument page "article-pt.pdf"
         do! summarize page
         let alert = page.GetByRole(AriaRole.Alert).Filter(LocatorFilterOptions(HasText = "Usage limit reached"))

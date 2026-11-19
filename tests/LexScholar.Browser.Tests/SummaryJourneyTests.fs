@@ -120,7 +120,8 @@ let ``a requested summary is labelled as generated, shows its context and plain-
         do! Assertions.Expect(points.First.Locator(".point-text")).ToHaveTextAsync("<b>Main</b> idea")
         do! Assertions.Expect(points.First.Locator("b")).ToHaveCountAsync(0)
         do! Assertions.Expect(points.First.GetByRole(AriaRole.Link)).ToHaveTextAsync("pp. 1–2")
-        do! click (button (panel page) "Dismiss")
+        do! click (button (panel page) LexScholar.Client.Texts.delete)
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) LexScholar.Client.Texts.delete)
         do! Assertions.Expect(panel page).ToHaveCountAsync(0)
         // Dismissing changes nothing about the document or its association.
         do! Assertions.Expect(page.Locator("ul.project-documents li")).ToHaveCountAsync(1)

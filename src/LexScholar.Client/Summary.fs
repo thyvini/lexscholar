@@ -68,6 +68,7 @@ type State =
     /// The server runs the summary in the background; the client polls for it.
     | Running
     | Shown of Generated
+    | ConfirmingDelete of Generated
     | Failed of Failure
     /// The DELETE of a finished, failed, running or still-requested summary (the previous state) is in flight: nothing can be asked until it answers.
     | Dismissing of previous: State
@@ -101,6 +102,10 @@ type Model =
 type Message =
     | Summarize
     | Dismiss
+    | Delete
+    | ConfirmDelete
+    | CancelDelete
+    | Close
     /// Stops the running summary on the server.
     | Stop
     /// The answer to the DELETE of the pair's summary (`DeleteSummary`).
@@ -167,14 +172,31 @@ let update (message: Message) (model: Model) : Model * Effect option =
             let abandoned, _ = abandon model
             { abandoned with State = Dismissing Running; Claim = 0; DismissFailed = false; Pending = (project, document) :: model.Pending }, Some (DeleteSummary (project, document))
         | _ -> model, None
-    | Dismiss when (match model.State with Dismissing _ -> true | _ -> false) -> model, None
+    | Delete ->
+        match model.State with
+        | Shown generated -> { model with State = ConfirmingDelete generated }, None
+        | _ -> model, None
+    | CancelDelete ->
+        match model.State with
+        | ConfirmingDelete generated -> { model with State = Shown generated }, None
+        | _ -> model, None
+    | ConfirmDelete | Close ->
+        match model.Project, model.Document, message, model.State with
+        | Some project, Some document, ConfirmDelete, ConfirmingDelete generated ->
+            let abandoned, _ = abandon model
+            { abandoned with State = Dismissing (Shown generated); Claim = 0; DismissFailed = false; Pending = (project, document) :: model.Pending }, Some (DeleteSummary (project, document))
+        | Some project, Some document, Close, Failed _ ->
+            let abandoned, _ = abandon model
+            { abandoned with State = Dismissing model.State; Claim = 0; DismissFailed = false; Pending = (project, document) :: model.Pending }, Some (DeleteSummary (project, document))
+        | _ -> model, None
+    | Dismiss when (match model.State with Dismissing _ | Shown _ | ConfirmingDelete _ -> true | _ -> false) -> model, None
     | Dismiss ->
         let abandoned, effect = abandon model
         match model.Project, model.Document, model.State with
         // A finished or failed summary is the server's too: dismissing deletes it there, or asking again returns the old one.
         // Until the server answers she sees "Dismissing" and cannot ask, so the old summary can never come back or be
         // deleted after a new one; a failed DELETE restores the summary and says so.
-        | Some project, Some document, (Shown _ | Failed _) ->
+        | Some project, Some document, Failed _ ->
             { abandoned with State = Dismissing model.State; Claim = 0; DismissFailed = false; Pending = (project, document) :: model.Pending }, Some (DeleteSummary (project, document))
         // The POST is in flight and the job may not exist yet: the DELETE goes now, and again when the POST answers (`Draining`).
         | Some project, Some document, Generating request ->
