@@ -49,3 +49,11 @@ Both P2 findings against `25a4eb6` are **must fix**:
 **Finish-cancellation sensitivity RED**: with the signed-in consumption/source handoff fixes present but finish cancellation deliberately omitted, `LOG=/tmp/opencode/f006-review2-finish-red.log scripts/check.sh T014` — **14 total, 2 failed, 0 skipped**. Both held-load cases started authorization after completion rather than retaining the enabled sign-in action. Restored finish cancellation before GREEN.
 
 **GREEN**: `LOG=/tmp/opencode/f006-review2-green.log scripts/check.sh T014 T009 T002 T001 T007 T008` — **358 passed, 0 failed, 0 skipped**; Release `-warnaserror` build: **0 warnings, 0 errors**. Fourteen T014 browser cases included. Full-suite CI remains pending PR; no server/auth changes.
+
+## PR #123 P1 correction — interruption is not completion
+
+Verdict: **must fix**. The previous source-marker fix prematurely marked setup finished on departure. A handoff now retains active setup at the source and destination, recording only a session-scoped handoff marker. An accepted explicit skip/finish stores finished locally, then navigates to the other loopback origin with `?onboarding=finished` to synchronize its session marker. The receiver strips that UI-only marker and clears handoff state. This deliberately moves the tab once on explicit completion; no server/auth changes, new endpoint or cross-origin frame is needed.
+
+**RED**: `LOG=/tmp/opencode/f006-review3-red.log scripts/check.sh T014` — **16 total, 2 failed, 0 skipped**. New regressions in Chromium and Firefox interrupt the numeric-origin navigation before its app loads, go Back to localhost and reload. Expected welcome is missing: the user enters the workspace despite never choosing skip/finish.
+
+**GREEN**: `LOG=/tmp/opencode/f006-review3-green.log scripts/check.sh T014 T009 T002 T001 T007 T008` — **360 passed, 0 failed, 0 skipped**; Release `-warnaserror`: **0 warnings, 0 errors**. All sixteen T014 browser cases pass, including the interrupted handoff, revisit after explicit completion, already-signed-in consumption, finish while destinations load, and account retry regressions. PR CI and required GPT review will run on the pushed correction; not merged.

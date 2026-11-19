@@ -1086,6 +1086,9 @@ type App() =
                 | _ -> None
             with _ -> None
         let mutable resumeSignIn = false
+        let mutable handedOff =
+            try js.Invoke<string>("sessionStorage.getItem", [| box "lexscholar.onboarding.handoff" |]) = "active"
+            with _ -> false
         let start _ =
             let library, libraryEffect = Library.update Library.LoadLibrary Library.initial
             // Returning from ChatGPT: read the outcome once, then drop it from the address.
@@ -1093,13 +1096,18 @@ type App() =
             let query = System.Web.HttpUtility.ParseQueryString(uri.Query)
             let returned = match query.["chatgpt"] with null -> None | value -> Some value
             resumeSignIn <- query.["onboarding"] = "sign-in"
+            let completed = query.["onboarding"] = "finished"
             let onboarding =
-                if resumeSignIn then
-                    try js.InvokeVoid("sessionStorage.setItem", [| box "lexscholar.onboarding"; box "active" |])
+                if resumeSignIn || completed then
+                    handedOff <- resumeSignIn
+                    try
+                        js.InvokeVoid("sessionStorage.setItem", [| box "lexscholar.onboarding"; box (if completed then "finished" else "active") |])
+                        if completed then js.InvokeVoid("sessionStorage.removeItem", [| box "lexscholar.onboarding.handoff" |])
+                        else js.InvokeVoid("sessionStorage.setItem", [| box "lexscholar.onboarding.handoff"; box "active" |])
                     with _ -> ()
-                    Some true
+                    Some (not completed)
                 else remembered
-            if returned.IsSome || resumeSignIn then this.Navigation.NavigateTo(uri.GetLeftPart(UriPartial.Path), replace = true)
+            if returned.IsSome || resumeSignIn || completed then this.Navigation.NavigateTo(uri.GetLeftPart(UriPartial.Path), replace = true)
             let chatGpt, chatGptEffect = ChatGpt.update ChatGpt.Load ChatGpt.initial
             let statuses, statusEffect = SummaryStatus.updateStatuses SummaryStatus.Refresh SummaryStatus.initialStatuses
             let chatGpt, _ = ChatGpt.update (ChatGpt.Returned returned) chatGpt
@@ -1110,10 +1118,14 @@ type App() =
                         libraryEffect |> Option.map (Ui.libraryCommand http) |> Option.defaultValue Cmd.none ]
         let update msg state =
             let next, command = Ui.update http this.Navigation msg state
-            // A handoff transfers ownership of setup to numeric loopback. The source
-            // origin must no longer remember active setup when this tab visits it again.
+            // A handoff is not completion. Retain active setup at the source so Back or
+            // interrupted navigation cannot skip the user's explicit finish.
             let handingOff =
                 msg = ChatGptMsg ChatGpt.SignIn && state.Onboarding = Some true && Uri(this.Navigation.Uri).Host = "localhost"
+            if handingOff then
+                handedOff <- true
+                try js.InvokeVoid("sessionStorage.setItem", [| box "lexscholar.onboarding.handoff"; box "active" |])
+                with _ -> ()
             // An already signed-in account satisfies the intent; finishing setup cancels
             // it. Neither should leave a delayed authorization waiting for a later sign-out.
             if next.Onboarding = Some false || (match next.ChatGpt.Status with ChatGpt.SignedIn _ -> true | _ -> false) then
@@ -1124,9 +1136,20 @@ type App() =
                     let next, signIn = Ui.update http this.Navigation (ChatGptMsg ChatGpt.SignIn) next
                     next, Cmd.batch [ command; signIn ]
                 else next, command
-            if next.Onboarding <> state.Onboarding || handingOff then
+            if next.Onboarding <> state.Onboarding then
                 try
-                    js.InvokeVoid("sessionStorage.setItem", [| box "lexscholar.onboarding"; box (if next.Onboarding = Some true && not handingOff then "active" else "finished") |])
+                    js.InvokeVoid("sessionStorage.setItem", [| box "lexscholar.onboarding"; box (if next.Onboarding = Some true then "active" else "finished") |])
                 with _ -> ()
-            next, command
+            // Only explicit completion synchronizes the other loopback origin. Both
+            // markers finish, without server state or marking an unfinished handoff done.
+            if msg = FinishOnboarding && state.Onboarding = Some true && next.Onboarding = Some false && handedOff then
+                handedOff <- false
+                try js.InvokeVoid("sessionStorage.removeItem", [| box "lexscholar.onboarding.handoff" |])
+                with _ -> ()
+                let target = UriBuilder(this.Navigation.Uri)
+                target.Host <- if target.Host = "localhost" then "127.0.0.1" else "localhost"
+                target.Query <- "onboarding=finished"
+                target.Fragment <- ""
+                next, Cmd.batch [ command; Cmd.ofEffect (fun _ -> this.Navigation.NavigateTo(target.Uri.ToString(), forceLoad = true)) ]
+            else next, command
         Program.mkProgram start update Ui.view

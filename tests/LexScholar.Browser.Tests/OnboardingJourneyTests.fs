@@ -180,3 +180,28 @@ let ``finish cancels handoff sign-in while destinations are still loading`` brow
         do! Assertions.Expect(Ui.button (page.Locator(".top-bar")) Texts.signIn).ToBeVisibleAsync()
         do! Assertions.Expect(Ui.button (page.Locator(".top-bar")) Texts.signIn).ToBeEnabledAsync()
     })
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T014"); Trait("Category", "Browser")>]
+let ``interrupted localhost handoff does not finish onboarding when going back`` browserName =
+    Ui.withBrowser browserName (fun browser -> task {
+        use harness = TestHarness.Start(serveClient = true)
+        let address = UriBuilder(harness.Client.BaseAddress)
+        address.Host <- "localhost"
+        let! context = browser.NewContextAsync()
+        let! page = context.NewPageAsync()
+        let! _ = page.GotoAsync(address.Uri.ToString())
+        do! Assertions.Expect(page.GetByRole(AriaRole.Heading, PageGetByRoleOptions(Name = Texts.welcome, Exact = true))).ToBeVisibleAsync()
+        do! page.GetByLabel(Texts.projectName).FillAsync("Pesquisa interrompida")
+        do! Ui.click (Ui.button (page.Locator("body")) Texts.createProject)
+        do! Assertions.Expect(page.GetByText(Texts.projectCreated "Pesquisa interrompida", PageGetByTextOptions(Exact = true))).ToBeVisibleAsync()
+        let intercept (route: IRoute) =
+            route.FulfillAsync(RouteFulfillOptions(Status = 200, ContentType = "text/html", Body = "<html><body>Interrupted handoff</body></html>"))
+        use! _ = page.RouteAsync(harness.Client.BaseAddress.ToString() + "**", Func<IRoute, System.Threading.Tasks.Task>(intercept))
+        do! Ui.click (Ui.button (page.Locator("body")) Texts.signIn)
+        do! Assertions.Expect(page.GetByText("Interrupted handoff", PageGetByTextOptions(Exact = true))).ToBeVisibleAsync()
+        let! _ = page.GoBackAsync()
+        let! _ = page.ReloadAsync()
+        do! Assertions.Expect(page.GetByRole(AriaRole.Heading, PageGetByRoleOptions(Name = Texts.welcome, Exact = true))).ToBeVisibleAsync()
+        do! Assertions.Expect(page.GetByText(Texts.projectCreated "Pesquisa interrompida", PageGetByTextOptions(Exact = true))).ToBeVisibleAsync()
+        do! noMenus page
+    })

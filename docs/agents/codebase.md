@@ -90,7 +90,7 @@ Errors are ProblemDetails with a `code` extension (`problem` helpers in the endp
 
 **F006 summary and ChatGPT in Portuguese (T010).** `FailureTexts.summary` maps every summary failure to `Texts`, using the generic message for unrecognized service details. `App.fs` renders Portuguese summary context, progress, confirmation, account and notices; stored service host and model are preserved. The confirmation links to the Portuguese OpenAI help article.
 
-**Onboarding handoff lifecycle (T014 review fixes).** Before moving from localhost, `App` marks that origin's setup finished; numeric loopback owns active setup from then on. The pending automatic sign-in is consumed by an already-signed-in account and cancelled by finish, including while the destination request is pending. Regressions cover source-origin revisits and later sign-out without unexpected authorization.
+**Onboarding handoff lifecycle (T014 review fixes).** Both origins retain active setup during handoff, with a session-only `lexscholar.onboarding.handoff` marker. Back or interrupted navigation never counts as completion. Only an accepted explicit skip/finish stores finished locally and navigates to the other loopback origin with `?onboarding=finished` to synchronize that origin's session marker; the receiving client strips the query and clears the handoff marker. The pending automatic sign-in is consumed by an already-signed-in account and cancelled by finish, including while the destination request is pending. Regressions cover interrupted handoffs, source-origin revisits after finish and later sign-out without unexpected authorization.
 
 ## Request flow
 
