@@ -23,6 +23,32 @@ let private beta = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
 let private paper = { Id = Guid.Parse("11111111-1111-1111-1111-111111111111"); FileName = "paper.pdf"; PageCount = 2; ContentUrl = "/api/documents/11111111-1111-1111-1111-111111111111/content" }
 let private notes = { Id = Guid.Parse("22222222-2222-2222-2222-222222222222"); FileName = "notes.pdf"; PageCount = 5; ContentUrl = "/api/documents/22222222-2222-2222-2222-222222222222/content" }
 
+[<Fact; Trait("Task", "T019")>]
+let ``source options follow only the opened association and clear on navigation or removal`` () =
+    let model = { initial with Project = Some alpha; Associations = [ { Document = paper; Role = FocusedSource }; { Document = notes; Role = ReferenceSource } ] }
+    let opened, effect = update (OpenDocument paper.Id) model
+    Assert.Equal(Some paper.Id, opened.Opened)
+    Assert.True(opened.Options.IsNone)
+    Assert.True(effect.IsNone)
+    let options, effect = update (OpenDocument paper.Id) opened
+    Assert.Equal(Some paper.Id, options.Options)
+    Assert.True(effect.IsNone)
+    let invalid, _ = update (OpenDocument (Guid.NewGuid())) options
+    Assert.Equal(options, invalid)
+    let other, _ = update (OpenDocument notes.Id) options
+    Assert.True(other.Options.IsNone)
+    let changed, _ = update (ActiveProjectChanged (Some beta)) options
+    Assert.True(changed.Options.IsNone)
+    let pending, _ = update (Remove paper.Id) options
+    let duplicate, effect = update (Remove paper.Id) pending
+    Assert.Equal(pending, duplicate)
+    Assert.True(effect.IsNone)
+    let failed, _ = update (Removed (alpha, paper.Id, Error RequestFailed)) pending
+    Assert.Equal(Some paper.Id, failed.Options)
+    let removed, _ = update (Removed (alpha, paper.Id, Ok ())) pending
+    Assert.True(removed.Options.IsNone)
+    Assert.True(removed.Opened.IsNone)
+
 let private assertState<'a when 'a: equality> (expected: 'a) (actual: 'a) =
     Assert.True((expected = actual), sprintf "Expected: %A\nActual: %A" expected actual)
 

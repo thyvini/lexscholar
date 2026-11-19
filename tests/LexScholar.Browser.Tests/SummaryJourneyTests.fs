@@ -31,8 +31,7 @@ let private openApp (browser: IBrowser) (harness: TestHarness) = task {
     do! Ui.enterWorkspace page
     return page }
 
-let private button (scope: ILocator) (name: string) =
-    scope.GetByRole(AriaRole.Button, LocatorGetByRoleOptions(Name = name, Exact = true))
+let private button = Ui.button
 
 let private click (control: ILocator) = task {
     do! Assertions.Expect(control).ToBeVisibleAsync()

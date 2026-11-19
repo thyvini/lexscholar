@@ -407,7 +407,11 @@ module private Ui =
             let onboarding =
                 if state.Onboarding.IsNone && projects.HasLoaded then Some projects.Snapshot.Projects.IsEmpty
                 else state.Onboarding
-            let state = { state with Projects = projects; Onboarding = onboarding }
+            let showLibrary =
+                match message with
+                | Select _ when state.Projects.Busy.IsNone -> false
+                | _ -> state.ShowLibrary
+            let state = { state with Projects = projects; Onboarding = onboarding; ShowLibrary = showLibrary }
             let projectCommand = effect |> Option.map (command http >> Cmd.map ProjectsMsg) |> Option.defaultValue Cmd.none
             // The page's Refresh button also reloads both library lists, so a
             // failed load can be retried.
@@ -538,29 +542,36 @@ module private Ui =
                                     forEach (library.Associations |> List.filter (fun association -> association.Role = role)) <| fun association ->
                                         li {
                                             attr.``class`` (if not showLibrary && library.Opened = Some association.Document.Id then "selected" else "")
-                                            span { text association.Document.FileName }
+                                            button {
+                                                attr.``type`` "button"
+                                                attr.``class`` "item-open"
+                                                "aria-current" => (if not showLibrary && library.Opened = Some association.Document.Id then "true" else "false")
+                                                "aria-expanded" => (if library.Options = Some association.Document.Id then "true" else "false")
+                                                on.click (fun _ -> dispatch (Library.OpenDocument association.Document.Id))
+                                                text association.Document.FileName
+                                            }
                                             small { text (Texts.pageCount association.Document.PageCount) }
                                             summaryMarker (SummaryStatus.documentStatus statuses project association.Document.Id)
                                             strong { attr.``class`` "role"; text (roleLabel association.Role) }
-                                            button {
-                                                attr.``type`` "button"
-                                                "aria-current" => (if not showLibrary && library.Opened = Some association.Document.Id then "true" else "false")
-                                                on.click (fun _ -> dispatch (Library.OpenDocument association.Document.Id))
-                                                text Texts.openDocument
-                                            }
-                                            button {
-                                                attr.``type`` "button"
-                                                attr.disabled (busy || library.ChangingRole.IsSome)
-                                                let role = if association.Role = FocusedSource then ReferenceSource else FocusedSource
-                                                on.click (fun _ -> dispatch (Library.ChangeRole (association.Document.Id, role)))
-                                                text (if role = FocusedSource then Texts.makeFocused else Texts.makeReference)
-                                            }
-                                            button {
-                                                attr.``type`` "button"
-                                                attr.disabled busy
-                                                on.click (fun _ -> dispatch (Library.Remove association.Document.Id))
-                                                text Texts.remove
-                                            }
+                                            cond (library.Options = Some association.Document.Id) <| function
+                                                | true ->
+                                                    div {
+                                                        attr.``class`` "item-options"
+                                                        button {
+                                                            attr.``type`` "button"
+                                                            attr.disabled (busy || library.ChangingRole.IsSome)
+                                                            let role = if association.Role = FocusedSource then ReferenceSource else FocusedSource
+                                                            on.click (fun _ -> dispatch (Library.ChangeRole (association.Document.Id, role)))
+                                                            text (if role = FocusedSource then Texts.makeFocused else Texts.makeReference)
+                                                        }
+                                                        button {
+                                                            attr.``type`` "button"
+                                                            attr.disabled busy
+                                                            on.click (fun _ -> dispatch (Library.Remove association.Document.Id))
+                                                            text Texts.remove
+                                                        }
+                                                    }
+                                                | false -> empty ()
                                         }
                                 }
                             }
@@ -989,7 +1000,14 @@ module private Ui =
                                     li {
                                         attr.``class`` (if model.Snapshot.Active = Some project.Id then "selected" else "")
                                         "aria-current" => (if model.Snapshot.Active = Some project.Id then "true" else "false")
-                                        span { attr.``class`` "project-name"; text project.Name }
+                                        button {
+                                            attr.``type`` "button"
+                                            attr.``class`` "project-name item-open"
+                                            attr.disabled busy
+                                            "aria-expanded" => (if model.Options = Some project.Id then "true" else "false")
+                                            on.click (fun _ -> dispatch (Select project.Id))
+                                            text project.Name
+                                        }
                                         div {
                                             attr.``class`` "project-metadata"
                                             summaryMarker (SummaryStatus.projectStatus state.Statuses.Entries project.Id)
@@ -998,8 +1016,15 @@ module private Ui =
                                                     cond (state.Library.HasLoadedProject && state.Library.Project = Some project.Id) <| function
                                                         | true -> small { attr.``class`` "project-count"; text (string state.Library.Associations.Length) }
                                                         | false -> empty ()
-                                                | false -> button { attr.``type`` "button"; attr.disabled busy; on.click (fun _ -> dispatch (Select project.Id)); text Texts.select }
+                                                | false -> empty ()
                                         }
+                                        cond (model.Options = Some project.Id) <| function
+                                            | true ->
+                                                div {
+                                                    attr.``class`` "item-options"
+                                                    button { attr.``type`` "button"; attr.disabled busy; on.click (fun _ -> dispatch Reload); text Texts.refresh }
+                                                }
+                                            | false -> empty ()
                                     }
                             }
                             button { attr.``type`` "button"; attr.disabled busy; on.click (fun _ -> dispatch Reload); text Texts.refresh }

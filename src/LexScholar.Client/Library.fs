@@ -40,6 +40,7 @@ type Model =
       Project: Guid option
       Associations: Association list
       Opened: Guid option
+      Options: Guid option
       ChangingRole: Guid option
       RoleStale: bool
       RoleError: Failure option
@@ -90,6 +91,7 @@ let initial =
       Project = None
       Associations = []
       Opened = None
+      Options = None
       ChangingRole = None
       RoleStale = false
       RoleError = None
@@ -155,7 +157,7 @@ let update (message: Message) (model: Model) : Model * Effect option =
         | Error error -> { model with LoadingLibrary = false; Error = Some error }, None
     | ActiveProjectChanged project when project <> model.Project ->
         // Clear at once so one project's documents never appear under another.
-        let model = { model with Project = project; Associations = []; Opened = None; RoleStale = model.ChangingRole.IsSome; RoleError = None; HasLoadedProject = false; LoadingProject = false }
+        let model = { model with Project = project; Associations = []; Opened = None; Options = None; RoleStale = model.ChangingRole.IsSome; RoleError = None; HasLoadedProject = false; LoadingProject = false }
         match project with
         | None -> model, None
         | Some projectId ->
@@ -165,7 +167,7 @@ let update (message: Message) (model: Model) : Model * Effect option =
         match result with
         | Ok associations ->
             let opened = model.Opened |> Option.filter (fun id -> associations |> List.exists (fun item -> item.Document.Id = id))
-            { model with Associations = associations; Opened = opened; HasLoadedProject = true; LoadingProject = false }, None
+            { model with Associations = associations; Opened = opened; Options = model.Options |> Option.filter (fun id -> opened = Some id); HasLoadedProject = true; LoadingProject = false }, None
         | Error error -> { model with LoadingProject = false; Error = Some error }, None
     | Refresh ->
         let model, library = nextLibrary { model with Error = None }
@@ -178,7 +180,7 @@ let update (message: Message) (model: Model) : Model * Effect option =
         let model, request = nextProject model
         model, Some (FetchProject (model.Project.Value, request))
     | OpenDocument id when model.Project.IsSome && (model.Associations |> List.exists (fun item -> item.Document.Id = id)) ->
-        { model with Opened = Some id; RoleError = None }, None
+        { model with Opened = Some id; Options = (if model.Opened = Some id then Some id else None); RoleError = None }, None
     | ChangeRole (id, role) when model.Project.IsSome && model.ChangingRole.IsNone ->
         { model with ChangingRole = Some id; RoleStale = false; RoleError = None },
         Some (SendRole (model.Project.Value, id, role))
@@ -214,7 +216,8 @@ let update (message: Message) (model: Model) : Model * Effect option =
             match result with
             | Ok () when model.Project = Some projectId ->
                 { model with Associations = model.Associations |> List.filter (fun item -> item.Document.Id <> documentId)
-                             Opened = if model.Opened = Some documentId then None else model.Opened }
+                             Opened = if model.Opened = Some documentId then None else model.Opened
+                             Options = if model.Options = Some documentId then None else model.Options }
             | _ -> model
         mutated projectId result model
     | _ -> model, None

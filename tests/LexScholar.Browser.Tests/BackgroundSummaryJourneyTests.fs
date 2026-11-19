@@ -29,8 +29,7 @@ let private openApp (browser: IBrowser) (harness: TestHarness) = task {
     do! Ui.enterWorkspace page
     return page }
 
-let private button (scope: ILocator) (name: string) =
-    scope.GetByRole(AriaRole.Button, LocatorGetByRoleOptions(Name = name, Exact = true))
+let private button = Ui.button
 
 let private click (control: ILocator) = task {
     do! Assertions.Expect(control).ToBeVisibleAsync()
@@ -337,9 +336,12 @@ let ``removing a document with a finished summary clears the project's marker`` 
         do! click (summarizeButton page)
         do! click (button (page.GetByRole(AriaRole.Alertdialog)) Texts.sendAndSummarize)
         do! expectCitation page
-        // Another document is open when the removal happens, so the view does not change.
+        // Removal now requires opening the summarized source and revealing its
+        // own options; the project marker must still disappear afterwards.
         do! openDocument page "article-pt.pdf"
         do! Assertions.Expect((projectRow page "Alpha").Locator(".summary-marker")).ToHaveTextAsync(LexScholar.Client.Texts.summaryReady)
+        do! openDocument page "article-en.pdf"
+        do! openDocument page "article-en.pdf"
         do! click (button (documentRow page "article-en.pdf") Texts.remove)
         do! Assertions.Expect(documentRow page "article-en.pdf").ToHaveCountAsync(0)
         do! Assertions.Expect((projectRow page "Alpha").Locator(".summary-marker")).ToHaveCountAsync(0) })

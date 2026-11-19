@@ -27,8 +27,7 @@ let private withBrowser (name: string) (journey: IBrowser -> Task) : Task = task
     use _ = browser
     do! journey browser }
 
-let private button (scope: ILocator) (name: string) =
-    scope.GetByRole(AriaRole.Button, LocatorGetByRoleOptions(Name = name, Exact = true))
+let private button = Ui.button
 
 let private click (control: ILocator) = task {
     do! Assertions.Expect(control).ToBeVisibleAsync()
