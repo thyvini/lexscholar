@@ -572,10 +572,15 @@ let ``a 202 with a running job keeps waiting and polls after the interval`` () =
         assertState (Some (Fetch (watch, project, document, true))) next
     | other -> failwithf "Expected a delayed Fetch, got %A" other
 
-[<Fact; Trait("Task", "T002"); Trait("Task", "T007")>]
+[<Fact; Trait("Task", "T002"); Trait("Task", "T007"); Trait("Task", "T025")>]
 let ``a job answered while the POST was open is shown, or its failure`` () =
     let shown, effect = update (Accepted (1, project, document, RemoteFinished generated)) asked
     assertState (Shown generated) shown.State
+    assertState (Some Reconciling) shown.Replacement
+    assertState (Some (FetchReplacement (shown.Watch, project, document, false))) effect
+    let discovered, effect = update (ReplacementPolled (shown.Watch, Some (RemoteFinished generated))) shown
+    assertState (Shown generated) discovered.State
+    assertState None discovered.Replacement
     assertState None effect
     let failed, _ = update (Accepted (1, project, document, RemoteFailed UsageLimitReached)) asked
     assertState (Failed UsageLimitReached) failed.State

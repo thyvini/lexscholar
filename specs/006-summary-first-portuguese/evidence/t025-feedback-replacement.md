@@ -48,3 +48,11 @@ All three P1 findings are **must fix**:
 RED: `scripts/check.sh T025` — **four deterministic assertion failures**, 29 tests, zero skips (`/tmp/lexscholar-check.TJBT9e`): overlapping cancellations, cross-pair canceled admission, ignored legacy results and unloaded-summary reconciliation.
 
 GREEN: `scripts/check.sh T025 T023 T024 T004 T008` — warning-as-error build, **190 passed, zero failures/skips**, preserving all prior review regressions and both-browser journeys. Full CI and fresh review remain required on the pushed head; no merge.
+
+## CI run 44599164741 — outdated legacy state-test expectation
+
+- Inspected the failed Test log, not retried. The only failure was `SummaryStateTests.a job answered while the POST was open is shown, or its failure`: line 579 expected `None`, but received `FetchReplacement` after an accepted finished ordinary POST. CI reported **1,003 total, 1,002 passed, one failed, zero skips**.
+- Cause: T025 intentionally starts read-only replacement discovery after loading a durable summary, including a finished POST response. This legacy T002/T007 test still asserted the pre-T025 absence of effects. The same changed behavior was already covered for ordinary GET completion; no runtime defect was identified in this failure.
+- Updated the assertion to require replacement discovery and `Reconciling`, then verify that discovering the same saved version keeps it visible and completes reconciliation with no additional effect. Added the T025 trait so this regression runs with the slice's tests in future.
+- GREEN: `scripts/check.sh T002 T007 T025` — warning-as-error build, **247 passed, zero failures/skips**.
+- Test/evidence-only fix; no production behavior changed. Full CI must validate the pushed head; no blind retry or merge.
