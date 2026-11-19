@@ -66,7 +66,7 @@ let private arrange (page: IPage) = task {
 let private summarize (page: IPage) = click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = LexScholar.Client.Texts.summarize, Exact = true)))
 let private panel (page: IPage) = page.Locator("section.summary")
 
-[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T011"); Trait("Task", "T007"); Trait("Category", "Browser")>]
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T011"); Trait("Task", "T007"); Trait("Task", "T010"); Trait("Category", "Browser")>]
 let ``she signs in, summarizes on her plan, meets the usage limit and signs out`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
         let script call =
@@ -89,7 +89,8 @@ let ``she signs in, summarizes on her plan, meets the usage limit and signs out`
         // Not signed in: the sign-in action is offered, branded as OpenAI asks.
         let signIn = page.Locator("button[data-oai-siwc-button]").First
         do! Assertions.Expect(signIn).ToContainTextAsync(LexScholar.Client.Texts.signIn)
-        do! Assertions.Expect(page.Locator(".chatgpt-account")).ToContainTextAsync("signed out")
+        do! Assertions.Expect(signIn).ToContainTextAsync("Continuar com o ChatGPT")
+        do! Assertions.Expect(page.Locator(".chatgpt-account")).ToContainTextAsync("não está conectado")
         do! click signIn
         let! url = authorization.Task
         let query = System.Web.HttpUtility.ParseQueryString url.Query
@@ -100,29 +101,30 @@ let ``she signs in, summarizes on her plan, meets the usage limit and signs out`
 
         // Back in the app, signed in, with the welcome once and the query removed.
         let welcome = page.Locator("section.chatgpt-welcome")
-        do! Assertions.Expect(welcome).ToContainTextAsync("You’re using your ChatGPT plan")
-        do! Assertions.Expect(welcome.GetByRole(AriaRole.Link, LocatorGetByRoleOptions(Name = "Manage usage"))).ToHaveAttributeAsync("href", usageUrl)
+        do! Assertions.Expect(welcome).ToContainTextAsync(Texts.welcomePlan)
+        do! Assertions.Expect(welcome.GetByRole(AriaRole.Link, LocatorGetByRoleOptions(Name = Texts.manageUsage))).ToHaveAttributeAsync("href", usageUrl)
         do! Assertions.Expect(page).Not.ToHaveURLAsync(Regex "chatgpt=")
         // The dismissal is a background request: wait for it before reloading.
         let dismissed = page.WaitForResponseAsync("**/api/chatgpt/welcome/dismiss")
-        do! click (button welcome "Got it")
+        do! click (button welcome Texts.gotIt)
         let! _ = dismissed
         do! Assertions.Expect(welcome).ToHaveCountAsync(0)
         let! _ = page.ReloadAsync()
         do! Assertions.Expect(page.GetByRole(AriaRole.Heading, PageGetByRoleOptions(Name = LexScholar.Client.Texts.projects, Exact = true)).First).ToBeVisibleAsync()
         do! Assertions.Expect(welcome).ToHaveCountAsync(0)
         do! openDocument page "article-en.pdf"
-        do! Assertions.Expect(page.Locator(".chatgpt-account")).ToContainTextAsync("Signed in to ChatGPT as researcher@example.test")
+        do! Assertions.Expect(page.Locator(".chatgpt-account")).ToContainTextAsync(Texts.chatGptAccount "researcher@example.test")
 
         // The first summary asks, naming the plan and her account.
         let dialog = page.GetByRole(AriaRole.Alertdialog)
         do! summarize page
-        do! Assertions.Expect(dialog).ToContainTextAsync("your ChatGPT plan (account researcher@example.test)")
-        do! Assertions.Expect(dialog).ToContainTextAsync("ChatGPT data controls")
-        do! Assertions.Expect(dialog.GetByRole(AriaRole.Link)).ToHaveAttributeAsync("href", Regex "help\\.openai\\.com")
+        do! Assertions.Expect(dialog).ToHaveAccessibleNameAsync("Enviar documentos ao ChatGPT?")
+        do! Assertions.Expect(dialog).ToContainTextAsync("researcher@example.test")
+        do! Assertions.Expect(dialog).ToContainTextAsync("controles de dados")
+        do! Assertions.Expect(dialog.GetByRole(AriaRole.Link, LocatorGetByRoleOptions(Name = Texts.confirmationHelp))).ToHaveAttributeAsync("href", "https://help.openai.com/pt-br/articles/20001542-using-your-chatgpt-plan-in-other-apps-and-sites")
         Assert.Empty(fake.RequestsTo("api.openai.com", "/v1/responses"))
-        do! click (button dialog "Send")
-        do! Assertions.Expect(panel page).ToContainTextAsync("Generated summary")
+        do! click (button dialog Texts.sendAndSummarize)
+        do! Assertions.Expect(panel page).ToContainTextAsync(Texts.summaryReady)
         do! Assertions.Expect((panel page).Locator(".summary-context")).ToContainTextAsync("ChatGPT plan")
         do! Assertions.Expect((panel page).GetByRole(AriaRole.Link)).ToHaveTextAsync([| "pp. 1–2"; "p. 3" |])
         let using = page.Locator(".summary-using-plan")
@@ -133,7 +135,7 @@ let ``she signs in, summarizes on her plan, meets the usage limit and signs out`
         do! click (button (panel page) LexScholar.Client.Texts.delete)
         do! click (button (page.GetByRole(AriaRole.Alertdialog)) LexScholar.Client.Texts.delete)
         do! summarize page
-        do! Assertions.Expect(panel page).ToContainTextAsync("Generated summary")
+        do! Assertions.Expect(panel page).ToContainTextAsync(Texts.summaryReady)
         do! Assertions.Expect(dialog).ToHaveCountAsync(0)
         Assert.Equal(2, (fake.RequestsTo("api.openai.com", "/v1/responses")).Length)
 
@@ -142,13 +144,13 @@ let ``she signs in, summarizes on her plan, meets the usage limit and signs out`
         do! click (button (page.GetByRole(AriaRole.Alertdialog)) LexScholar.Client.Texts.delete)
         do! openDocument page "article-pt.pdf"
         do! summarize page
-        let alert = page.GetByRole(AriaRole.Alert).Filter(LocatorFilterOptions(HasText = "Usage limit reached"))
+        let alert = page.GetByRole(AriaRole.Alert).Filter(LocatorFilterOptions(HasText = Texts.summaryUsageLimit))
         do! Assertions.Expect(alert).ToBeVisibleAsync()
         do! Assertions.Expect(page.Locator("a.manage-usage")).ToHaveAttributeAsync("href", usageUrl)
-        do! Assertions.Expect(page.Locator(".chatgpt-account")).ToContainTextAsync("Signed in to ChatGPT as researcher@example.test")
+        do! Assertions.Expect(page.Locator(".chatgpt-account")).ToContainTextAsync(Texts.chatGptAccount "researcher@example.test")
 
         // Signing out offers sign-in again and revokes at OpenAI.
         do! click (page.Locator("button.chatgpt-sign-out"))
         do! Assertions.Expect(page.Locator("button[data-oai-siwc-button]").First).ToBeVisibleAsync()
-        do! Assertions.Expect(page.Locator(".chatgpt-account")).ToContainTextAsync("signed out")
+        do! Assertions.Expect(page.Locator(".chatgpt-account")).ToContainTextAsync("não está conectado")
         Assert.Single(fake.RequestsTo("auth.openai.com", "/api/accounts/oauth/revoke")) |> ignore })

@@ -51,5 +51,5 @@ let ``fonts are served locally and fake sign-in shows the current account`` (bro
         do! click (button associated Texts.openDocument)
         do! signInWithChatGpt page harness fake
         do! click (button associated Texts.openDocument)
-        do! Assertions.Expect(page.Locator(".chatgpt-account")).ToContainTextAsync("Signed in to ChatGPT as researcher@example.test")
+        do! Assertions.Expect(page.Locator(".chatgpt-account")).ToContainTextAsync(Texts.chatGptAccount "researcher@example.test")
     })

@@ -35,3 +35,11 @@ let ``project and library failures have Portuguese messages and unknown codes ar
     Assert.Equal("Esse arquivo não é um PDF. Escolha um arquivo PDF.", FailureTexts.library Library.NotAPdf)
     Assert.Equal(Texts.genericFailure, Library.parseFailure 400 "{\"code\":\"unknown\"}" |> FailureTexts.library)
     Assert.Equal(Texts.genericFailure, FailureTexts.project Projects.RequestFailed)
+
+[<Fact; Trait("Task", "T010")>]
+let ``summary failures are Portuguese and unknown details are never shown`` () =
+    let failures = [ Summary.NotConfigured; Summary.Unavailable; Summary.NoText; Summary.NotEnoughText; Summary.TooManyPages; Summary.ServiceFailed None; Summary.ServiceFailed (Some "technical details"); Summary.RequestFailed; Summary.UsageLimitReached; Summary.SignedOut; Summary.NoPlanAccess; Summary.DestinationRequired; Summary.ConfirmationRequired (Summary.Plan "name") ]
+    for failure in failures do Assert.False(String.IsNullOrWhiteSpace(FailureTexts.summary failure))
+    Assert.Equal(Texts.genericFailure, FailureTexts.summary (Summary.ServiceFailed (Some "technical details")))
+    Assert.Equal(Texts.genericFailure, SummaryStatus.failureOfCode "unknown" |> FailureTexts.summary)
+    Assert.Equal("Limite de uso atingido. Consulte seu plano ou o limite deste aplicativo nas configurações do ChatGPT.", FailureTexts.summary Summary.UsageLimitReached)

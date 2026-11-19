@@ -91,9 +91,9 @@ let ``historical configured service summary retains its recorded provenance`` (b
         do! Assertions.Expect(context).ToContainTextAsync("archive.example.test:8080")
         do! Assertions.Expect(context).ToContainTextAsync("historic-model")
         do! Assertions.Expect(context).ToContainTextAsync(generatedAt.LocalDateTime.ToString("yyyy-MM-dd HH:mm"))
-        do! Assertions.Expect(context).ToContainTextAsync("pages 1–2")
-        do! Assertions.Expect(context).ToContainTextAsync("Not readable")
-        do! Assertions.Expect(context).ToContainTextAsync("1 generated points")
+        do! Assertions.Expect(context).ToContainTextAsync("pp. 1–2")
+        do! Assertions.Expect(context).ToContainTextAsync("Sem texto")
+        do! Assertions.Expect(context).ToContainTextAsync("1 ponto gerado")
         do! Assertions.Expect(page.Locator(".summary-using-plan")).ToHaveCountAsync(0)
     })
 
@@ -107,14 +107,14 @@ let ``a requested summary is labelled as generated, shows its context and plain-
         do! Ui.signInWithChatGpt page harness fake
         do! click (button (page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))) Texts.openDocument)
         do! click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = LexScholar.Client.Texts.summarize, Exact = true)))
-        do! click (button (page.GetByRole(AriaRole.Alertdialog)) "Send")
-        do! Assertions.Expect(panel page).ToContainTextAsync("Generated summary")
-        do! Assertions.Expect(panel page).ToContainTextAsync("for your review")
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) Texts.sendAndSummarize)
+        do! Assertions.Expect(panel page).ToContainTextAsync(Texts.summaryReady)
+        do! Assertions.Expect(panel page).ToContainTextAsync(Texts.generated)
         let context = panel page |> fun p -> p.Locator(".summary-context")
         do! Assertions.Expect(context).ToContainTextAsync("article-en.pdf")
         do! Assertions.Expect(context).ToContainTextAsync("ChatGPT plan")
         do! Assertions.Expect(context).ToContainTextAsync("gpt-")
-        do! Assertions.Expect(context).ToContainTextAsync("pages 1–12")
+        do! Assertions.Expect(context).ToContainTextAsync("pp. 1–12")
         let points = (panel page).Locator("ul.summary-points li")
         do! Assertions.Expect(points).ToHaveCountAsync(2)
         // Generated text is plain text: markup in a point is shown literally.
@@ -149,12 +149,12 @@ let ``citations are page references that leave the reader and summary unchanged`
         do! Ui.signInWithChatGpt page harness fake
         do! click (button (page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))) Texts.openDocument)
         do! click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = LexScholar.Client.Texts.summarize, Exact = true)))
-        do! click (button (page.GetByRole(AriaRole.Alertdialog)) "Send")
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) Texts.sendAndSummarize)
         let citation = (panel page).GetByRole(AriaRole.Link, LocatorGetByRoleOptions(Name = "p. 3", Exact = true))
         do! Assertions.Expect(citation).ToHaveAttributeAsync("href", Text.RegularExpressions.Regex("/content#page=3$"))
         do! click citation
         do! Assertions.Expect(page.GetByTestId("main").Locator("iframe")).ToHaveCountAsync(0)
-        do! Assertions.Expect(panel page).ToContainTextAsync("Generated summary") })
+        do! Assertions.Expect(panel page).ToContainTextAsync(Texts.summaryReady) })
 
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T007"); Trait("Category", "Browser")>]
 let ``with a configured service the plan alone is offered and confirmation can be cancelled`` (browserName: string) =
@@ -173,15 +173,15 @@ let ``with a configured service the plan alone is offered and confirmation can b
         let dialog = page.GetByRole(AriaRole.Alertdialog)
         do! click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = LexScholar.Client.Texts.summarize, Exact = true)))
         do! Assertions.Expect(dialog).ToContainTextAsync("article-en.pdf")
-        do! Assertions.Expect(dialog).ToContainTextAsync("ChatGPT plan")
-        do! click (button dialog "Cancel")
+        do! Assertions.Expect(dialog).ToContainTextAsync("ChatGPT")
+        do! click (button dialog Texts.cancel)
         do! Assertions.Expect(dialog).ToHaveCountAsync(0)
         do! Assertions.Expect(panel page).ToHaveCountAsync(0)
         Assert.Empty(fake.RequestsTo("api.openai.com", "/v1/responses"))
         // Asking again asks again; Send then produces the summary with one service request.
         do! click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = LexScholar.Client.Texts.summarize, Exact = true)))
-        do! click (button dialog "Send")
-        do! Assertions.Expect(panel page).ToContainTextAsync("Generated summary")
+        do! click (button dialog Texts.sendAndSummarize)
+        do! Assertions.Expect(panel page).ToContainTextAsync(Texts.summaryReady)
         Assert.Single(fake.RequestsTo("api.openai.com", "/v1/responses")) |> ignore })
 
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T010"); Trait("Task", "T007"); Trait("Category", "Browser")>]
@@ -194,10 +194,10 @@ let ``a rejected request shows its explanation and Try again asks the service ag
         do! Ui.signInWithChatGpt page harness fake
         do! click (button (page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))) Texts.openDocument)
         do! click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = LexScholar.Client.Texts.summarize, Exact = true)))
-        do! click (button (page.GetByRole(AriaRole.Alertdialog)) "Send")
-        let alert = page.GetByRole(AriaRole.Alert).Filter(LocatorFilterOptions(HasText = "The summary service"))
-        do! Assertions.Expect(alert).ToContainTextAsync("Model")
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) Texts.sendAndSummarize)
+        let alert = page.GetByRole(AriaRole.Alert).Filter(LocatorFilterOptions(HasText = Texts.genericFailure))
+        do! Assertions.Expect(alert).ToBeVisibleAsync()
         do! Assertions.Expect(alert).Not.ToContainTextAsync("service detail")
-        do! click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = "Try again", Exact = true)))
-        do! Assertions.Expect(panel page).ToContainTextAsync("Generated summary")
+        do! click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = Texts.retry, Exact = true)))
+        do! Assertions.Expect(panel page).ToContainTextAsync(Texts.summaryReady)
         Assert.Equal(2, (fake.RequestsTo("api.openai.com", "/v1/responses")).Length) })

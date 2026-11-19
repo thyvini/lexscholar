@@ -92,7 +92,7 @@ let ``deleting a finished summary requires confirmation and survives restart`` (
                 do! Ui.signInWithChatGpt page harness fake
                 do! openDocument page "article-en.pdf"
                 do! click (summarizeButton page)
-                do! click (button (page.GetByRole(AriaRole.Alertdialog)) "Send")
+                do! click (button (page.GetByRole(AriaRole.Alertdialog)) Texts.sendAndSummarize)
                 do! expectCitation page
                 do! click (button (panel page) LexScholar.Client.Texts.delete)
                 let dialog = page.GetByRole(AriaRole.Alertdialog)
@@ -124,7 +124,7 @@ let ``a summary asked on one document is found on return after opening another d
         do! Ui.signInWithChatGpt page harness fake
         do! openDocument page "article-en.pdf"
         do! click (summarizeButton page)
-        do! click (button (page.GetByRole(AriaRole.Alertdialog)) "Send")
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) Texts.sendAndSummarize)
         do! fake.Waiting.WaitAsync(TimeSpan.FromSeconds 30.)
         do! openDocument page "article-pt.pdf"
         do! Assertions.Expect(panel page).ToHaveCountAsync(0)
@@ -150,7 +150,7 @@ let ``a summary asked in one project is found on return after switching project`
         do! Ui.signInWithChatGpt page harness fake
         do! openDocument page "article-en.pdf"
         do! click (summarizeButton page)
-        do! click (button (page.GetByRole(AriaRole.Alertdialog)) "Send")
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) Texts.sendAndSummarize)
         do! fake.Waiting.WaitAsync(TimeSpan.FromSeconds 30.)
         do! createProject page "Beta"
         do! Assertions.Expect(panel page).ToHaveCountAsync(0)
@@ -174,13 +174,13 @@ let ``returning to a document while its summary runs shows it running, and the s
         do! Ui.signInWithChatGpt page harness fake
         do! openDocument page "article-en.pdf"
         do! click (summarizeButton page)
-        do! click (button (page.GetByRole(AriaRole.Alertdialog)) "Send")
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) Texts.sendAndSummarize)
         do! fake.Waiting.WaitAsync(TimeSpan.FromSeconds 30.)
         do! openDocument page "article-pt.pdf"
         do! openDocument page "article-en.pdf"
         // Back while it still runs: the running state, not the Summarize button.
-        do! Assertions.Expect(page.GetByRole(AriaRole.Status).Filter(LocatorFilterOptions(HasText = "Summarizing"))).ToBeVisibleAsync()
-        do! Assertions.Expect(button (page.GetByRole(AriaRole.Status).Filter(LocatorFilterOptions(HasText = "Summarizing"))) LexScholar.Client.Texts.stop).ToBeVisibleAsync()
+        do! Assertions.Expect(page.GetByRole(AriaRole.Status).Filter(LocatorFilterOptions(HasText = "Gerando resumo"))).ToBeVisibleAsync()
+        do! Assertions.Expect(button (page.GetByRole(AriaRole.Status).Filter(LocatorFilterOptions(HasText = "Gerando resumo"))) LexScholar.Client.Texts.stop).ToBeVisibleAsync()
         do! Assertions.Expect(summarizeButton page).ToHaveCountAsync(0)
         fake.Release()
         // No click: polling finds it.
@@ -200,14 +200,14 @@ let ``a summary that fails while she is on another document shows its message on
         do! Ui.signInWithChatGpt page harness fake
         do! openDocument page "article-en.pdf"
         do! click (summarizeButton page)
-        do! click (button (page.GetByRole(AriaRole.Alertdialog)) "Send")
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) Texts.sendAndSummarize)
         do! openDocument page "article-pt.pdf"
         do! Assertions.Expect(panel page).ToHaveCountAsync(0)
         do! openDocument page "article-en.pdf"
         // The failure belongs to the job, so it is found whether it ended before or after her return.
-        let alert = page.GetByRole(AriaRole.Alert).Filter(LocatorFilterOptions(HasText = "The summary service"))
+        let alert = page.GetByRole(AriaRole.Alert).Filter(LocatorFilterOptions(HasText = Texts.genericFailure))
         do! Assertions.Expect(alert).ToBeVisibleAsync()
-        do! click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = "Try again", Exact = true)))
+        do! click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = Texts.retry, Exact = true)))
         do! expectCitation page
         Assert.Equal(2, (fake.RequestsTo("api.openai.com", "/v1/responses")).Length) })
 
@@ -223,12 +223,12 @@ let ``Stop clears a running summary, the held call is cancelled and she can ask 
         do! Ui.signInWithChatGpt page harness fake
         do! openDocument page "article-en.pdf"
         do! click (summarizeButton page)
-        do! click (button (page.GetByRole(AriaRole.Alertdialog)) "Send")
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) Texts.sendAndSummarize)
         do! fake.Waiting.WaitAsync(TimeSpan.FromSeconds 30.)
-        do! click (button (page.GetByRole(AriaRole.Status).Filter(LocatorFilterOptions(HasText = "Summarizing"))) LexScholar.Client.Texts.stop)
+        do! click (button (page.GetByRole(AriaRole.Status).Filter(LocatorFilterOptions(HasText = "Gerando resumo"))) LexScholar.Client.Texts.stop)
         do! fake.Cancelled.WaitAsync(TimeSpan.FromSeconds 30.)
         do! Assertions.Expect(summarizeButton page).ToBeVisibleAsync()
-        do! Assertions.Expect(page.GetByRole(AriaRole.Status).Filter(LocatorFilterOptions(HasText = "Summarizing"))).ToHaveCountAsync(0)
+        do! Assertions.Expect(page.GetByRole(AriaRole.Status).Filter(LocatorFilterOptions(HasText = "Gerando resumo"))).ToHaveCountAsync(0)
         Assert.Equal(1, (fake.RequestsTo("api.openai.com", "/v1/responses")).Length)
         do! click (summarizeButton page)
         do! expectCitation page
@@ -264,16 +264,16 @@ let ``dismissing while the ask is still in flight stops the job that the late PO
             if response.Request.Method = "DELETE" then
                 deletes.Value <- deletes.Value + 1
                 (if deletes.Value = 1 then deleted else secondDeleted).TrySetResult() |> ignore)
-        do! click (button (page.GetByRole(AriaRole.Alertdialog)) "Send")
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) Texts.sendAndSummarize)
         let! route = intercepted.Task.WaitAsync(TimeSpan.FromSeconds 30.)
-        do! click (button (page.GetByRole(AriaRole.Status).Filter(LocatorFilterOptions(HasText = "Summarizing"))) "Dismiss")
+        do! click (button (page.GetByRole(AriaRole.Status).Filter(LocatorFilterOptions(HasText = "Gerando resumo"))) Texts.close)
         do! deleted.Task.WaitAsync(TimeSpan.FromSeconds 30.)
         Assert.Equal(0, (fake.RequestsTo("api.openai.com", "/v1/responses")).Length)
         do! route.ContinueAsync()
         // The POST creates the job after the first DELETE; the second DELETE stops it (whether or not its call reached the fake yet).
         do! secondDeleted.Task.WaitAsync(TimeSpan.FromSeconds 30.)
         do! Assertions.Expect(summarizeButton page).ToBeVisibleAsync()
-        do! Assertions.Expect(page.GetByRole(AriaRole.Status).Filter(LocatorFilterOptions(HasText = "Summarizing"))).ToHaveCountAsync(0)
+        do! Assertions.Expect(page.GetByRole(AriaRole.Status).Filter(LocatorFilterOptions(HasText = "Gerando resumo"))).ToHaveCountAsync(0)
         // The server holds nothing: the status list read after the last DELETE has no marker for the document or the project.
         do! Assertions.Expect((documentRow page "article-en.pdf").Locator(".summary-marker")).ToHaveCountAsync(0)
         do! Assertions.Expect((projectRow page "Alpha").Locator(".summary-marker")).ToHaveCountAsync(0) })
@@ -292,7 +292,7 @@ let ``while viewing another document the marker of a running summary turns to fi
         do! Ui.signInWithChatGpt page harness fake
         do! openDocument page "article-en.pdf"
         do! click (summarizeButton page)
-        do! click (button (page.GetByRole(AriaRole.Alertdialog)) "Send")
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) Texts.sendAndSummarize)
         do! fake.Waiting.WaitAsync(TimeSpan.FromSeconds 30.)
         do! openDocument page "article-pt.pdf"
         // Viewing B: A's marker and the project's marker say running; B has none.
@@ -317,7 +317,7 @@ let ``a failed summary is marked failed in the list`` (browserName: string) =
         do! Ui.signInWithChatGpt page harness fake
         do! openDocument page "article-en.pdf"
         do! click (summarizeButton page)
-        do! click (button (page.GetByRole(AriaRole.Alertdialog)) "Send")
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) Texts.sendAndSummarize)
         do! openDocument page "article-pt.pdf"
         do! Assertions.Expect((documentRow page "article-en.pdf").Locator(".summary-marker")).ToHaveTextAsync(LexScholar.Client.Texts.summaryFailed)
         do! Assertions.Expect((projectRow page "Alpha").Locator(".summary-marker")).ToHaveTextAsync(LexScholar.Client.Texts.summaryFailed) })
@@ -335,7 +335,7 @@ let ``removing a document with a finished summary clears the project's marker`` 
         do! Ui.signInWithChatGpt page harness fake
         do! openDocument page "article-en.pdf"
         do! click (summarizeButton page)
-        do! click (button (page.GetByRole(AriaRole.Alertdialog)) "Send")
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) Texts.sendAndSummarize)
         do! expectCitation page
         // Another document is open when the removal happens, so the view does not change.
         do! openDocument page "article-pt.pdf"
@@ -368,5 +368,5 @@ let ``a lost answer to the summary request still shows the marker of the job the
         do! Assertions.Expect(page.GetByRole(AriaRole.Alertdialog)).ToBeVisibleAsync()
         // The server gets the POST and starts the job, but the answer never reaches the page.
         use! _ = page.RouteAsync("**/summary", Func<IRoute, Task>(loseAnswer))
-        do! click (button (page.GetByRole(AriaRole.Alertdialog)) "Send")
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) Texts.sendAndSummarize)
         do! Assertions.Expect((documentRow page "article-en.pdf").Locator(".summary-marker")).ToHaveTextAsync(LexScholar.Client.Texts.summaryReady) })
