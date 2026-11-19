@@ -4,6 +4,16 @@ Prerequisites: build as in AGENTS.md; browsers installed (`scripts/install-brows
 
 ## Automated
 
+T025 feedback replacement: `scripts/check.sh T025 T023 T024 T004 T008`.
+
+### Regenerate with feedback (T025, both browsers)
+
+1. Open an existing summary. Enter optional feedback under "Como melhorar este resumo?" (2,000-character limit).
+2. Choose "Refazer resumo". Even for a previously confirmed account, a fresh dialog discloses document text and feedback. Cancel: no request starts, the old summary and draft remain.
+3. Confirm deliberately. The old summary stays visible while the replacement runs. Leave for the library and reopen the document: the old version remains and progress resumes.
+4. On success, the complete validated new summary replaces the old one; PDF citation links still open validated pages. A failed attempt shows an error while retaining the old version.
+5. Stop an active replacement: the old version remains. The client uses POST `/cancel`, not DELETE. No raw feedback is separately stored or logged; changing documents or reloading clears drafts. Ratings, point flags and Recentes/history remain out of scope.
+
 T023 optional first-summary instruction: `scripts/check.sh T023`. Impacted regressions: `scripts/check.sh T023 T016 T020 T021 T007` (builds with warnings as errors).
 
 ### Optional instruction (T023, both browsers)

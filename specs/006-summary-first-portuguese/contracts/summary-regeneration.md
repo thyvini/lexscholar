@@ -1,6 +1,14 @@
 # Summary replacement lifecycle (T024)
 
-Backend lifecycle only; no regeneration controls or feedback prompt are introduced here.
+T024 defines the backend lifecycle; T025 adds the replacement-aware feedback client described below.
+
+## Feedback client (T025)
+
+- A saved summary offers a transient optional feedback field, bounded to 2,000 characters. It is serialized as the existing `instruction` field on `POST /regenerate`, not a new `feedback` property. Blank feedback uses the default summary. The existing validation, user-role treatment and forwarding through single/map/intermediate/final-combine stages apply unchanged.
+- Every regeneration requires an explicit fresh confirmation naming the document/account and disclosing that feedback and extracted document text leave the machine. Confirmation cancel sends nothing and retains the draft. The confirmed request uses `destination: "chatgpt"` and `confirmSend: true`.
+- The client first loads the durable version through base GET, then polls `GET /regenerate`. The old version stays visible during consent, submission, progress, failure and cancellation; only a finished response replaces it. Returning after navigation resumes this lifecycle. Drafts clear on document/project change and after admission; neither browser storage nor logs contain a separate copy.
+- Stop is `POST /cancel` with antiforgery, never DELETE. If the POST is still in flight, the client also cancels after its eventual answer and waits for outstanding cancellation requests before allowing another replacement. This prevents a late cancel from deleting or stopping newly requested work. Explicit summary deletion remains a separate legacy operation.
+- No instruction history, rating/flags, saved feedback metadata or automatic retry. Generated text may reflect feedback; this does not store the raw draft separately.
 
 Base: `/api/projects/{projectId}/documents/{documentId}/summary`.
 

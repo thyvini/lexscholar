@@ -77,7 +77,7 @@ small { color: #596778; }
 .send-actions button { min-height: 44px; padding: 10px 18px; border-radius: 8px; }
 .send-actions .send-confirm { background: var(--accent); border-color: var(--accent); color: white; font-weight: 600; }
 .send-actions .send-confirm:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); color: white; }
-.summary.card, .summary-request.card { border-radius: .875rem; padding: 1.5rem; margin: 1.25rem 0; }
+.summary.card, .summary-request.card, .summary-feedback.card { border-radius: .875rem; padding: 1.5rem; margin: 1.25rem 0; }
 .summary-request h3, .summary h3 { margin: 0; font-size: 1.1rem; }
 .summary-request p { margin: .5rem 0 1.5rem; color: var(--text-muted); line-height: 1.6; }
 .summary-request-actions { display: flex; justify-content: flex-end; }

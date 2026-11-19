@@ -48,6 +48,83 @@ let private openDocument (page: IPage) (fileName: string) = task {
     do! click (button row Texts.openDocument)
     do! Assertions.Expect(page.GetByTestId("main").Locator("iframe")).ToHaveCountAsync(0) }
 
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T025"); Trait("Category", "Browser")>]
+let ``feedback replacement is atomic across navigation failure and non destructive stop`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        let newer = """{"points":[{"text":"Nova tese","pages":[2]},{"text":"Invalid citation","pages":[999]}]}"""
+        let fourth = TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)
+        use fake = new FakeOpenAi(fun number ->
+            match number with
+            | 1 -> ResponsesScript.Completed answer
+            | 2 -> ResponsesScript.Hold newer
+            | 3 -> ResponsesScript.Failed "server_error"
+            | _ -> fourth.TrySetResult() |> ignore; ResponsesScript.WaitUntilCancelled)
+        use harness = TestHarness.Start(serveClient = true, summaryHandler = fake)
+        let! page = Ui.openApp browser harness
+        let deletes = System.Collections.Concurrent.ConcurrentBag<string>()
+        page.Request.Add(fun request -> if request.Method = "DELETE" then deletes.Add(request.Url))
+        do! SummaryJourneyTests.arrange page
+        do! Ui.signInWithChatGpt page harness fake
+        do! openDocument page "article-en.pdf"
+        do! click (button (page.Locator("body")) Texts.summarize)
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) Texts.sendAndSummarize)
+        do! Assertions.Expect(page.Locator(".summary-points")).ToContainTextAsync("Main idea")
+        let feedback = "Explique os limites da tese."
+        do! page.GetByLabel(Texts.feedbackLabel).FillAsync(feedback)
+        do! click (button (page.Locator("body")) Texts.regenerate)
+        let dialog = page.GetByRole(AriaRole.Alertdialog)
+        do! Assertions.Expect(dialog).ToContainTextAsync(Texts.feedbackPrivacy)
+        do! click (button dialog Texts.sendAndSummarize)
+        do! fake.Waiting
+        do! Assertions.Expect(page.Locator(".summary-points")).ToContainTextAsync("Main idea")
+        do! click (button (page.Locator("body")) Texts.library)
+        do! openDocument page "article-en.pdf"
+        do! Assertions.Expect(page.Locator(".summary-points")).ToContainTextAsync("Main idea")
+        do! Assertions.Expect(page.GetByText(Texts.replacing)).ToBeVisibleAsync()
+        fake.Release()
+        do! Assertions.Expect(page.Locator(".summary-points")).ToContainTextAsync("Nova tese")
+        do! Assertions.Expect(page.Locator(".summary-points")).Not.ToContainTextAsync("Main idea")
+        do! Assertions.Expect(page.Locator(".summary-points")).Not.ToContainTextAsync("Invalid citation")
+        do! Assertions.Expect(page.Locator(".summary-points a.citation")).ToHaveAttributeAsync("href", System.Text.RegularExpressions.Regex("#page=2$"))
+        Assert.Contains(fake.RequestsTo("api.openai.com", "/v1/responses"), fun request -> request.Body.Contains(feedback))
+        do! click (button (page.Locator("body")) Texts.regenerate)
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) Texts.sendAndSummarize)
+        do! Assertions.Expect(page.GetByText(Texts.replacementFailed, PageGetByTextOptions(Exact = false))).ToBeVisibleAsync()
+        do! Assertions.Expect(page.Locator(".summary-points")).ToContainTextAsync("Nova tese")
+        do! click (button (page.Locator("body")) Texts.regenerate)
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) Texts.sendAndSummarize)
+        do! fourth.Task
+        do! click (button (page.Locator("body")) Texts.stop)
+        do! fake.Cancelled
+        do! Assertions.Expect(page.GetByLabel(Texts.feedbackLabel)).ToBeVisibleAsync()
+        do! Assertions.Expect(page.Locator(".summary-points")).ToContainTextAsync("Nova tese")
+        Assert.Empty deletes
+    })
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T025"); Trait("Category", "Browser")>]
+let ``feedback requires fresh consent and preserves the saved summary on cancellation`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use fake = new FakeOpenAi(ResponsesScript.Completed answer)
+        use harness = TestHarness.Start(serveClient = true, summaryHandler = fake)
+        let! page = Ui.openApp browser harness
+        do! SummaryJourneyTests.arrange page
+        do! Ui.signInWithChatGpt page harness fake
+        do! openDocument page "article-en.pdf"
+        do! click (button (page.Locator("body")) Texts.summarize)
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) Texts.sendAndSummarize)
+        do! Assertions.Expect(page.Locator(".summary-points")).ToContainTextAsync("Main idea")
+        let feedback = page.GetByLabel("Como melhorar este resumo?")
+        do! Assertions.Expect(feedback).ToBeVisibleAsync(LocatorAssertionsToBeVisibleOptions(Timeout = 5000.0f))
+        do! feedback.FillAsync("Explique os limites da tese.")
+        do! click (button (page.Locator("body")) "Refazer resumo")
+        let dialog = page.GetByRole(AriaRole.Alertdialog)
+        do! Assertions.Expect(dialog).ToBeVisibleAsync()
+        Assert.Single(fake.RequestsTo("api.openai.com", "/v1/responses")) |> ignore
+        do! click (button dialog Texts.cancel)
+        do! Assertions.Expect(feedback).ToHaveValueAsync("Explique os limites da tese.")
+        do! Assertions.Expect(page.Locator(".summary-points")).ToContainTextAsync("Main idea")
+    })
+
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T023"); Trait("Category", "Browser")>]
 let ``optional first summary instruction survives cancelled consent and is sent through the plan`` (browserName: string) =
     withBrowser browserName (fun browser -> task {

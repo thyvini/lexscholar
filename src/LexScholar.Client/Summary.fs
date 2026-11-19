@@ -73,6 +73,13 @@ type State =
     /// The DELETE of a finished, failed, running or still-requested summary (the previous state) is in flight: nothing can be asked until it answers.
     | Dismissing of previous: State
 
+type Replacement =
+    | AwaitingConsent of account: string
+    | Submitting of request: int
+    | Replacing
+    | Cancelling
+    | ReplacementFailed of Failure
+
 type Model =
     { /// The open document the summary belongs to.
       Project: Guid option
@@ -99,9 +106,19 @@ type Model =
       /// arrive, also after she left the document (reported when she is back).
       Failures: (Guid * Guid) list
       /// Transient draft for this open document only; never browser storage.
-      Instruction: string }
+      Instruction: string
+      Feedback: string
+      Replacement: Replacement option
+      CancelledReplacements: int list
+      ReplacementCancels: int }
 
 type Message =
+    | EditFeedback of string
+    | Regenerate of account: string
+    | ReplacementAnswered of request: int * project: Guid * document: Guid * Result<Remote, Failure>
+    | ReplacementPolled of watch: int * Remote option
+    | CancelReplacement
+    | ReplacementCancelled of watch: int * succeeded: bool
     | EditInstruction of string
     | Summarize
     | Dismiss
@@ -133,6 +150,9 @@ type Confirmed =
     | ConfirmedPlan
 
 type Effect =
+    | RegenerateSummary of request: int * project: Guid * document: Guid * feedback: string
+    | FetchReplacement of watch: int * project: Guid * document: Guid * delay: bool
+    | CancelRegeneration of watch: int * project: Guid * document: Guid
     | Send of request: int * project: Guid * document: Guid * destination: Destination option * confirmed: Confirmed option
     | SendWithInstruction of request: int * project: Guid * document: Guid * destination: Destination option * confirmed: Confirmed option * instruction: string
     /// Fetch the open document's state now (`delay` false) or after the polling interval (`delay` true).
@@ -140,9 +160,9 @@ type Effect =
     /// Dismissing a finished or failed summary deletes it on the server (F004 FR-010): otherwise asking again returns the old one.
     | DeleteSummary of project: Guid * document: Guid
 
-let initial = { Project = None; Document = None; State = Idle; Available = { Plan = false; Configured = false }; Choice = None; Progress = None; Request = 0; Watch = 0; Claim = 0; DismissFailed = false; Pending = []; Draining = []; Failures = []; Instruction = "" }
+let initial = { Project = None; Document = None; State = Idle; Available = { Plan = false; Configured = false }; Choice = None; Progress = None; Request = 0; Watch = 0; Claim = 0; DismissFailed = false; Pending = []; Draining = []; Failures = []; Instruction = ""; Feedback = ""; Replacement = None; CancelledReplacements = []; ReplacementCancels = 0 }
 
-let update (message: Message) (model: Model) : Model * Effect option =
+let private updateCore (message: Message) (model: Model) : Model * Effect option =
     // A late result is dropped because only `Generating request` accepts its own number,
     // and every new request takes a fresh one.
     // Any change of view or dismissal also ends the watch of the server's job: its late fetches are dropped.
@@ -301,6 +321,70 @@ let update (message: Message) (model: Model) : Model * Effect option =
         let abandoned, effect = abandon model
         { abandoned with Project = project; Document = document; DismissFailed = false; Instruction = "" }, effect
     | _ -> model, None
+
+/// Replacement jobs never enter the legacy destructive dismissal lifecycle.
+let update message model =
+    let observe remote =
+        match remote, model.Project, model.Document with
+        | Some (RemoteRunning progress), Some project, Some document ->
+            { model with Replacement = Some Replacing; Progress = progress; Feedback = "" },
+            Some (FetchReplacement (model.Watch, project, document, true))
+        | Some (RemoteFinished generated), _, _ ->
+            { model with State = Shown generated; Replacement = None; Progress = None; Feedback = "" }, None
+        | Some (RemoteFailed failure), _, _ ->
+            { model with Replacement = Some (ReplacementFailed failure); Progress = None }, None
+        | _ -> { model with Replacement = None; Progress = None }, None
+    match message with
+    | EditFeedback value when (match model.State, model.Replacement with Shown _, (None | Some (ReplacementFailed _)) -> true | _ -> false) ->
+        let value = if isNull value then "" else value
+        if value.Length <= LexScholar.Domain.SummaryInstruction.maximumCharacters then { model with Feedback = value }, None
+        else model, None
+    | Regenerate account when model.Available.Plan && model.CancelledReplacements.IsEmpty && model.ReplacementCancels = 0 && (match model.State, model.Replacement with Shown _, (None | Some (ReplacementFailed _)) -> true | _ -> false) ->
+        { model with Replacement = Some (AwaitingConsent account) }, None
+    | ConfirmSend when (match model.Replacement with Some (AwaitingConsent _) -> true | _ -> false) ->
+        match model.Project, model.Document with
+        | Some project, Some document ->
+            let request = model.Request + 1
+            { model with Replacement = Some (Submitting request); Request = request; Watch = model.Watch + 1 },
+            Some (RegenerateSummary (request, project, document, model.Feedback))
+        | _ -> model, None
+    | CancelSend when (match model.Replacement with Some (AwaitingConsent _) -> true | _ -> false) ->
+        { model with Replacement = None }, None
+    | CancelReplacement ->
+        match model.Project, model.Document, model.Replacement with
+        | Some project, Some document, Some (Submitting _ | Replacing) ->
+            let cancelled = match model.Replacement with Some (Submitting request) -> request :: model.CancelledReplacements | _ -> model.CancelledReplacements
+            let watch = model.Watch + 1
+            { model with Replacement = Some Cancelling; Watch = watch; CancelledReplacements = cancelled; ReplacementCancels = model.ReplacementCancels + 1 },
+            Some (CancelRegeneration (watch, project, document))
+        | _ -> model, None
+    | ReplacementAnswered (request, project, document, _) when List.contains request model.CancelledReplacements ->
+        { model with CancelledReplacements = List.filter ((<>) request) model.CancelledReplacements; ReplacementCancels = model.ReplacementCancels + 1 },
+        Some (CancelRegeneration (model.Watch, project, document))
+    | ReplacementAnswered (request, project, document, result) when model.Replacement = Some (Submitting request) && (model.Project, model.Document) = (Some project, Some document) ->
+        match result with
+        | Ok remote -> observe (Some remote)
+        | Error failure -> { model with Replacement = Some (ReplacementFailed failure) }, None
+    | ReplacementPolled (watch, remote) when watch = model.Watch && (match model.State, model.Replacement with Shown _, (None | Some Replacing) -> true | _ -> false) -> observe remote
+    | ReplacementCancelled (watch, succeeded) ->
+        let model = { model with ReplacementCancels = max 0 (model.ReplacementCancels - 1) }
+        if watch <> model.Watch || model.Replacement <> Some Cancelling then model, None
+        elif succeeded && (model.ReplacementCancels > 0 || not model.CancelledReplacements.IsEmpty) then model, None
+        elif succeeded then
+            match model.Project, model.Document with
+            | Some project, Some document -> { model with Replacement = None; Feedback = "" }, Some (Fetch (watch, project, document, false))
+            | _ -> { model with Replacement = None }, None
+        else { model with Replacement = Some (ReplacementFailed RequestFailed) }, None
+    | ReplacementAnswered _ | ReplacementPolled _ -> model, None
+    | Delete | Summarize | Dismiss | Close | Stop when model.Replacement.IsSome -> model, None
+    | ReaderChanged (project, document) when (project, document) <> (model.Project, model.Document) ->
+        updateCore message { model with Replacement = None; Feedback = "" }
+    | _ ->
+        let changed, effect = updateCore message model
+        match message, changed.State, effect, changed.Project, changed.Document with
+        | (Polled _ | Accepted _), Shown _, None, Some project, Some document ->
+            changed, Some (FetchReplacement (changed.Watch, project, document, false))
+        | _ -> changed, effect
 
 /// Follows the active project and opened document, fetching the summary job on change.
 let followOpened (library: Library.Model) (model: Model) : Model * Effect list =
