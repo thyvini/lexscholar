@@ -1,5 +1,13 @@
 # T020 — Send confirmation, screen 04 ($155)
 
+## PR #129 accessibility review correction
+
+Reviewer P2 **must fix**: associate the consent disclosure and information note with the alertdialog using `aria-describedby`, so initial Cancel focus does not omit the consent details from its accessible description. Stable IDs now reference both paragraphs for plan confirmation and only the applicable disclosure for the retained service branch. No text, focus or consent behavior changed.
+
+- RED: `scripts/check.sh T020` — 2 browser failures, expected `aria-describedby` association was absent (`/tmp/lexscholar-check.HFmOnH`).
+- GREEN: `scripts/check.sh T020` — warning-as-error build passed; **20 passed, 0 failed, 0 skipped**.
+- Regression in Chromium and Firefox checks the referenced document/account disclosure and note, and the complete computed accessible description; existing keyboard cancellation/send assertions still pass. Real screen-reader output remains manual validation.
+
 Based on `origin/release/0.4.0` at `3bef757` (including #128). Scope: send confirmation only; no other summary layout or F007 changes.
 
 ## RED

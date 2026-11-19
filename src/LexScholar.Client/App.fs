@@ -623,14 +623,18 @@ module private Ui =
             "role" => "alertdialog"
             "aria-label" => Texts.confirmationTitle
             "aria-modal" => "true"
+            "aria-describedby" =>
+                (match target with
+                 | Summary.Service _ -> "send-disclosure"
+                 | Summary.Plan _ -> "send-disclosure send-information")
             on.event "cancel" (fun _ -> dispatch Summary.CancelSend)
             h3 { text Texts.confirmationTitle }
             match target with
-            | Summary.Service (host, model) -> p { text (Texts.confirmationService document.FileName host model) }
+            | Summary.Service (host, model) -> p { attr.id "send-disclosure"; text (Texts.confirmationService document.FileName host model) }
             | Summary.Plan account ->
-                p { text (Texts.confirmationPlan document.FileName document.PageCount account) }
+                p { attr.id "send-disclosure"; text (Texts.confirmationPlan document.FileName document.PageCount account) }
                 a { attr.href Texts.confirmationHelpUrl; "target" => "_blank"; "rel" => "noopener noreferrer"; text Texts.confirmationHelp }
-                p { attr.``class`` "send-info"; text Texts.confirmationNote }
+                p { attr.id "send-information"; attr.``class`` "send-info"; text Texts.confirmationNote }
             div {
                 attr.``class`` "send-actions"
                 button {

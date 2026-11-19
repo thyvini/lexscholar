@@ -61,6 +61,13 @@ let ``send confirmation is a centered modal with keyboard cancellation and delib
         let summarize = button (page.Locator("body")) Texts.summarize
         do! click summarize
         let dialog = page.GetByRole(AriaRole.Alertdialog)
+        do! Assertions.Expect(dialog).ToHaveAttributeAsync("aria-describedby", "send-disclosure send-information")
+        let! disclosure = dialog.Locator("#send-disclosure").InnerTextAsync()
+        let! information = dialog.Locator("#send-information").InnerTextAsync()
+        Assert.Contains("article-en.pdf", disclosure)
+        Assert.Contains("researcher@example.test", disclosure)
+        Assert.Equal(Texts.confirmationNote, information)
+        do! Assertions.Expect(dialog).ToHaveAccessibleDescriptionAsync($"{disclosure} {information}")
         do! Assertions.Expect(dialog).ToHaveCSSAsync("position", "fixed")
         do! Assertions.Expect(dialog).ToHaveAttributeAsync("aria-modal", "true")
         let! modal = dialog.EvaluateAsync<bool>("e => e.matches(':modal')")
