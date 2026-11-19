@@ -36,3 +36,15 @@ RED: `scripts/check.sh T025` — **six deterministic assertion failures**, 23 te
 GREEN: `scripts/check.sh T025 T023 T024 T004 T008` — warning-as-error build, **185 passed, zero failures/skips**. Additional deterministic coverage keeps uncertainty fenced across navigation even when discovery sees the old saved version; both browser journeys also verify terminal failure deletion is enabled and cancellation preserves the summary.
 
 Full-suite CI and fresh GPT review remain required on the pushed PR head. No merge performed.
+
+## Second review follow-up — pair ownership and ignored results
+
+All three P1 findings are **must fix**:
+
+- Cancellation counts now belong to `(project, document)`, as do submission/uncertainty checks. Finishing B's cancellation reconciles B immediately even if A's inactive cancellation answers last. A canceled in-flight POST can drain without blocking B's consent, admission or running state.
+- The wrapper starts replacement discovery only when the legacy reducer actually accepted a result and changed the model. Ignored/stale `Polled` and `Accepted` messages no longer replace open consent, submission, running, cancellation or terminal-error state. Deterministic coverage exercises stale/current-but-inapplicable watches and wrong-pair/request answers.
+- After an uncertain POST invalidates a saved-version fetch during navigation, cancellation reconciliation first hydrates the saved summary if the current state is not `Shown`. Only then does replacement discovery run. Both successful and failed cancellation paths are covered; the old version remains visible and uncertainty remains fenced on failure.
+
+RED: `scripts/check.sh T025` — **four deterministic assertion failures**, 29 tests, zero skips (`/tmp/lexscholar-check.TJBT9e`): overlapping cancellations, cross-pair canceled admission, ignored legacy results and unloaded-summary reconciliation.
+
+GREEN: `scripts/check.sh T025 T023 T024 T004 T008` — warning-as-error build, **190 passed, zero failures/skips**, preserving all prior review regressions and both-browser journeys. Full CI and fresh review remain required on the pushed head; no merge.

@@ -110,6 +110,8 @@ T019 review correction: `OpenDocument` always opens without disclosure; `RevealO
 
 T025 review reconciliation: per-pair `Submissions` survive navigation; a late admission answer advances the watch to invalidate earlier discovery. `UncertainReplacements` survives navigation until nondestructive cancellation fences pending admission, including after a lost POST response. Failed cancellation offers Stop again, never fresh regeneration; a saved discovery alone cannot rule out delayed admission. Successful cancellation reconciles through `FetchReplacement`, adopting completion if it won the race. `Reconciling` permits draft editing but not submission, and discovery of the same saved version preserves that draft. Terminal `ReplacementFailed` allows explicit confirmed deletion; uncertainty does not.
 
+T025 second-review guards: `ReplacementCancels` is a map keyed by project/document, and `replacementBusy` checks only the current pair's cancellation/admission. Inactive callbacks cannot hold the active pair in `Cancelling`. The wrapper initiates discovery only after a legacy result actually changed the model; ignored stale answers preserve consent and replacement state. Cancellation reconciliation uses legacy `Fetch` to hydrate an unloaded saved version first, then `FetchReplacement` once `Shown`.
+
 ## Request flow
 
 T023 privacy follow-up (PR #133): `summarizeWithInstruction` discards all service `ErrorStatus` prose for nonblank instructed calls before failure/job-state retention, preserving status numbers and recognized categories. This prevents refusal echoes from retaining user instructions; default uninstructed failure behavior is unchanged.

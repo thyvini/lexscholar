@@ -12,6 +12,9 @@ T024 defines the backend lifecycle; T025 adds the replacement-aware feedback cli
 
 ### Admission and uncertainty reconciliation
 
+- Cancellation counts, pending-admission guards and uncertainty are pair-owned. An inactive pair's pending or completed cancellation cannot block or advance the open pair's lifecycle. A cancelled POST still drains against its original pair.
+- Ignored/stale legacy summary responses do not initiate replacement discovery or change replacement/consent state. If an uncertain POST invalidates a pending durable fetch before it renders, cancellation completion first reloads the durable version, then performs replacement-aware reconciliation.
+
 - Submission request identities survive document/project navigation. Returning while admission is pending cannot start another replacement, and the eventual POST response invalidates pre-admission discovery results.
 - A POST transport failure may be a lost successful response. The client therefore fences pending admission with POST `/cancel` before allowing another submission. A failed/unknown cancellation remains unresolved across navigation: even a finished discovery response cannot prove a delayed admission has ended. Stop can retry the nondestructive fence; fresh generation stays unavailable until successful cancellation and reconciliation.
 - After successful cancellation, GET `/regenerate` reconciles the actual saved state, including a replacement whose atomic completion beat cancellation. It is not routed through legacy fetch handling that ignores results while a saved summary is shown.

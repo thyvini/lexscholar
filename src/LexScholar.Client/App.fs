@@ -939,7 +939,7 @@ module private Ui =
                             button {
                                 attr.``type`` "button"
                                 attr.id "summary-request"
-                                attr.disabled (not summary.Available.Plan || summary.Replacement = Some Summary.Reconciling || summary.ReplacementCancels > 0 || not summary.CancelledReplacements.IsEmpty)
+                                attr.disabled (not summary.Available.Plan || summary.Replacement = Some Summary.Reconciling || Summary.replacementBusy summary)
                                 on.click (fun _ ->
                                     match chatGpt.Status with
                                     | ChatGpt.SignedIn account -> dispatch (Summary.Regenerate account.Name)
