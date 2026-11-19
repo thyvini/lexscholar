@@ -982,12 +982,15 @@ module private Ui =
                             span { attr.``class`` "signed-in"; text Texts.signedIn }
                             elt "details" {
                                 elt "summary" { "aria-label" => Texts.account; text Texts.account }
-                                p { text account.Name }
-                                button {
-                                    attr.``type`` "button"
-                                    attr.disabled state.ChatGpt.SigningOut
-                                    on.click (fun _ -> dispatch' (ChatGptMsg ChatGpt.SignOut))
-                                    text Texts.signOut
+                                div {
+                                    attr.``class`` "account-panel"
+                                    p { text account.Name }
+                                    button {
+                                        attr.``type`` "button"
+                                        attr.disabled state.ChatGpt.SigningOut
+                                        on.click (fun _ -> dispatch' (ChatGptMsg ChatGpt.SignOut))
+                                        text Texts.signOut
+                                    }
                                 }
                             }
                         }
