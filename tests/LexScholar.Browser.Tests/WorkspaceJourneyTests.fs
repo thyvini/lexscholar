@@ -9,6 +9,88 @@ open LexScholar.Client
 open LexScholar.Server.Tests
 open LexScholar.Browser.Tests.Ui
 
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T021"); Trait("Category", "Browser")>]
+let ``unbroken project names keep the PDF control visible and keyboard reachable across widths`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use harness = TestHarness.Start(serveClient = true)
+        let! page = openApp browser harness
+        do! SummaryJourneyTests.arrange page
+        let name = String.replicate 120 "Projeto"
+        do! page.GetByLabel(Texts.projectName).FillAsync(name)
+        do! click (button (page.Locator("body")) Texts.createProject)
+        let project = page.Locator("ul.projects li").Filter(LocatorFilterOptions(HasText = name))
+        do! click (button project Texts.select)
+        do! Assertions.Expect(project).ToHaveAttributeAsync("aria-current", "true")
+        do! click (button (page.Locator("body")) Texts.library)
+        do! click (button (page.Locator("ul.documents li")) Texts.addFocused)
+        do! click (button (page.Locator("ul.project-documents li")) Texts.openDocument)
+        let heading = page.GetByTestId("main").Locator(".document-heading")
+        let pdf = link heading Texts.openPdf
+        do! Assertions.Expect(heading.Locator("p")).ToContainTextAsync(name)
+        for width in [ 1440; 1000; 900; 800; 1440 ] do
+            do! page.SetViewportSizeAsync(width, 900)
+            let! fits = heading.EvaluateAsync<bool>("""element => {
+                const pdf = element.querySelector('.open-pdf').getBoundingClientRect();
+                const heading = element.getBoundingClientRect();
+                const details = element.querySelector('p');
+                return pdf.left >= heading.left && pdf.right <= heading.right + 1
+                    && pdf.right <= window.innerWidth && details.scrollWidth <= details.clientWidth + 1;
+            }""")
+            Assert.True(fits, $"PDF and complete project details must fit the heading at {width}px")
+            do! pdf.FocusAsync()
+            do! page.Keyboard.PressAsync("Tab")
+            do! page.Keyboard.PressAsync("Shift+Tab")
+            do! Assertions.Expect(pdf).ToBeFocusedAsync()
+            do! Assertions.Expect(pdf).ToHaveCSSAsync("outline-style", "solid")
+            do! Assertions.Expect(pdf).ToHaveAttributeAsync("target", "_blank")
+            do! Assertions.Expect(pdf).ToHaveAttributeAsync("rel", "noopener")
+    })
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T021"); Trait("Category", "Browser")>]
+let ``document heading sits above separate request and summary cards`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use fake = new FakeOpenAi(ResponsesScript.Completed """{"points":[{"text":"First point","pages":[1]},{"text":"Second point","pages":[2]}]}""")
+        use harness = TestHarness.Start(serveClient = true, summaryHandler = fake)
+        let! page = openApp browser harness
+        do! SummaryJourneyTests.arrange page
+        do! signInWithChatGpt page harness fake
+        do! click (button (page.Locator("ul.project-documents li")) Texts.openDocument)
+        let main = page.GetByTestId("main")
+        let heading = main.Locator(".document-heading")
+        do! Assertions.Expect(heading).ToBeVisibleAsync()
+        // A surface around the whole document would swallow the intended separation.
+        do! Assertions.Expect(heading.Locator("xpath=ancestor::*[contains(concat(' ', normalize-space(@class), ' '), ' card ')]")).ToHaveCountAsync(0)
+        let request = main.Locator(".summary-request")
+        do! Assertions.Expect(request).ToHaveCSSAsync("background-color", "rgb(255, 255, 255)")
+        do! Assertions.Expect(request).ToHaveCSSAsync("border-top-width", "1px")
+        let summarize = button request Texts.summarize
+        do! Assertions.Expect(summarize).ToHaveCSSAsync("background-color", "rgb(14, 110, 128)")
+        do! Assertions.Expect(summarize).ToHaveCSSAsync("color", "rgb(255, 255, 255)")
+        let! headingBox = heading.BoundingBoxAsync()
+        let! requestBox = request.BoundingBoxAsync()
+        let! actionBox = summarize.BoundingBoxAsync()
+        Assert.True(headingBox.Y + headingBox.Height < requestBox.Y)
+        Assert.True(actionBox.X > requestBox.X + requestBox.Width / 2.0f)
+        do! click summarize
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) Texts.sendAndSummarize)
+        let summary = main.Locator("section.summary")
+        do! Assertions.Expect(summary).ToContainTextAsync("Second point")
+        do! Assertions.Expect(summary).ToHaveCSSAsync("background-color", "rgb(255, 255, 255)")
+        do! Assertions.Expect(summary).ToHaveCSSAsync("border-top-width", "1px")
+        do! Assertions.Expect(summary.Locator(".summary-label")).ToHaveCSSAsync("background-color", "rgb(255, 246, 229)")
+        do! Assertions.Expect(summary.Locator(".summary-label")).ToHaveCSSAsync("color", "rgb(92, 59, 0)")
+        let points = summary.Locator(".summary-points")
+        do! Assertions.Expect(points).ToHaveCSSAsync("list-style-type", "none")
+        do! Assertions.Expect(points).ToHaveCSSAsync("padding-left", "0px")
+        do! Assertions.Expect(points.Locator("li").Nth(1)).ToHaveCSSAsync("margin-top", "24px")
+        let! font = main.EvaluateAsync<string>("element => getComputedStyle(element).fontFamily")
+        do! Assertions.Expect(points).ToHaveCSSAsync("font-family", font)
+        do! Assertions.Expect(points.Locator("a").First).ToHaveAttributeAsync("target", "_blank")
+        do! Assertions.Expect(link heading Texts.openPdf).ToHaveAttributeAsync("target", "_blank")
+        let! summaryBox = summary.BoundingBoxAsync()
+        Assert.True(headingBox.Y + headingBox.Height < summaryBox.Y)
+    })
+
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T019"); Trait("Category", "Browser")>]
 let ``late successful project selection preserves newer library navigation`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
