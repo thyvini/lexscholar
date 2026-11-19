@@ -343,3 +343,36 @@ let ``save failure or cancelled effective token cannot replace the durable versi
     Assert.Equal(Some summary, stored.Value)
     finish.SetResult()
     finish2.SetResult()
+
+[<Fact; Trait("Task", "T024")>]
+let ``cancelled admission fences every registration path while a fresh request can retry`` () =
+    let stored = ref (Some summary)
+    let jobs = registry (ref true) stored
+    let admission, lease = jobs.PrepareReplacement key
+    use _ = lease
+    jobs.Cancel key
+    Assert.True admission.IsCancellationRequested
+    use source = new CancellationTokenSource()
+    Assert.Equal(StartOutcome.Cancelled, jobs.StartWith(key, source, source.Token, noJob, regenerate = true, admission = admission))
+    Assert.Equal(StartOutcome.Cancelled, jobs.StartFailed(key, "signed_out", "expired", regenerate = true, admission = admission))
+    Assert.Equal(StartOutcome.Cancelled, jobs.Start(key, CancellationToken.None, noJob, regenerate = true, admission = admission))
+    let retry, retryLease = jobs.PrepareReplacement key
+    use _ = retryLease
+    Assert.False retry.IsCancellationRequested
+    Assert.Equal(Started, jobs.StartFailed(key, "service_failed", "retry", regenerate = true, admission = retry))
+    Assert.Equal(Some summary, stored.Value)
+
+[<Theory; Trait("Task", "T024")>]
+[<InlineData(false)>]
+[<InlineData(true)>]
+let ``DELETE and association removal invalidate preparation even if a new saved row appears`` removeAssociation =
+    let stored = ref (Some summary)
+    let jobs = registry (ref true) stored
+    let admission, lease = jobs.PrepareReplacement key
+    use _ = lease
+    if removeAssociation then jobs.RemoveAssociation(key, fun () -> stored.Value <- None)
+    else jobs.Stop key
+    // A later request has saved a different version before the old preparation resumes.
+    stored.Value <- Some { summary with Model = "newer" }
+    Assert.Equal(StartOutcome.Cancelled, jobs.Start(key, CancellationToken.None, noJob, regenerate = true, admission = admission))
+    Assert.Equal("newer", stored.Value.Value.Model)

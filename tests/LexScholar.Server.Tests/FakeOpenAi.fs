@@ -71,7 +71,7 @@ type FakeOpenAi(responses: int -> ResponsesScript) =
     let waiting = TaskCompletionSource()
     let cancelled = TaskCompletionSource()
     let release = TaskCompletionSource()
-    let tokenArrived = TaskCompletionSource()
+    let mutable tokenArrived = TaskCompletionSource()
     let mutable tokenHold : TaskCompletionSource option = None
 
     new(always: ResponsesScript) = new FakeOpenAi(fun _ -> always)
@@ -100,12 +100,13 @@ type FakeOpenAi(responses: int -> ResponsesScript) =
     member _.Waiting : Task = waiting.Task
     member _.Cancelled : Task = cancelled.Task
     member _.Release() = release.TrySetResult() |> ignore
-    /// Completes when the first token request arrives.
+    /// Completes when the first token request arrives (reset by HoldTokens for a later refresh handshake).
     member _.TokenArrived : Task = tokenArrived.Task
 
     /// Holds every token response until the returned function is called (for race tests).
     member _.HoldTokens() : (unit -> unit) =
         let hold = TaskCompletionSource()
+        tokenArrived <- TaskCompletionSource()
         tokenHold <- Some hold
         fun () -> hold.TrySetResult() |> ignore
 
