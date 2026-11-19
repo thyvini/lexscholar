@@ -257,7 +257,7 @@ let private finishThenStop (workspace: TemporaryWorkspace) (script: ChatScript) 
     settleJob harness project document
     project, document
 
-[<Fact; Trait("Task", "T006")>]
+[<Fact; Trait("Task", "T006"); Trait("Task", "T016")>]
 let ``a finished summary is found after the host restarts, with its time, host and model`` () =
     use workspace = TemporaryWorkspace.Create()
     let project, document = finishThenStop workspace (Reply answer)

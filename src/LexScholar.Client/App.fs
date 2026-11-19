@@ -11,6 +11,7 @@ open Elmish
 open Microsoft.AspNetCore.Components
 open Microsoft.AspNetCore.Components.Forms
 open Microsoft.AspNetCore.Components.WebAssembly.Http
+open Microsoft.JSInterop
 open LexScholar.Domain
 open LexScholar.Client.Projects
 
@@ -142,33 +143,21 @@ module Api =
         let! result = send http HttpMethod.Delete $"api/projects/{projectId:D}/documents/{documentId:D}" None
         return result |> Result.map ignore }
 
-    /// Check availability without downloading the entire PDF before the native viewer opens it.
-    let checkContent (http: HttpClient) (url: string) = async {
-        try
-            use request = new HttpRequestMessage(HttpMethod.Get, url)
-            request.Headers.Range <- Headers.RangeHeaderValue(Nullable 0L, Nullable 0L)
-            use! response = http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead) |> Async.AwaitTask
-            if response.IsSuccessStatusCode then return Ok ()
-            else
-                let! body = response.Content.ReadAsStringAsync() |> Async.AwaitTask
-                return Error (Reader.parseFailure (int response.StatusCode) body)
-        with _ -> return Error Reader.RequestFailed }
-
     let changeRole (http: HttpClient) (projectId: Guid) (documentId: Guid) documentRole = async {
         let body = JsonSerializer.Serialize({| role = roleName documentRole |})
         let content = new StringContent(body, Encoding.UTF8, "application/json") :> HttpContent
         let! result = send http HttpMethod.Patch $"api/projects/{projectId:D}/documents/{documentId:D}" (Some content)
         return result |> Result.map ignore |> Result.mapError (function
-            | Library.NotFound -> Reader.AssociationNotFound
-            | Library.InvalidRole -> Reader.InvalidRole
-            | _ -> Reader.RequestFailed) }
+            | Library.NotFound -> Library.NotFound
+            | Library.InvalidRole -> Library.InvalidRole
+            | _ -> Library.RequestFailed) }
 
     /// Requests a summary. The server answers with the job's state (202, or 200 when one exists); nothing is streamed and
     /// leaving the document does not abort the request. Failures never show response details.
     /// The state of the pair's summary job: None when the server has nothing (404); Error when it could not be asked.
-    let summaryState (http: HttpClient) (projectId: Guid) (documentId: Guid) : Async<Result<Summary.Remote option, unit>> = async {
+    let summaryStateAt suffix (http: HttpClient) (projectId: Guid) (documentId: Guid) : Async<Result<Summary.Remote option, unit>> = async {
         try
-            use! response = http.GetAsync($"api/projects/{projectId:D}/documents/{documentId:D}/summary") |> Async.AwaitTask
+            use! response = http.GetAsync($"api/projects/{projectId:D}/documents/{documentId:D}/summary{suffix}") |> Async.AwaitTask
             if response.StatusCode = HttpStatusCode.NotFound then return Ok None
             elif not response.IsSuccessStatusCode then return Error ()
             else
@@ -177,6 +166,8 @@ module Api =
                 | Some remote -> return Ok (Some remote)
                 | None -> return Error ()
         with _ -> return Error () }
+
+    let summaryState http project document = summaryStateAt "" http project document
 
     /// The status of every summary, for the list markers; Error when it could not be read.
     let summaryStatuses (http: HttpClient) : Async<Result<SummaryStatus.StatusEntry list, unit>> = async {
@@ -191,29 +182,34 @@ module Api =
         with _ -> return Error () }
 
     /// Deletes the pair's finished or failed summary on the server (idempotent); false when it could not be deleted.
-    let dismissSummary (http: HttpClient) (projectId: Guid) (documentId: Guid) : Async<bool> = async {
+    let dismissSummaryAt replacement (http: HttpClient) (projectId: Guid) (documentId: Guid) : Async<bool> = async {
         try
             use! tokenResponse = http.GetAsync("api/antiforgery") |> Async.AwaitTask
             if not tokenResponse.IsSuccessStatusCode then return false
             else
                 let! tokenBody = tokenResponse.Content.ReadAsStringAsync() |> Async.AwaitTask
                 use tokenJson = JsonDocument.Parse(tokenBody)
-                use request = new HttpRequestMessage(HttpMethod.Delete, $"api/projects/{projectId:D}/documents/{documentId:D}/summary")
+                let suffix = if replacement then "/cancel" else ""
+                let method = if replacement then HttpMethod.Post else HttpMethod.Delete
+                use request = new HttpRequestMessage(method, $"api/projects/{projectId:D}/documents/{documentId:D}/summary{suffix}")
                 request.Headers.Add("X-CSRF-TOKEN", tokenJson.RootElement.GetProperty("requestToken").GetString())
                 use! response = http.SendAsync request |> Async.AwaitTask
                 return response.IsSuccessStatusCode
         with _ -> return false }
 
-    let summarize (http: HttpClient) (projectId: Guid) (documentId: Guid) (destination: Summary.Destination option) (confirmed: Summary.Confirmed option) (cancellation: Threading.CancellationToken) : Async<Result<Summary.Remote, Summary.Failure>> = async {
+    let dismissSummary http project document = dismissSummaryAt false http project document
+
+    let summarize replacement (http: HttpClient) (projectId: Guid) (documentId: Guid) (destination: Summary.Destination option) (confirmed: Summary.Confirmed option) (instruction: string option) (cancellation: Threading.CancellationToken) : Async<Result<Summary.Remote, Summary.Failure>> = async {
         try
             use! tokenResponse = http.GetAsync("api/antiforgery", cancellation) |> Async.AwaitTask
             if not tokenResponse.IsSuccessStatusCode then return Error Summary.RequestFailed
             else
                 let! tokenBody = tokenResponse.Content.ReadAsStringAsync() |> Async.AwaitTask
                 use tokenJson = JsonDocument.Parse(tokenBody)
-                use request = new HttpRequestMessage(HttpMethod.Post, $"api/projects/{projectId:D}/documents/{documentId:D}/summary")
+                let suffix = if replacement then "/regenerate" else ""
+                use request = new HttpRequestMessage(HttpMethod.Post, $"api/projects/{projectId:D}/documents/{documentId:D}/summary{suffix}")
                 request.Headers.Add("X-CSRF-TOKEN", tokenJson.RootElement.GetProperty("requestToken").GetString())
-                request.Content <- new StringContent(SummaryStatus.requestBody destination confirmed, Encoding.UTF8, "application/json")
+                request.Content <- new StringContent(SummaryStatus.requestBodyWithInstruction destination confirmed instruction, Encoding.UTF8, "application/json")
                 use! response = http.SendAsync(request, cancellation) |> Async.AwaitTask
                 let! body = response.Content.ReadAsStringAsync() |> Async.AwaitTask
                 if not response.IsSuccessStatusCode then return Error (SummaryStatus.failureOfBody body)
@@ -291,13 +287,14 @@ module ChatGptApi =
         let! _ = post http "api/chatgpt/welcome/dismiss"
         return () }
 
-/// The whole page: projects, shared library, native reader and its summary.
-type State = { Projects: Model; Library: Library.Model; Reader: Reader.Model; Summary: Summary.Model; ChatGpt: ChatGpt.Model; Statuses: SummaryStatus.Statuses }
+/// The whole page: projects, shared library and the opened document's summary.
+type State = { Projects: Model; Library: Library.Model; Summary: Summary.Model; ChatGpt: ChatGpt.Model; Statuses: SummaryStatus.Statuses; ShowLibrary: bool; PendingProjectOpen: bool; Onboarding: bool option }
 
 type Msg =
+    | FinishOnboarding
+    | ShowLibrary
     | ProjectsMsg of Message
     | LibraryMsg of Library.Message
-    | ReaderMsg of Reader.Message
     | SummaryMsg of Summary.Message
     | ChatGptMsg of ChatGpt.Message
     | StatusMsg of SummaryStatus.StatusMessage
@@ -329,33 +326,47 @@ module private Ui =
             perform (fun () -> Api.associate http projectId documentId role) (fun result -> Library.Associated (projectId, result))
         | Library.SendRemove (projectId, documentId) ->
             perform (fun () -> Api.removeAssociation http projectId documentId) (fun result -> Library.Removed (projectId, documentId, result))
+        | Library.SendRole (projectId, documentId, role) ->
+            perform (fun () -> Api.changeRole http projectId documentId role) (fun result -> Library.RoleChanged (projectId, result))
 
     let private updateLibrary http message state =
         let library, effect = Library.update message state.Library
-        { state with Library = library; Reader = Reader.followLibrary library state.Reader }, effect |> Option.map (libraryCommand http) |> Option.defaultValue Cmd.none
-
-    let private updateReader http message state =
-        let reader, effect = Reader.update message state.Reader
-        let state = { state with Reader = reader }
-        match effect with
-        | Some Reader.RefreshProject -> updateLibrary http Library.ReloadProject state
-        | Some (Reader.CheckContent (request, url)) ->
-            state, Cmd.OfAsync.perform (Api.checkContent http) url (fun result -> ReaderMsg (Reader.ContentChecked (request, result)))
-        | Some (Reader.SendRole (projectId, documentId, role)) ->
-            state, Cmd.OfAsync.perform (fun () -> Api.changeRole http projectId documentId role) () (fun result -> ReaderMsg (Reader.RoleChanged (projectId, result)))
-        | None -> state, Cmd.none
+        let showLibrary = match message with Library.OpenDocument _ when library.Opened.IsSome -> false | _ -> state.ShowLibrary
+        let pendingProjectOpen = match message with Library.OpenDocument _ when library.Opened.IsSome -> false | _ -> state.PendingProjectOpen
+        { state with Library = library; ShowLibrary = showLibrary; PendingProjectOpen = pendingProjectOpen }, effect |> Option.map (libraryCommand http) |> Option.defaultValue Cmd.none
 
     /// How often the open document's running summary is asked for (research §4).
     let private summaryPollMilliseconds = 2000
 
     let private summaryCommand http (effect: Summary.Effect option) : Cmd<Msg> =
-        match effect with
-        | Some (Summary.Send (request, projectId, documentId, destination, confirmed)) ->
+        let send request projectId documentId destination confirmed instruction =
             Cmd.ofEffect (fun dispatch ->
                 Async.StartImmediate(async {
-                    match! Api.summarize http projectId documentId destination confirmed Threading.CancellationToken.None with
+                    match! Api.summarize false http projectId documentId destination confirmed instruction Threading.CancellationToken.None with
                     | Ok remote -> dispatch (SummaryMsg (Summary.Accepted (request, projectId, documentId, remote)))
                     | Error failure -> dispatch (SummaryMsg (Summary.Responded (request, Error failure))) }))
+        match effect with
+        | Some (Summary.RegenerateSummary (request, project, document, feedback)) ->
+            Cmd.ofEffect (fun dispatch ->
+                Async.StartImmediate(async {
+                    let! result = Api.summarize true http project document (Some Summary.UsePlan) (Some Summary.ConfirmedPlan) (LexScholar.Domain.SummaryInstruction.normalize feedback) Threading.CancellationToken.None
+                    dispatch (SummaryMsg (Summary.ReplacementAnswered (request, project, document, result))) }))
+        | Some (Summary.FetchReplacement (watch, project, document, delay)) ->
+            Cmd.ofEffect (fun dispatch ->
+                Async.StartImmediate(async {
+                    if delay then do! Async.Sleep summaryPollMilliseconds
+                    let! remote = Api.summaryStateAt "/regenerate" http project document
+                    let state = match remote with Ok value -> value | Error () -> Some (Summary.RemoteRunning None)
+                    dispatch (SummaryMsg (Summary.ReplacementPolled (watch, state))) }))
+        | Some (Summary.CancelRegeneration (watch, project, document)) ->
+            Cmd.ofEffect (fun dispatch ->
+                Async.StartImmediate(async {
+                    let! succeeded = Api.dismissSummaryAt true http project document
+                    dispatch (SummaryMsg (Summary.ReplacementCancelled (watch, project, document, succeeded))) }))
+        | Some (Summary.Send (request, project, document, destination, confirmed)) ->
+            send request project document destination confirmed None
+        | Some (Summary.SendWithInstruction (request, project, document, destination, confirmed, instruction)) ->
+            send request project document destination confirmed (Some instruction)
         | Some (Summary.Fetch (watch, projectId, documentId, delay)) ->
             Cmd.ofEffect (fun dispatch ->
                 Async.StartImmediate(async {
@@ -394,8 +405,14 @@ module private Ui =
         | Some ChatGpt.SendDismissWelcome -> Cmd.ofEffect (fun _ -> ChatGptApi.dismissWelcome http |> Async.StartImmediate)
         | None -> Cmd.none
 
-    let private updateCore http navigation msg state =
+    let private updateCore http (navigation: NavigationManager) msg state =
         match msg with
+        | FinishOnboarding when state.Projects.HasLoaded && state.Projects.Busy.IsNone && state.Library.Busy.IsNone && state.ChatGpt.Status <> ChatGpt.Starting ->
+            { state with Onboarding = Some false }, Cmd.none
+        | FinishOnboarding -> state, Cmd.none
+        | ShowLibrary ->
+            let library, _ = Library.update Library.HideOptions state.Library
+            { state with ShowLibrary = true; Library = library; PendingProjectOpen = false }, Cmd.none
         | ChatGptMsg message ->
             let chatGpt, effect = ChatGpt.update message state.ChatGpt
             { state with ChatGpt = chatGpt }, chatGptCommand http navigation effect
@@ -412,13 +429,32 @@ module private Ui =
                 | Summary.Accepted (_, _, _, Summary.RemoteFailed failure)
                 | Summary.Polled (_, Some (Summary.RemoteFailed failure)) ->
                     summary.State = Summary.Failed failure && state.Summary.State <> summary.State && Summary.reloadsDestinations failure
+                | Summary.ReplacementAnswered (_, _, _, Error failure)
+                | Summary.ReplacementAnswered (_, _, _, Ok (Summary.RemoteFailed failure))
+                | Summary.ReplacementPolled (_, Some (Summary.RemoteFailed failure)) ->
+                    summary.Replacement = Some (Summary.ReplacementFailed failure) && summary.Replacement <> state.Summary.Replacement && Summary.reloadsDestinations failure
                 | _ -> false
             let chatGpt, chatGptEffect = if reload then ChatGpt.update ChatGpt.Load state.ChatGpt else state.ChatGpt, None
             { state with Summary = summary; ChatGpt = chatGpt },
             Cmd.batch [ summaryCommand http effect; chatGptCommand http navigation chatGptEffect ]
         | ProjectsMsg message ->
             let projects, effect = Projects.update message state.Projects
-            let state = { state with Projects = projects }
+            let onboarding =
+                if state.Onboarding.IsNone && projects.HasLoaded then Some projects.Snapshot.Projects.IsEmpty
+                else state.Onboarding
+            let showLibrary =
+                match message with
+                | Select id when state.Projects.Busy.IsNone && state.Projects.Snapshot.Active = Some id -> false
+                | Selected (Ok ()) when state.Projects.Busy = Some Selecting && state.PendingProjectOpen -> false
+                | _ -> state.ShowLibrary
+            let pendingProjectOpen =
+                // A selection response may update the active project, but may
+                // navigate only while its original open intent is still current.
+                match message, effect with
+                | _, Some (SendSelect _) -> true
+                | Selected _, _ when state.Projects.Busy = Some Selecting -> false
+                | _ -> state.PendingProjectOpen
+            let state = { state with Projects = projects; Onboarding = onboarding; ShowLibrary = showLibrary; PendingProjectOpen = pendingProjectOpen }
             let projectCommand = effect |> Option.map (command http >> Cmd.map ProjectsMsg) |> Option.defaultValue Cmd.none
             // The page's Refresh button also reloads both library lists, so a
             // failed load can be retried.
@@ -434,11 +470,10 @@ module private Ui =
                 state, Cmd.batch [ projectCommand; libraryCommand ]
             else state, projectCommand
         | LibraryMsg message -> updateLibrary http message state
-        | ReaderMsg message -> updateReader http message state
 
-    /// The summary follows the reader's project and open document after every message.
+    /// The summary follows the library's project and open document after every message.
     let update http navigation msg state =
-        let viewOf (state: State) = state.Library.Project, state.Reader.Open |> Option.map (fun document -> document.Id)
+        let viewOf (state: State) = state.Library.Project, state.Library.Opened
         let before = viewOf state
         let state, command = updateCore http navigation msg state
         // The markers are read again on every project or document view change (AR 4) and once a summary was asked for or
@@ -457,49 +492,29 @@ module private Ui =
               Summary.Configured = state.ChatGpt.Configured.IsSome }
         let summary, _ = Summary.update (Summary.DestinationsChanged available) state.Summary
         let state = { state with Summary = summary }
-        let summary, effects = Summary.followReader state.Reader state.Summary
+        let summary, effects = Summary.followOpened state.Library state.Summary
         { state with Summary = summary }, Cmd.batch [ command; yield! effects |> List.map (Some >> summaryCommand http) ]
 
-    let errorText = function
-        | InvalidName -> "Enter a project name that is not blank."
-        | DuplicateName -> "A project with this name already exists."
-        | NotFound -> "That project is no longer available. Refresh the list and try again."
-        | RequestFailed -> "The request failed. Please try again."
-
-    let libraryErrorText = function
-        | Library.NotAPdf -> "That file is not a PDF. Choose a PDF file."
-        | Library.CorruptPdf -> "That PDF is damaged or cannot be read."
-        | Library.EncryptedPdf -> "Encrypted or password-protected PDFs cannot be imported."
-        | Library.TooLarge -> "That PDF is larger than the configured size limit."
-        | Library.TooManyPages -> "That PDF has more pages than the configured page limit."
-        | Library.DuplicateAssociation -> "That document is already in this project."
-        | Library.InvalidRole -> "Choose Focused Source or Reference Source."
-        | Library.NotFound -> "That project or document is no longer available. Refresh and try again."
-        | Library.DocumentNotFound -> "That document is no longer in the library. Refresh and try again."
-        | Library.RequestFailed -> "The request failed. Please try again."
-
     let roleLabel = function
-        | FocusedSource -> "Focused Source"
-        | ReferenceSource -> "Reference Source"
-
-    let pages count = if count = 1 then "1 page" else $"{count} pages"
+        | FocusedSource -> Texts.focusedSource
+        | ReferenceSource -> Texts.referenceSource
 
     /// The marker of a running, finished or failed summary (FR-008); nothing when there is none.
     let summaryMarker (status: SummaryStatus.Status option) =
         cond status <| function
             | Some status ->
-                let word = match status with SummaryStatus.Status.Running -> "running" | SummaryStatus.Status.Finished -> "finished" | SummaryStatus.Status.Failed -> "failed"
-                small { attr.``class`` "summary-marker"; attr.title $"Summary {word}"; text $"Summary {word}" }
+                let word = match status with SummaryStatus.Status.Running -> Texts.summaryRunning | SummaryStatus.Status.Finished -> Texts.summaryReady | SummaryStatus.Status.Failed -> Texts.summaryFailed
+                small { attr.``class`` "summary-marker"; attr.title word; text word }
             | None -> empty ()
 
-    let libraryView (library: Library.Model) (reader: Reader.Model) (statuses: SummaryStatus.StatusEntry list) readerDispatch dispatch =
+    let libraryView (library: Library.Model) dispatch =
         let busy = library.Busy.IsSome
         let associated = library.Associations |> List.map (fun item -> item.Document.Id) |> Set.ofList
         concat {
             section {
                 attr.``class`` "card"
-                h2 { "Shared library" }
-                label { "for" => "library-file"; "Import a PDF" }
+                h2 { text Texts.library }
+                label { "for" => "library-file"; text Texts.importPdf }
                 comp<InputFile> {
                     "id" => "library-file"
                     "accept" => ".pdf,application/pdf"
@@ -507,30 +522,30 @@ module private Ui =
                     attr.callback "OnChange" (fun (event: InputFileChangeEventArgs) -> dispatch (Library.Upload event.File))
                 }
                 cond library.Busy <| function
-                    | Some Library.Uploading -> p { "role" => "status"; "Importing…" }
+                    | Some Library.Uploading -> p { "role" => "status"; text Texts.importing }
                     | _ -> empty ()
                 cond library.Notice <| function
-                    | Some (Library.Imported document) -> p { "role" => "status"; text $"Imported {document.FileName}." }
+                    | Some (Library.Imported document) -> p { "role" => "status"; text (Texts.imported document.FileName) }
                     | Some (Library.Reused document) ->
-                        p { "role" => "status"; text $"Already in the library: {document.FileName}. The existing document was reused." }
+                        p { "role" => "status"; text (Texts.reused document.FileName) }
                     | None -> empty ()
                 cond library.Error <| function
-                    | Some error -> p { attr.``class`` "error"; "role" => "alert"; text (libraryErrorText error) }
+                    | Some error -> p { attr.``class`` "error"; "role" => "alert"; text (FailureTexts.library error) }
                     | None -> empty ()
                 cond (library.HasLoadedLibrary && library.Documents.IsEmpty) <| function
-                    | true -> p { "No documents in the library yet." }
+                    | true -> p { text Texts.emptyLibrary }
                     | false -> empty ()
                 ul {
                     attr.``class`` "documents"
                     forEach library.Documents <| fun document ->
                         li {
-                            span { text document.FileName; " "; small { text $"({pages document.PageCount})" } }
+                            span { text document.FileName; text Texts.space; small { text (Texts.parenthesizedPageCount document.PageCount) } }
                             // Bolero's cond needs a union or bool, so the checks are nested.
                             cond library.Project <| function
                                 | None -> empty ()
                                 | Some _ ->
                                     cond (associated.Contains document.Id) <| function
-                                        | true -> small { "In this project" }
+                                        | true -> small { text Texts.inThisProject }
                                         | false ->
                                             span {
                                                 attr.``class`` "actions"
@@ -539,69 +554,82 @@ module private Ui =
                                                         attr.``type`` "button"
                                                         attr.disabled busy
                                                         on.click (fun _ -> dispatch (Library.Associate (document.Id, role)))
-                                                        text $"Add as {roleLabel role}"
+                                                        text (if role = FocusedSource then Texts.addFocused else Texts.addReference)
                                                     }
                                             }
                         }
                 }
             }
-            section {
-                attr.``class`` "card"
-                h2 { "Project documents" }
-                cond library.Project <| function
-                    | None -> p { "Select a project to see its documents." }
-                    | Some _ ->
-                        concat {
-                            cond library.LoadingProject <| function
-                                | true -> p { "role" => "status"; "Loading project documents…" }
-                                | false -> empty ()
-                            cond (library.HasLoadedProject && library.Associations.IsEmpty) <| function
-                                | true -> p { "No documents are associated with this project." }
-                                | false -> empty ()
-                            ul {
-                                attr.``class`` "project-documents"
-                                forEach library.Associations <| fun association ->
-                                    li {
-                                        span { text association.Document.FileName }
-                                        cond library.Project <| function
-                                            | Some project -> summaryMarker (SummaryStatus.documentStatus statuses project association.Document.Id)
-                                            | None -> empty ()
-                                        strong { attr.``class`` "role"; text (roleLabel association.Role) }
-                                        button {
-                                            attr.``type`` "button"
-                                            on.click (fun _ -> readerDispatch (Reader.Open { Id = association.Document.Id; FileName = association.Document.FileName; ContentUrl = association.Document.ContentUrl }))
-                                            "Open"
+        }
+
+    let projectDocuments (library: Library.Model) showLibrary (statuses: SummaryStatus.StatusEntry list) dispatch =
+        let busy = library.Busy.IsSome
+        section {
+            attr.``class`` "project-document-list"
+            cond library.Project <| function
+                | None -> p { text Texts.noProject }
+                | Some project ->
+                    concat {
+                        cond library.LoadingProject <| function
+                            | true -> p { "role" => "status"; text Texts.loadingDocuments }
+                            | false -> empty ()
+                        cond (library.HasLoadedProject && library.Associations.IsEmpty) <| function
+                            | true -> p { text Texts.noDocuments }
+                            | false -> empty ()
+                        forEach [ FocusedSource, Texts.focusedSources; ReferenceSource, Texts.referenceSources ] <| fun (role, heading) ->
+                            concat {
+                                h3 { text heading }
+                                ul {
+                                    attr.``class`` "project-documents"
+                                    "aria-label" => heading
+                                    forEach (library.Associations |> List.filter (fun association -> association.Role = role)) <| fun association ->
+                                        li {
+                                            attr.``class`` (if not showLibrary && library.Opened = Some association.Document.Id then "selected" else "")
+                                            button {
+                                                attr.``type`` "button"
+                                                attr.``class`` "item-open"
+                                                "aria-current" => (if not showLibrary && library.Opened = Some association.Document.Id then "true" else "false")
+                                                "aria-expanded" => (if library.Options = Some association.Document.Id then "true" else "false")
+                                                on.click (fun _ ->
+                                                    if not showLibrary && library.Opened = Some association.Document.Id then
+                                                        dispatch (Library.RevealOptions association.Document.Id)
+                                                    else dispatch (Library.OpenDocument association.Document.Id))
+                                                text association.Document.FileName
+                                            }
+                                            small { text (Texts.pageCount association.Document.PageCount) }
+                                            summaryMarker (SummaryStatus.documentStatus statuses project association.Document.Id)
+                                            strong { attr.``class`` "role"; text (roleLabel association.Role) }
+                                            cond (library.Options = Some association.Document.Id) <| function
+                                                | true ->
+                                                    div {
+                                                        attr.``class`` "item-options"
+                                                        button {
+                                                            attr.``type`` "button"
+                                                            attr.disabled (busy || library.ChangingRole.IsSome)
+                                                            let role = if association.Role = FocusedSource then ReferenceSource else FocusedSource
+                                                            on.click (fun _ -> dispatch (Library.ChangeRole (association.Document.Id, role)))
+                                                            text (if role = FocusedSource then Texts.makeFocused else Texts.makeReference)
+                                                        }
+                                                        button {
+                                                            attr.``type`` "button"
+                                                            attr.disabled busy
+                                                            on.click (fun _ -> dispatch (Library.Remove association.Document.Id))
+                                                            text Texts.remove
+                                                        }
+                                                    }
+                                                | false -> empty ()
                                         }
-                                        button {
-                                            attr.``type`` "button"
-                                            attr.disabled (busy || reader.ChangingRole.IsSome)
-                                            let role = if association.Role = FocusedSource then ReferenceSource else FocusedSource
-                                            on.click (fun _ -> readerDispatch (Reader.ChangeRole (association.Document.Id, role)))
-                                            text $"Make {roleLabel role}"
-                                        }
-                                        button {
-                                            attr.``type`` "button"
-                                            attr.disabled busy
-                                            on.click (fun _ -> dispatch (Library.Remove association.Document.Id))
-                                            "Remove"
-                                        }
-                                    }
+                                }
                             }
-                        }
-            }
+                    }
         }
 
     /// The context needed to understand and reproduce a summary (FR-008).
-    let summaryContext (document: Reader.Document) (generated: Summary.Generated) =
-        let generatedAt = generated.GeneratedAt.LocalDateTime.ToString("yyyy-MM-dd HH:mm")
-        let unreadable =
-            if generated.UnreadablePages.IsEmpty then ""
-            else $" Not readable (no text layer): {Summary.pageRanges generated.UnreadablePages}."
-        let omitted =
-            if generated.OmittedPoints = 0 then ""
-            else $" {generated.OmittedPoints} generated points were left out because their citations could not be verified."
-        let preposition = if generated.ServiceHost = "ChatGPT plan" then "using" else "at"
-        $"{document.FileName}, covering {Summary.pageRanges generated.PagesCovered}.{unreadable} Generated {generatedAt} by {generated.Model} {preposition} {generated.ServiceHost}.{omitted}"
+    let summaryContext (document: Library.Document) (generated: Summary.Generated) =
+        let generatedAt = Texts.dateTime generated.GeneratedAt
+        let unreadable = if generated.UnreadablePages.IsEmpty then "" else Texts.unreadable (Texts.pages (generated.UnreadablePages |> List.distinct |> List.sort))
+        let omitted = if generated.OmittedPoints = 0 then "" else Texts.omittedPoints generated.OmittedPoints
+        Texts.covered document.FileName (Texts.pages (generated.PagesCovered |> List.distinct |> List.sort)) + unreadable + Texts.provenance generatedAt generated.Model generated.ServiceHost + omitted
 
     let private plainButton label (cssClass: string option) onClick =
         button {
@@ -616,53 +644,84 @@ module private Ui =
     let private progressText progress =
         match progress with
         | Some (Summary.PagesProcessed (processed, total)) ->
-            span { attr.``class`` "summary-progress"; text $"{processed} of {total} pages processed. " }
-        | Some Summary.Combining -> span { attr.``class`` "summary-progress"; text "Combining points. " }
+            span { attr.``class`` "summary-progress"; text (Texts.processedPages processed total) }
+        | Some Summary.Combining -> span { attr.``class`` "summary-progress"; text Texts.combining }
         | None -> empty ()
 
-    let private confirmDialog (document: Reader.Document) (target: Summary.ConfirmTarget) dispatch =
-        div {
-            attr.``class`` "summary-confirm"
+    let private confirmDialog (document: Library.Document) (target: Summary.ConfirmTarget) replacement dispatch =
+        elt "dialog" {
+            attr.id "send-confirmation"
+            attr.``class`` "send-dialog"
             "role" => "alertdialog"
-            "aria-label" => "Confirm sending"
+            "aria-label" => Texts.confirmationTitle
+            "aria-modal" => "true"
+            "aria-describedby" =>
+                (match target with
+                 | Summary.Service _ -> "send-disclosure"
+                 | Summary.Plan _ -> "send-disclosure send-information")
+            on.event "cancel" (fun _ -> dispatch Summary.CancelSend)
+            h3 { text Texts.confirmationTitle }
             match target with
-            | Summary.Service (host, model) ->
-                p { text $"The text of {document.FileName} will be sent to {host} (model {model}), which is not on this machine. Send?" }
+            | Summary.Service (host, model) -> p { attr.id "send-disclosure"; text (Texts.confirmationService document.FileName host model) }
             | Summary.Plan account ->
-                p { text $"The text of {document.FileName} will be sent to your ChatGPT plan (account {account}), which is not on this machine." }
                 p {
-                    text "It goes to OpenAI under your ChatGPT account. How it is used and kept follows your ChatGPT data controls (Settings, Data controls, in ChatGPT). "
-                    a {
-                        attr.href "https://help.openai.com/en/articles/20001542-using-your-chatgpt-plan-in-other-apps-and-sites"
-                        "target" => "_blank"; "rel" => "noopener noreferrer"
-                        text "Using your ChatGPT plan in other apps and sites"
-                    }
-                    text ". Send?"
+                    attr.id "send-disclosure"
+                    text (Texts.confirmationPlan document.FileName document.PageCount account)
+                    if replacement then text Texts.feedbackPrivacy
                 }
-            plainButton "Send" (Some "send-confirm") (fun _ -> dispatch Summary.ConfirmSend)
-            " "
-            plainButton "Cancel" (Some "send-cancel") (fun _ -> dispatch Summary.CancelSend)
+                a { attr.href Texts.confirmationHelpUrl; "target" => "_blank"; "rel" => "noopener noreferrer"; text Texts.confirmationHelp }
+                p { attr.id "send-information"; attr.``class`` "send-info"; text Texts.confirmationNote }
+            div {
+                attr.``class`` "send-actions"
+                button {
+                    attr.``type`` "button"
+                    attr.``class`` "send-cancel"
+                    "autofocus" => "autofocus"
+                    on.click (fun _ -> dispatch Summary.CancelSend)
+                    text Texts.cancel
+                }
+                plainButton Texts.sendAndSummarize (Some "send-confirm") (fun _ -> dispatch Summary.ConfirmSend)
+            }
         }
 
-    /// Page-number buttons that ask the reader to show that page.
-    let private citation onCite page =
-        button {
-            attr.``type`` "button"
-            attr.``class`` "citation"
-            "data-page" => string page
-            attr.title $"Page {page}"
-            on.click (fun _ -> onCite page)
-            text (string page)
+    /// One link per consecutive run of validated pages, always for the open document.
+    let private citations contentUrl pages =
+        let runs =
+            pages
+            |> List.fold (fun groups page ->
+                match groups with
+                | current :: rest when page = List.head current + 1 -> (page :: current) :: rest
+                | _ -> [page] :: groups) []
+            |> List.rev
+            |> List.map List.rev
+        forEach (List.indexed runs) <| fun (index, run) -> concat {
+            if index > 0 then text Texts.citationSeparator
+            a {
+                attr.``class`` "citation"
+                attr.href $"{contentUrl}#page={List.head run}"
+                "target" => "_blank"
+                "rel" => "noopener"
+                text (Texts.pages run)
+            }
         }
 
-    let private summaryPanel (document: Reader.Document) (generated: Summary.Generated) onCite dispatch =
+    let private summaryPanel (document: Library.Document) (generated: Summary.Generated) replacing dispatch =
         section {
-            attr.``class`` "summary"
-            h3 { "Generated summary" }
+            attr.``class`` "summary card"
+            div {
+                attr.style "display: flex; justify-content: space-between; align-items: center"
+                h3 { text Texts.summaryReady }
+                button {
+                    attr.``type`` "button"
+                    attr.disabled replacing
+                    attr.style "color: var(--danger)"
+                    on.click (fun _ -> dispatch Summary.Delete)
+                    text Texts.delete
+                }
+            }
             p {
                 attr.``class`` "summary-label"
-                strong { "Generated by an AI service for your review." }
-                " It is not verified and not your own text. Check each point against the cited pages."
+                strong { text Texts.generated }
             }
             p { attr.``class`` "summary-context"; text (summaryContext document generated) }
             ul {
@@ -670,15 +729,12 @@ module private Ui =
                 forEach generated.Points <| fun point ->
                     li {
                         span { attr.``class`` "point-text"; text point.Text }
-                        " "
-                        forEach point.Pages (citation onCite)
+                        text Texts.space
+                        citations document.ContentUrl point.Pages
                     }
             }
-            plainButton "Dismiss" None (fun _ -> dispatch Summary.Dismiss)
         }
 
-    /// The summary controls and panel of the open document. Citations are plain
-    /// page-number buttons (`button.citation`, `data-page`) that ask the reader to show that page.
     /// The sign-in action, branded per OpenAI's guidance: its label, its white logo on a dark button, and its attribute.
     let private signInButton (disabled: bool) dispatch =
         button {
@@ -688,7 +744,7 @@ module private Ui =
             attr.disabled disabled
             on.click (fun _ -> dispatch ChatGpt.SignIn)
             img { attr.src "chatgpt-logo-white.svg"; attr.alt "" }
-            text "Continue with ChatGPT"
+            text Texts.signIn
         }
 
     /// The account line (or the sign-in action) where she asks for a summary.
@@ -699,31 +755,31 @@ module private Ui =
                 p {
                     attr.``class`` "chatgpt-account error"
                     "role" => "alert"
-                    "ChatGPT sign-in status could not be loaded. "
-                    plainButton "Try again" (Some "chatgpt-retry") (fun _ -> dispatch ChatGpt.Load)
+                    text Texts.chatGptUnavailable
+                    plainButton Texts.retry (Some "chatgpt-retry") (fun _ -> dispatch ChatGpt.Load)
                 }
-            | ChatGpt.SignedOut -> p { attr.``class`` "chatgpt-account"; "ChatGPT: signed out. "; signInButton false dispatch }
-            | ChatGpt.Starting -> p { attr.``class`` "chatgpt-account"; "role" => "status"; "Opening ChatGPT… "; signInButton true dispatch }
+            | ChatGpt.SignedOut -> p { attr.``class`` "chatgpt-account"; text Texts.chatGptSignedOut; signInButton false dispatch }
+            | ChatGpt.Starting -> p { attr.``class`` "chatgpt-account"; "role" => "status"; text Texts.chatGptStarting; signInButton true dispatch }
             | ChatGpt.SignedIn account ->
                 p {
                     attr.``class`` "chatgpt-account"
-                    text $"Signed in to ChatGPT as {account.Name}. "
+                    text (Texts.chatGptAccount account.Name)
                     button {
                         attr.``type`` "button"
                         attr.``class`` "chatgpt-sign-out"
                         attr.disabled model.SigningOut
                         on.click (fun _ -> dispatch ChatGpt.SignOut)
-                        text "Sign out"
+                        text Texts.signOut
                     }
                 }
 
     let private noticeText = function
-        | ChatGpt.Cancelled -> "Sign-in was cancelled. You are not signed in."
-        | ChatGpt.NoPlanAccess -> "This ChatGPT account's plan can't be used by apps, so you are not signed in."
-        | ChatGpt.Failed -> "Sign-in could not be completed. You are not signed in. Please try again."
-        | ChatGpt.StartFailed -> "Sign-in could not be started. Please try again."
-        | ChatGpt.NotRevoked -> "You are signed out. OpenAI did not confirm the disconnection; you can also disconnect LexScholar in your ChatGPT settings."
-        | ChatGpt.SignOutFailed -> "Signing out failed. Please try again."
+        | ChatGpt.Cancelled -> Texts.signInCancelled
+        | ChatGpt.NoPlanAccess -> Texts.signInNoPlan
+        | ChatGpt.Failed -> Texts.signInFailed
+        | ChatGpt.StartFailed -> Texts.signInStartFailed
+        | ChatGpt.NotRevoked -> Texts.notRevoked
+        | ChatGpt.SignOutFailed -> Texts.signOutFailed
 
     /// The one-time welcome and the return or sign-out message, at the top of the page.
     let chatGptBanner (model: ChatGpt.Model) dispatch =
@@ -733,12 +789,12 @@ module private Ui =
                     section {
                         attr.``class`` "card chatgpt-welcome"
                         "role" => "status"
-                        h2 { "You’re using your ChatGPT plan" }
+                        h2 { text Texts.welcomePlan }
                         p {
-                            "Eligible usage in this app uses your ChatGPT plan. Manage usage in your ChatGPT settings. "
-                            a { attr.href "https://chatgpt.com/settings/usage"; "target" => "_blank"; "rel" => "noopener noreferrer"; "Manage usage" }
+                            text Texts.welcomePlanBody
+                            a { attr.href "https://chatgpt.com/settings/usage"; "target" => "_blank"; "rel" => "noopener noreferrer"; text Texts.manageUsage }
                         }
-                        plainButton "Got it" (Some "chatgpt-welcome-dismiss") (fun _ -> dispatch ChatGpt.DismissWelcome)
+                        plainButton Texts.gotIt (Some "chatgpt-welcome-dismiss") (fun _ -> dispatch ChatGpt.DismissWelcome)
                     }
                 | false -> empty ()
             cond model.Notice <| function
@@ -747,7 +803,7 @@ module private Ui =
                         attr.``class`` "card chatgpt-notice"
                         "role" => "status"
                         p { text (noticeText notice) }
-                        plainButton "Dismiss" (Some "chatgpt-notice-dismiss") (fun _ -> dispatch ChatGpt.DismissNotice)
+                        plainButton Texts.close (Some "chatgpt-notice-dismiss") (fun _ -> dispatch ChatGpt.DismissNotice)
                     }
                 | None -> empty ()
         }
@@ -755,65 +811,64 @@ module private Ui =
     let private usageLink (caption: string) =
         a { attr.href "https://chatgpt.com/settings/usage"; "target" => "_blank"; "rel" => "noopener noreferrer"; attr.``class`` "manage-usage"; text caption }
 
-    /// Her plan is the destination of the next request.
-    let private usingPlan (summary: Summary.Model) =
-        summary.Available.Plan && (not summary.Available.Configured || summary.Choice = Some Summary.UsePlan)
-
-    let private destinationChoice (chatGpt: ChatGpt.Model) (summary: Summary.Model) dispatch =
-        let radio (value: Summary.Destination) id (caption: string) =
-            span {
-                input {
-                    attr.``type`` "radio"
-                    attr.name "summary-destination"
-                    attr.id id
-                    attr.``checked`` (summary.Choice = Some value)
-                    on.change (fun _ -> dispatch (Summary.Choose value))
-                }
-                label { attr.``for`` id; text caption }
-                " "
-            }
-        let configured =
-            match chatGpt.Configured with
-            | Some service -> $"{service.Host} (model {service.Model})"
-            | None -> "the configured service"
-        fieldset {
-            attr.``class`` "summary-destination"
-            legend { "Summarize with" }
-            radio Summary.UsePlan "summary-destination-plan" "Your ChatGPT plan"
-            radio Summary.UseConfigured "summary-destination-configured" configured
-        }
-
-    let summaryView (document: Reader.Document) (summary: Summary.Model) (chatGpt: ChatGpt.Model) onCite dispatch dispatchChatGpt =
-        let needsChoice = summary.Available.Plan && summary.Available.Configured
+    let summaryView (document: Library.Document) (summary: Summary.Model) (chatGpt: ChatGpt.Model) dispatch dispatchChatGpt =
         concat {
-            cond (needsChoice && (match summary.State with Summary.Generating _ | Summary.Running | Summary.Confirming _ -> false | _ -> true)) <| function
-                | true -> destinationChoice chatGpt summary dispatch
-                | false -> empty ()
             cond summary.State <| function
                 | Summary.Generating _ ->
                     span {
                         "role" => "status"
-                        "Summarizing… "
+                        text Texts.summarizing
                         progressText summary.Progress
-                        plainButton "Dismiss" None (fun _ -> dispatch Summary.Dismiss)
+                        plainButton Texts.close None (fun _ -> dispatch Summary.Dismiss)
                     }
                 | Summary.Running ->
                     span {
                         "role" => "status"
-                        "Summarizing… "
+                        text Texts.summarizing
                         progressText summary.Progress
-                        plainButton "Stop" None (fun _ -> dispatch Summary.Stop)
+                        plainButton Texts.stop None (fun _ -> dispatch Summary.Stop)
                     }
                 | Summary.Shown _ -> empty ()
-                | Summary.Dismissing Summary.Running -> span { "role" => "status"; "Stopping… " }
-                | Summary.Dismissing _ -> span { "role" => "status"; "Dismissing… " }
-                | Summary.Confirming target -> confirmDialog document target dispatch
+                | Summary.ConfirmingDelete _ ->
+                    div {
+                        attr.``class`` "summary-confirm"
+                        "role" => "alertdialog"
+                        "aria-label" => Texts.confirmDelete
+                        p { text Texts.confirmDelete }
+                        plainButton Texts.delete None (fun _ -> dispatch Summary.ConfirmDelete)
+                        plainButton Texts.cancel None (fun _ -> dispatch Summary.CancelDelete)
+                    }
+                | Summary.Dismissing Summary.Running -> span { "role" => "status"; text Texts.stopping }
+                | Summary.Dismissing _ -> span { "role" => "status"; text Texts.dismissing }
+                | Summary.Confirming target -> confirmDialog document target false dispatch
                 | Summary.Idle ->
-                    button {
-                        attr.``type`` "button"
-                        attr.disabled (needsChoice && summary.Choice.IsNone)
-                        on.click (fun _ -> dispatch Summary.Summarize)
-                        text "Summarize"
+                    section {
+                        attr.``class`` "summary-request card"
+                        h3 { text Texts.requestSummary }
+                        p { text Texts.requestDescription }
+                        label { attr.``for`` "summary-instruction"; text Texts.instructionLabel }
+                        textarea {
+                            attr.id "summary-instruction"
+                            attr.``class`` "summary-instruction"
+                            "maxlength" => string LexScholar.Domain.SummaryInstruction.maximumCharacters
+                            "rows" => "3"
+                            "aria-describedby" => "summary-instruction-privacy"
+                            attr.placeholder Texts.instructionPlaceholder
+                            attr.value summary.Instruction
+                            on.input (fun event -> dispatch (Summary.EditInstruction (string event.Value)))
+                        }
+                        p { attr.id "summary-instruction-privacy"; attr.``class`` "muted"; text Texts.instructionPrivacy }
+                        if summary.Available.Plan then
+                            div {
+                                attr.``class`` "summary-request-actions"
+                                button {
+                                    attr.``type`` "button"
+                                    attr.id "summary-request"
+                                    attr.``class`` "summary-primary"
+                                    on.click (fun _ -> dispatch Summary.Summarize)
+                                    text Texts.summarize
+                                }
+                            }
                     }
                 | Summary.Failed failure ->
                     // Her other destination stays reachable, so a retry is always offered next to the primary action.
@@ -822,145 +877,416 @@ module private Ui =
                             | true -> signInButton (chatGpt.Status <> ChatGpt.SignedOut) dispatchChatGpt
                             | false -> empty ()
                         cond (failure = Summary.UsageLimitReached) <| function
-                            | true -> usageLink "Manage usage"
+                            | true -> usageLink Texts.manageUsage
                             | false -> empty ()
-                        " "
+                        text Texts.space
                         button {
                             attr.``type`` "button"
                             attr.``class`` "summary-retry"
-                            attr.disabled (needsChoice && summary.Choice.IsNone)
+                            attr.disabled (not summary.Available.Plan)
                             on.click (fun _ -> dispatch Summary.Summarize)
-                            text "Try again"
+                            text Texts.retry
                         }
+                        plainButton Texts.close None (fun _ -> dispatch Summary.Close)
                     }
-            cond (usingPlan summary && (match summary.State with Summary.Failed Summary.UsageLimitReached -> false | _ -> true)) <| function
-                | true -> span { attr.``class`` "summary-using-plan"; text " Using ChatGPT plan. "; usageLink "Manage usage" }
-                | false -> empty ()
             cond summary.State <| function
-                | Summary.Failed Summary.NotConfigured ->
-                    p { attr.``class`` "error"; "role" => "alert"; text "Summaries need a ChatGPT sign-in or a summarization service. "
-                        span { attr.``class`` "secondary"; text (Summary.failureText Summary.NotConfigured) } }
-                | Summary.Failed failure -> p { attr.``class`` "error"; "role" => "alert"; text (Summary.failureText failure) }
+                | Summary.Failed failure -> p { attr.``class`` "error"; "role" => "alert"; text (FailureTexts.summary failure) }
                 | _ -> empty ()
             cond summary.DismissFailed <| function
-                | true -> p { attr.``class`` "error"; "role" => "alert"; "The summary could not be dismissed. Please try again." }
+                | true -> p { attr.``class`` "error"; "role" => "alert"; text Texts.dismissFailed }
                 | false -> empty ()
             cond summary.State <| function
-                | Summary.Shown generated -> summaryPanel document generated onCite dispatch
+                | Summary.Shown generated -> summaryPanel document generated (match summary.Replacement with None | Some (Summary.ReplacementFailed _) -> false | _ -> true) dispatch
+                | Summary.ConfirmingDelete generated -> summaryPanel document generated false dispatch
                 | _ -> empty ()
+            cond summary.State <| function
+                | Summary.Shown _ ->
+                    section {
+                        attr.``class`` "summary-feedback card"
+                        cond summary.Replacement <| function
+                            | Some (Summary.AwaitingConsent account) -> confirmDialog document (Summary.Plan account) true dispatch
+                            | Some (Summary.Submitting _ | Summary.Replacing) ->
+                                concat {
+                                    p { "role" => "status"; text Texts.replacing; progressText summary.Progress }
+                                    plainButton Texts.stop None (fun _ -> dispatch Summary.CancelReplacement)
+                                }
+                            | Some Summary.Cancelling -> p { "role" => "status"; text Texts.stopping }
+                            | Some Summary.Reconciling -> p { "role" => "status"; text Texts.reconcilingReplacement }
+                            | Some Summary.CancellationFailed ->
+                                concat {
+                                    p { "role" => "alert"; text Texts.cancellationUncertain }
+                                    plainButton Texts.stop None (fun _ -> dispatch Summary.CancelReplacement)
+                                }
+                            | Some (Summary.ReplacementFailed failure) ->
+                                concat {
+                                    p { "role" => "alert"; text Texts.replacementFailed; text Texts.space; text (FailureTexts.summary failure) }
+                                    if Summary.offersSignIn failure then signInButton (chatGpt.Status <> ChatGpt.SignedOut) dispatchChatGpt
+                                    if failure = Summary.UsageLimitReached then usageLink Texts.manageUsage
+                                }
+                            | None -> empty ()
+                        if (match summary.Replacement with None | Some Summary.Reconciling | Some (Summary.ReplacementFailed _) -> true | _ -> false) then
+                            label { attr.``for`` "summary-feedback"; text Texts.feedbackLabel }
+                            textarea {
+                                attr.id "summary-feedback"
+                                attr.``class`` "summary-instruction"
+                                "maxlength" => string LexScholar.Domain.SummaryInstruction.maximumCharacters
+                                "rows" => "3"
+                                "aria-describedby" => "summary-feedback-privacy"
+                                attr.value summary.Feedback
+                                on.input (fun event -> dispatch (Summary.EditFeedback (string event.Value)))
+                            }
+                            p { attr.id "summary-feedback-privacy"; attr.``class`` "muted"; text Texts.feedbackPrivacy }
+                            button {
+                                attr.``type`` "button"
+                                attr.id "summary-request"
+                                attr.disabled (not summary.Available.Plan || summary.Replacement = Some Summary.Reconciling || Summary.replacementBusy summary)
+                                on.click (fun _ ->
+                                    match chatGpt.Status with
+                                    | ChatGpt.SignedIn account -> dispatch (Summary.Regenerate account.Name)
+                                    | _ -> ())
+                                text Texts.regenerate
+                            }
+                    }
+                | _ -> empty ()
+            cond (match summary.State with Summary.Idle -> summary.Available.Plan | Summary.Shown generated | Summary.ConfirmingDelete generated -> generated.ServiceHost = "ChatGPT plan" | _ -> false) <| function
+                | true -> span { attr.``class`` "summary-using-plan"; text Texts.usingPlan; text Texts.detailSeparator; usageLink Texts.manageUsage }
+                | false -> empty ()
+        }
+
+    let private projectForm (model: Projects.Model) dispatch =
+        let busy = model.Busy.IsSome
+        section {
+            attr.``class`` "create-project"
+            h2 { text Texts.createProject }
+            form {
+                on.submit (fun _ -> dispatch Create)
+                "onsubmit:preventDefault" => true
+                label { "for" => "project-name"; text Texts.projectName }
+                input {
+                    attr.id "project-name"
+                    attr.``type`` "text"
+                    attr.placeholder Texts.projectNameExample
+                    bind.input.string model.Name (dispatch << NameChanged)
+                    attr.disabled busy
+                }
+                button { attr.``type`` "submit"; attr.disabled busy; text Texts.createProject }
+            }
+            cond model.Error <| function
+                | Some error -> p { attr.``class`` "error"; "role" => "alert"; text (FailureTexts.project error) }
+                | None -> empty ()
+        }
+
+    let private onboardingView (state: State) dispatch =
+        section {
+            attr.``class`` "onboarding"
+            h2 { text Texts.welcome }
+            p { attr.``class`` "onboarding-intro"; text Texts.welcomeIntro }
+            section {
+                attr.``class`` "onboarding-step"
+                span { attr.``class`` "step-number"; text "1" }
+                div {
+                    h3 { text Texts.firstProject }
+                    p { text Texts.firstProjectHelp }
+                    cond state.Projects.Snapshot.Projects <| function
+                        | project :: _ -> p { "role" => "status"; text (Texts.projectCreated project.Name) }
+                        | [] -> projectForm state.Projects (ProjectsMsg >> dispatch)
+                }
+            }
+            section {
+                attr.``class`` "onboarding-step"
+                span { attr.``class`` "step-number"; text "2" }
+                div {
+                    h3 { text Texts.importPdfs }
+                    p { text Texts.importPdfsHelp }
+                    label { attr.``class`` "file-button"; "for" => "onboarding-file"; text Texts.choosePdfs }
+                    comp<InputFile> {
+                        "id" => "onboarding-file"
+                        "class" => "onboarding-file"
+                        "aria-label" => Texts.choosePdfs
+                        "accept" => ".pdf,application/pdf"
+                        "disabled" => state.Library.Busy.IsSome
+                        attr.callback "OnChange" (fun (event: InputFileChangeEventArgs) -> dispatch (LibraryMsg (Library.Upload event.File)))
+                    }
+                    cond state.Library.Busy <| function
+                        | Some Library.Uploading -> p { "role" => "status"; text Texts.importing }
+                        | _ -> empty ()
+                    cond state.Library.Notice <| function
+                        | Some (Library.Imported doc) -> p { "role" => "status"; text (Texts.imported doc.FileName) }
+                        | Some (Library.Reused doc) -> p { "role" => "status"; text (Texts.reused doc.FileName) }
+                        | None -> empty ()
+                    cond state.Library.Error <| function
+                        | Some failure -> p { "role" => "alert"; text (FailureTexts.library failure) }
+                        | None -> empty ()
+                }
+            }
+            section {
+                attr.``class`` "onboarding-step"
+                span { attr.``class`` "step-number"; text "3" }
+                div {
+                    h3 { text Texts.signInForSummaries }
+                    p { text Texts.signInHelp }
+                    div {
+                        attr.``class`` "onboarding-signin"
+                        cond state.ChatGpt.Status <| function
+                            | ChatGpt.SignedOut -> signInButton false (ChatGptMsg >> dispatch)
+                            | ChatGpt.Starting -> signInButton true (ChatGptMsg >> dispatch)
+                            | ChatGpt.SignedIn _ -> p { text Texts.signedIn }
+                            | ChatGpt.Unavailable -> chatGptAccount state.ChatGpt (ChatGptMsg >> dispatch)
+                            | _ -> empty ()
+                        small { text Texts.planRequired }
+                    }
+                }
+            }
+            div {
+                attr.``class`` "onboarding-actions"
+                button {
+                    attr.``type`` "button"
+                    attr.disabled (state.Projects.Busy.IsSome || state.Library.Busy.IsSome || state.ChatGpt.Status = ChatGpt.Starting)
+                    on.click (fun _ -> dispatch FinishOnboarding)
+                    text (if state.Projects.Snapshot.Projects.IsEmpty then Texts.skipOnboarding else Texts.finishOnboarding)
+                }
+            }
         }
 
     let view (state: State) dispatch =
         let model = state.Projects
         let busy = model.Busy.IsSome
+        let onboarding = state.Onboarding <> Some false
+        let projectName =
+            model.Snapshot.Projects
+            |> List.tryFind (fun p -> Some p.Id = model.Snapshot.Active)
+            |> Option.map (fun p -> p.Name)
+        let opened = state.Library.Associations |> List.tryFind (fun item -> Some item.Document.Id = state.Library.Opened)
+        let projectLabel = projectName |> Option.defaultValue ""
+        let location =
+            if state.ShowLibrary then Some Texts.library
+            else opened |> Option.map (fun item -> item.Document.FileName)
+        let breadcrumb = [ projectName; location ] |> List.choose id |> String.concat Texts.breadcrumbSeparator
         let dispatch' = dispatch
         let dispatch = ProjectsMsg >> dispatch'
         div {
-            attr.``class`` "container"
-            h1 { "LexScholar" }
-            p { attr.``class`` "subtitle"; "Research projects" }
-            section {
-                attr.``class`` "card"
-                h2 { "Create a project" }
-                form {
-                    on.submit (fun _ -> dispatch Create)
-                    "onsubmit:preventDefault" => true
-                    label { "for" => "project-name"; "Project name" }
-                    input {
-                        attr.id "project-name"
-                        attr.``type`` "text"
-                        bind.input.string model.Name (dispatch << NameChanged)
-                        attr.disabled busy
-                    }
-                    button { attr.``type`` "submit"; attr.disabled busy; text (if model.Busy = Some Creating then "Creating…" else "Create project") }
+            attr.``class`` (if onboarding then "workspace onboarding-workspace" else "workspace")
+            "data-ready" => string model.HasLoaded
+            header {
+                attr.``class`` "top-bar"
+                h1 { text Texts.appName }
+                span {
+                    attr.``class`` "breadcrumb"
+                    text (if onboarding then "" else breadcrumb)
                 }
-                cond model.Error <| function
-                    | Some error -> p { attr.``class`` "error"; "role" => "alert"; text (errorText error) }
-                    | None -> empty ()
-            }
-            section {
-                attr.``class`` "card"
-                h2 { "Your projects" }
-                cond model.Busy <| function
-                    | Some Loading -> p { "role" => "status"; "Loading projects…" }
-                    | Some Selecting -> p { "role" => "status"; "Selecting project…" }
+                cond state.ChatGpt.Status <| function
+                    | ChatGpt.SignedIn account when not onboarding ->
+                        concat {
+                            span { attr.``class`` "signed-in"; text Texts.signedIn }
+                            elt "details" {
+                                elt "summary" { "aria-label" => Texts.account; text Texts.account }
+                                div {
+                                    attr.``class`` "account-panel"
+                                    p { text account.Name }
+                                    button {
+                                        attr.``type`` "button"
+                                        attr.disabled state.ChatGpt.SigningOut
+                                        on.click (fun _ -> dispatch' (ChatGptMsg ChatGpt.SignOut))
+                                        text Texts.signOut
+                                    }
+                                }
+                            }
+                        }
+                    | ChatGpt.SignedOut when not onboarding && (state.ShowLibrary || not model.Snapshot.Projects.IsEmpty) && (state.ShowLibrary || opened.IsNone) ->
+                        signInButton false (ChatGptMsg >> dispatch')
+                    | ChatGpt.Starting when not onboarding && (state.ShowLibrary || not model.Snapshot.Projects.IsEmpty) && (state.ShowLibrary || opened.IsNone) ->
+                        signInButton true (ChatGptMsg >> dispatch')
                     | _ -> empty ()
-                cond (model.HasLoaded && model.Snapshot.Projects.IsEmpty && model.Busy <> Some Loading) <| function
-                    | true -> p { "No projects yet. Create one to get started." }
-                    | false -> empty ()
-                ul {
-                    attr.``class`` "projects"
-                    forEach model.Snapshot.Projects <| fun project ->
-                        li {
-                            span { text project.Name }
-                            summaryMarker (SummaryStatus.projectStatus state.Statuses.Entries project.Id)
-                            cond (model.Snapshot.Active = Some project.Id) <| function
-                                | true -> strong { attr.``class`` "active"; "Active" }
-                                | false -> button { attr.``type`` "button"; attr.disabled busy; on.click (fun _ -> dispatch (Select project.Id)); "Select" }
-                        }
-                }
-                button { attr.``type`` "button"; attr.disabled busy; on.click (fun _ -> dispatch Reload); "Refresh" }
             }
-            chatGptBanner state.ChatGpt (ChatGptMsg >> dispatch')
-            libraryView state.Library state.Reader state.Statuses.Entries (ReaderMsg >> dispatch') (LibraryMsg >> dispatch')
-            cond state.Reader.Error <| function
-                | Some error ->
-                    p {
-                        "role" => "alert"
-                        attr.``class`` "error"
-                        text (match error with
-                              | Reader.Unavailable -> "This document's stored file is missing, unreadable or not the recorded size. Its library record and project associations are unchanged."
-                              | Reader.DocumentNotFound -> "That document is no longer in the library. Refresh and try again."
-                              | Reader.AssociationNotFound -> "That association is no longer available. Refresh and try again."
-                              | Reader.InvalidRole -> "Choose Focused Source or Reference Source."
-                              | Reader.RequestFailed -> "The request failed. Please try again.")
-                    }
-                | None -> empty ()
-            cond state.Reader.Opening <| function
-                | Some _ -> p { "role" => "status"; "Opening document…" }
-                | None -> empty ()
-            cond state.Reader.Open <| function
-                | Some document ->
-                    section {
-                        attr.``class`` "card reader"
-                        h2 { "Reader" }
-                        p { text document.FileName }
-                        p { "Use your browser's PDF viewer controls to navigate pages." }
-                        a { attr.href document.ContentUrl; "target" => "_blank"; "rel" => "noopener"; "Open in new tab" }
-                        button { attr.``type`` "button"; on.click (fun _ -> dispatch' (ReaderMsg Reader.Close)); "Close" }
-                        chatGptAccount state.ChatGpt (ChatGptMsg >> dispatch')
-                        summaryView document state.Summary state.ChatGpt (ReaderMsg << Reader.ShowPage >> dispatch') (SummaryMsg >> dispatch') (ChatGptMsg >> dispatch')
-                        iframe {
-                            // Keyed by the navigation counter: every citation click re-creates the frame.
-                            attr.key state.Reader.Navigation
-                            attr.``class`` "reader-frame"
-                            "title" => document.FileName
-                            "src" => (match state.Reader.Page with Some page -> $"{document.ContentUrl}#page={page}" | None -> document.ContentUrl)
-                            "style" => "width:100%;height:75vh;border:0"
+            cond onboarding <| function
+             | true ->
+                main {
+                    "data-testid" => "main"
+                    chatGptBanner state.ChatGpt (ChatGptMsg >> dispatch')
+                    cond (model.HasLoaded && state.Onboarding.IsSome) <| function
+                        | true -> onboardingView state dispatch'
+                        | false ->
+                            concat {
+                                p { "role" => "status"; text Texts.loadingProjects }
+                                cond model.Error <| function
+                                    | Some failure ->
+                                        concat {
+                                            p { "role" => "alert"; text (FailureTexts.project failure) }
+                                            button { on.click (fun _ -> dispatch Reload); text Texts.refresh }
+                                        }
+                                    | None -> empty ()
+                            }
+                }
+             | false ->
+                concat {
+                    aside {
+                        attr.``class`` "project-column"
+                        projectForm model dispatch
+                        section {
+                            h2 { text Texts.projects }
+                            cond model.Busy <| function
+                                | Some Loading -> p { "role" => "status"; text Texts.loadingProjects }
+                                | Some Selecting -> p { "role" => "status"; text Texts.selectingProject }
+                                | _ -> empty ()
+                            cond (model.HasLoaded && model.Snapshot.Projects.IsEmpty && model.Busy <> Some Loading) <| function
+                                | true -> p { text Texts.noProjects }
+                                | false -> empty ()
+                            ul {
+                                attr.``class`` "projects"
+                                forEach model.Snapshot.Projects <| fun project ->
+                                    li {
+                                        attr.``class`` (if model.Snapshot.Active = Some project.Id then "selected" else "")
+                                        "aria-current" => (if model.Snapshot.Active = Some project.Id then "true" else "false")
+                                        button {
+                                            attr.``type`` "button"
+                                            attr.``class`` "project-name item-open"
+                                            attr.disabled busy
+                                            "aria-expanded" => (if model.Options = Some project.Id then "true" else "false")
+                                            on.click (fun _ -> dispatch (Select project.Id))
+                                            text project.Name
+                                        }
+                                        div {
+                                            attr.``class`` "project-metadata"
+                                            summaryMarker (SummaryStatus.projectStatus state.Statuses.Entries project.Id)
+                                            cond (model.Snapshot.Active = Some project.Id) <| function
+                                                | true ->
+                                                    cond (state.Library.HasLoadedProject && state.Library.Project = Some project.Id) <| function
+                                                        | true -> small { attr.``class`` "project-count"; text (string state.Library.Associations.Length) }
+                                                        | false -> empty ()
+                                                | false -> empty ()
+                                        }
+                                        cond (model.Options = Some project.Id) <| function
+                                            | true ->
+                                                div {
+                                                    attr.``class`` "item-options"
+                                                    button { attr.``type`` "button"; attr.disabled busy; on.click (fun _ -> dispatch Reload); text Texts.refresh }
+                                                }
+                                            | false -> empty ()
+                                    }
+                            }
+                            button { attr.``type`` "button"; attr.disabled busy; on.click (fun _ -> dispatch Reload); text Texts.refresh }
+                        }
+                        button {
+                            attr.``type`` "button"
+                            "aria-label" => Texts.library
+                            attr.``class`` (if state.ShowLibrary then "library-navigation selected" else "library-navigation")
+                            on.click (fun _ -> dispatch' ShowLibrary)
+                            text Texts.library
+                            cond state.Library.HasLoadedLibrary <| function
+                                | true -> small { attr.``class`` "library-count"; text (string state.Library.Documents.Length) }
+                                | false -> empty ()
                         }
                     }
-                | None -> empty ()
+                    aside {
+                        attr.``class`` "document-column"
+                        h2 { text (projectName |> Option.defaultValue Texts.projects) }
+                        cond state.Library.HasLoadedProject <| function
+                            | true -> p { attr.``class`` "document-count"; text (Texts.documentCount state.Library.Associations.Length) }
+                            | false -> empty ()
+                        button { attr.``type`` "button"; on.click (fun _ -> dispatch' ShowLibrary); text Texts.addDocuments }
+                        projectDocuments state.Library state.ShowLibrary state.Statuses.Entries (LibraryMsg >> dispatch')
+                    }
+                    main {
+                        "data-testid" => "main"
+                        attr.``class`` "main-column"
+                        chatGptBanner state.ChatGpt (ChatGptMsg >> dispatch')
+                        cond state.ShowLibrary <| function
+                            | true -> libraryView state.Library (LibraryMsg >> dispatch')
+                            | false -> empty ()
+                        cond (not state.ShowLibrary && opened.IsNone) <| function
+                            | true -> p { attr.``class`` "empty-main"; text Texts.chooseDocument }
+                            | false -> empty ()
+                        cond state.Library.RoleError <| function
+                            | Some failure ->
+                                p {
+                                    "role" => "alert"
+                                    attr.``class`` "error"
+                                    text (FailureTexts.library failure)
+                                }
+                            | None -> empty ()
+                        cond (if state.ShowLibrary then None else opened) <| function
+                            | Some association ->
+                                section {
+                                    let document = association.Document
+                                    let role = if association.Role = FocusedSource then Texts.focusedSource else Texts.referenceSource
+                                    attr.``class`` "document-workspace"
+                                    div {
+                                        attr.``class`` "document-heading"
+                                        div {
+                                            h2 { text document.FileName }
+                                            p { text (Texts.documentDetails document.PageCount role projectLabel) }
+                                        }
+                                        a {
+                                            attr.``class`` "open-pdf"
+                                            attr.href document.ContentUrl
+                                            "target" => "_blank"
+                                            "rel" => "noopener"
+                                            text Texts.openPdf
+                                            span { "aria-hidden" => "true"; text "↗" }
+                                        }
+                                    }
+                                    chatGptAccount state.ChatGpt (ChatGptMsg >> dispatch')
+                                    summaryView document state.Summary state.ChatGpt (SummaryMsg >> dispatch') (ChatGptMsg >> dispatch')
+                                }
+                            | None -> empty ()
+                    }
+                }
         }
 
 type App() =
     inherit ProgramComponent<State, Msg>()
     [<Inject>]
     member val Navigation = Unchecked.defaultof<NavigationManager> with get, set
+    [<Inject>]
+    member val JavaScript = Unchecked.defaultof<IJSRuntime> with get, set
+    override this.OnAfterRenderAsync(firstRender) =
+        let rendered = base.OnAfterRenderAsync(firstRender)
+        task {
+            do! rendered
+            do! this.JavaScript.InvokeVoidAsync("lexScholarSendDialog.sync").AsTask()
+        }
     override this.Program =
         let http = new HttpClient(BaseAddress = Uri(this.Navigation.BaseUri))
+        // One app origin owns both workspace and setup. Normalize localhost before
+        // reading its state or loading data, matching the fixed OAuth callback origin.
+        let entryUri = Uri(this.Navigation.Uri)
+        let js = this.JavaScript :?> IJSInProcessRuntime
+        let remembered =
+            if Uri(this.Navigation.Uri).Host = "localhost" then None
+            else
+                try
+                    match js.Invoke<string>("sessionStorage.getItem", [| box "lexscholar.onboarding" |]) with
+                    | "active" -> Some true
+                    | "finished" -> Some false
+                    | _ -> None
+                with _ -> None
         let start _ =
-            let library, libraryEffect = Library.update Library.LoadLibrary Library.initial
-            // Returning from ChatGPT: read the outcome once, then drop it from the address.
-            let uri = Uri(this.Navigation.Uri)
-            let query = System.Web.HttpUtility.ParseQueryString(uri.Query)
-            let returned = match query.["chatgpt"] with null -> None | value -> Some value
-            if returned.IsSome then this.Navigation.NavigateTo(uri.GetLeftPart(UriPartial.Path), replace = true)
-            let chatGpt, chatGptEffect = ChatGpt.update ChatGpt.Load ChatGpt.initial
-            let statuses, statusEffect = SummaryStatus.updateStatuses SummaryStatus.Refresh SummaryStatus.initialStatuses
-            let chatGpt, _ = ChatGpt.update (ChatGpt.Returned returned) chatGpt
-            { Projects = { initial with Busy = Some Loading }; Library = library; Reader = Reader.initial; Summary = Summary.initial; ChatGpt = chatGpt; Statuses = statuses },
-            Cmd.batch [ Ui.command http Fetch |> Cmd.map ProjectsMsg
-                        Ui.chatGptCommand http this.Navigation chatGptEffect
-                        Ui.statusCommand http statusEffect
-                        libraryEffect |> Option.map (Ui.libraryCommand http) |> Option.defaultValue Cmd.none ]
-        Program.mkProgram start (Ui.update http this.Navigation) Ui.view
+            if entryUri.Host = "localhost" then
+                let target = UriBuilder(entryUri)
+                target.Host <- "127.0.0.1"
+                target.Path <- "/index.html"
+                { Projects = { initial with Busy = Some Loading }; Library = Library.initial; Summary = Summary.initial; ChatGpt = ChatGpt.initial; Statuses = SummaryStatus.initialStatuses; ShowLibrary = false; PendingProjectOpen = false; Onboarding = None },
+                Cmd.ofEffect (fun _ -> this.Navigation.NavigateTo(target.Uri.ToString(), forceLoad = true, replace = true))
+            else
+                let library, libraryEffect = Library.update Library.LoadLibrary Library.initial
+                // Returning from ChatGPT: read the outcome once, then drop it from the address.
+                let uri = Uri(this.Navigation.Uri)
+                let query = System.Web.HttpUtility.ParseQueryString(uri.Query)
+                let returned = match query.["chatgpt"] with null -> None | value -> Some value
+                if returned.IsSome then this.Navigation.NavigateTo(uri.GetLeftPart(UriPartial.Path), replace = true)
+                let chatGpt, chatGptEffect = ChatGpt.update ChatGpt.Load ChatGpt.initial
+                let statuses, statusEffect = SummaryStatus.updateStatuses SummaryStatus.Refresh SummaryStatus.initialStatuses
+                let chatGpt, _ = ChatGpt.update (ChatGpt.Returned returned) chatGpt
+                { Projects = { initial with Busy = Some Loading }; Library = library; Summary = Summary.initial; ChatGpt = chatGpt; Statuses = statuses; ShowLibrary = false; PendingProjectOpen = false; Onboarding = remembered },
+                Cmd.batch [ Ui.command http Fetch |> Cmd.map ProjectsMsg
+                            Ui.chatGptCommand http this.Navigation chatGptEffect
+                            Ui.statusCommand http statusEffect
+                            libraryEffect |> Option.map (Ui.libraryCommand http) |> Option.defaultValue Cmd.none ]
+        let update msg state =
+            let next, command = Ui.update http this.Navigation msg state
+            if next.Onboarding <> state.Onboarding then
+                try
+                    js.InvokeVoid("sessionStorage.setItem", [| box "lexscholar.onboarding"; box (if next.Onboarding = Some true then "active" else "finished") |])
+                with _ -> ()
+            next, command
+        Program.mkProgram start update Ui.view

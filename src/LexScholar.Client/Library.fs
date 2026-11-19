@@ -1,5 +1,5 @@
 /// Shared library and the active project's associated documents: pure state,
-/// no HTTP and no rendering (see App.fs). Reader concerns live elsewhere.
+/// no HTTP and no rendering (see App.fs).
 module LexScholar.Client.Library
 
 open System
@@ -39,6 +39,11 @@ type Model =
       /// The active project whose associations are shown.
       Project: Guid option
       Associations: Association list
+      Opened: Guid option
+      Options: Guid option
+      ChangingRole: Guid option
+      RoleStale: bool
+      RoleError: Failure option
       HasLoadedProject: bool
       LoadingProject: bool
       Busy: Operation option
@@ -59,6 +64,11 @@ type Message =
     | Refresh
     /// Reloads only the active project's documents, for example after a role change.
     | ReloadProject
+    | OpenDocument of Guid
+    | RevealOptions of Guid
+    | HideOptions
+    | ChangeRole of Guid * DocumentRole
+    | RoleChanged of Guid * Result<unit, Failure>
     | Upload of IBrowserFile
     | Uploaded of Result<UploadNotice, Failure>
     | Associate of documentId: Guid * DocumentRole
@@ -74,6 +84,7 @@ type Effect =
     | SendUpload of IBrowserFile
     | SendAssociate of projectId: Guid * documentId: Guid * DocumentRole
     | SendRemove of projectId: Guid * documentId: Guid
+    | SendRole of projectId: Guid * documentId: Guid * DocumentRole
 
 let initial =
     { Documents = []
@@ -81,6 +92,11 @@ let initial =
       LoadingLibrary = false
       Project = None
       Associations = []
+      Opened = None
+      Options = None
+      ChangingRole = None
+      RoleStale = false
+      RoleError = None
       HasLoadedProject = false
       LoadingProject = false
       Busy = None
@@ -143,7 +159,7 @@ let update (message: Message) (model: Model) : Model * Effect option =
         | Error error -> { model with LoadingLibrary = false; Error = Some error }, None
     | ActiveProjectChanged project when project <> model.Project ->
         // Clear at once so one project's documents never appear under another.
-        let model = { model with Project = project; Associations = []; HasLoadedProject = false; LoadingProject = false }
+        let model = { model with Project = project; Associations = []; Opened = None; Options = None; RoleStale = model.ChangingRole.IsSome; RoleError = None; HasLoadedProject = false; LoadingProject = false }
         match project with
         | None -> model, None
         | Some projectId ->
@@ -151,7 +167,9 @@ let update (message: Message) (model: Model) : Model * Effect option =
             model, Some (FetchProject (projectId, request))
     | ProjectLoaded (projectId, request, result) when model.Project = Some projectId && request = model.ProjectRequest ->
         match result with
-        | Ok associations -> { model with Associations = associations; HasLoadedProject = true; LoadingProject = false }, None
+        | Ok associations ->
+            let opened = model.Opened |> Option.filter (fun id -> associations |> List.exists (fun item -> item.Document.Id = id))
+            { model with Associations = associations; Opened = opened; Options = model.Options |> Option.filter (fun id -> opened = Some id); HasLoadedProject = true; LoadingProject = false }, None
         | Error error -> { model with LoadingProject = false; Error = Some error }, None
     | Refresh ->
         let model, library = nextLibrary { model with Error = None }
@@ -163,6 +181,25 @@ let update (message: Message) (model: Model) : Model * Effect option =
     | ReloadProject when model.Project.IsSome ->
         let model, request = nextProject model
         model, Some (FetchProject (model.Project.Value, request))
+    | OpenDocument id when model.Project.IsSome && (model.Associations |> List.exists (fun item -> item.Document.Id = id)) ->
+        { model with Opened = Some id; Options = None; RoleError = None }, None
+    | RevealOptions id when model.Opened = Some id && (model.Associations |> List.exists (fun item -> item.Document.Id = id)) ->
+        { model with Options = Some id }, None
+    | HideOptions -> { model with Options = None }, None
+    | ChangeRole (id, role) when model.Project.IsSome && model.ChangingRole.IsNone ->
+        { model with ChangingRole = Some id; RoleStale = false; RoleError = None },
+        Some (SendRole (model.Project.Value, id, role))
+    | RoleChanged (projectId, result) when model.ChangingRole.IsSome ->
+        let stale = model.RoleStale
+        let model = { model with ChangingRole = None; RoleStale = false }
+        if model.Project <> Some projectId then model, None
+        else
+            match result with
+            | Ok () ->
+                let model, request = nextProject model
+                model, Some (FetchProject (projectId, request))
+            | Error _ when stale -> model, None
+            | Error error -> { model with RoleError = Some error }, None
     | Upload file when model.Busy.IsNone ->
         { model with Busy = Some Uploading; Notice = None; Error = None }, Some (SendUpload file)
     | Uploaded result when model.Busy = Some Uploading ->
@@ -179,11 +216,13 @@ let update (message: Message) (model: Model) : Model * Effect option =
         { model with Busy = Some Removing; Notice = None; Error = None }, Some (SendRemove (model.Project.Value, documentId))
     | Removed (projectId, documentId, result) when model.Busy = Some Removing ->
         // The server removed it: drop it now rather than waiting for the reload,
-        // which may fail, so the reader closes at once (Reader.followLibrary).
+        // which may fail, so the opened document closes at once.
         let model =
             match result with
             | Ok () when model.Project = Some projectId ->
-                { model with Associations = model.Associations |> List.filter (fun item -> item.Document.Id <> documentId) }
+                { model with Associations = model.Associations |> List.filter (fun item -> item.Document.Id <> documentId)
+                             Opened = if model.Opened = Some documentId then None else model.Opened
+                             Options = if model.Options = Some documentId then None else model.Options }
             | _ -> model
         mutated projectId result model
     | _ -> model, None

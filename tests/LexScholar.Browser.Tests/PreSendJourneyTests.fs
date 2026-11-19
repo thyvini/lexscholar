@@ -1,5 +1,6 @@
 /// F004 T011: leaving a document while the confirmation is open sends nothing and leaves her with no summary (FR-006, scenario 7).
 module LexScholar.Browser.Tests.PreSendJourneyTests
+open LexScholar.Client
 
 open System
 open System.IO
@@ -20,59 +21,250 @@ let private withBrowser (name: string) (journey: IBrowser -> Task) : Task = task
     use _ = browser
     do! journey browser }
 
-let private button (scope: ILocator) (name: string) =
-    scope.GetByRole(AriaRole.Button, LocatorGetByRoleOptions(Name = name, Exact = true))
+let private button = Ui.button
 
 let private click (control: ILocator) = task {
     do! Assertions.Expect(control).ToBeVisibleAsync()
     do! control.ClickAsync() }
 
-let private elsewhere = [ "LexScholar:Summary:Endpoint", "http://summary.example.test:8080/v1"; "LexScholar:Summary:Model", "test-model" ]
-
 let private answer = """{"points":[{"text":"Main idea","pages":[1,2]}]}"""
 
 let private selectProject (page: IPage) (name: string) = task {
     let row = page.Locator("ul.projects li").Filter(LocatorFilterOptions(HasText = name))
-    do! click (button row "Select")
-    do! Assertions.Expect(row.Locator("strong.active")).ToHaveTextAsync("Active") }
+    do! click (button row LexScholar.Client.Texts.select)
+    do! Assertions.Expect(row).ToHaveClassAsync("selected") }
 
 let private importAndAdd (page: IPage) (fileName: string) = task {
-    let input = page.GetByLabel("Import a PDF")
+    do! click (button (page.Locator("body")) LexScholar.Client.Texts.library)
+    let input = page.GetByLabel(Texts.importPdf)
     do! Assertions.Expect(input).ToBeVisibleAsync()
     do! input.SetInputFilesAsync(Path.Combine(AppContext.BaseDirectory, "Fixtures", "summary", fileName))
-    do! Assertions.Expect(page.GetByText($"Imported {fileName}.")).ToBeVisibleAsync()
-    do! click (button (page.Locator("ul.documents li").Filter(LocatorFilterOptions(HasText = fileName))) "Add as Focused Source")
-    do! Assertions.Expect(page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = fileName))).ToContainTextAsync("Focused Source") }
+    do! Assertions.Expect(page.GetByText((Texts.imported fileName))).ToBeVisibleAsync()
+    do! click (button (page.Locator("ul.documents li").Filter(LocatorFilterOptions(HasText = fileName))) Texts.addFocused)
+    do! Assertions.Expect(page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = fileName))).ToContainTextAsync(Texts.focusedSource) }
 
 let private openDocument (page: IPage) (fileName: string) = task {
     let row = page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = fileName))
-    do! click (button row "Open")
-    do! Assertions.Expect(page.Locator("iframe.reader-frame")).ToBeVisibleAsync() }
+    do! click (button row Texts.openDocument)
+    do! Assertions.Expect(page.GetByTestId("main").Locator("iframe")).ToHaveCountAsync(0) }
 
-[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T011"); Trait("Category", "Browser")>]
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T025"); Trait("Category", "Browser")>]
+let ``feedback replacement is atomic across navigation failure and non destructive stop`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        let newer = """{"points":[{"text":"Nova tese","pages":[2]},{"text":"Invalid citation","pages":[999]}]}"""
+        let fourth = TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)
+        use fake = new FakeOpenAi(fun number ->
+            match number with
+            | 1 -> ResponsesScript.Completed answer
+            | 2 -> ResponsesScript.Hold newer
+            | 3 -> ResponsesScript.Failed "server_error"
+            | _ -> fourth.TrySetResult() |> ignore; ResponsesScript.WaitUntilCancelled)
+        use harness = TestHarness.Start(serveClient = true, summaryHandler = fake)
+        let! page = Ui.openApp browser harness
+        let deletes = System.Collections.Concurrent.ConcurrentBag<string>()
+        page.Request.Add(fun request -> if request.Method = "DELETE" then deletes.Add(request.Url))
+        do! SummaryJourneyTests.arrange page
+        do! Ui.signInWithChatGpt page harness fake
+        do! openDocument page "article-en.pdf"
+        do! click (button (page.Locator("body")) Texts.summarize)
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) Texts.sendAndSummarize)
+        do! Assertions.Expect(page.Locator(".summary-points")).ToContainTextAsync("Main idea")
+        let feedback = "Explique os limites da tese."
+        do! page.GetByLabel(Texts.feedbackLabel).FillAsync(feedback)
+        do! click (button (page.Locator("body")) Texts.regenerate)
+        let dialog = page.GetByRole(AriaRole.Alertdialog)
+        do! Assertions.Expect(dialog).ToContainTextAsync(Texts.feedbackPrivacy)
+        do! click (button dialog Texts.sendAndSummarize)
+        do! fake.Waiting
+        do! Assertions.Expect(page.Locator(".summary-points")).ToContainTextAsync("Main idea")
+        do! click (button (page.Locator("body")) Texts.library)
+        do! openDocument page "article-en.pdf"
+        do! Assertions.Expect(page.Locator(".summary-points")).ToContainTextAsync("Main idea")
+        do! Assertions.Expect(page.GetByText(Texts.replacing)).ToBeVisibleAsync()
+        fake.Release()
+        do! Assertions.Expect(page.Locator(".summary-points")).ToContainTextAsync("Nova tese")
+        do! Assertions.Expect(page.Locator(".summary-points")).Not.ToContainTextAsync("Main idea")
+        do! Assertions.Expect(page.Locator(".summary-points")).Not.ToContainTextAsync("Invalid citation")
+        do! Assertions.Expect(page.Locator(".summary-points a.citation")).ToHaveAttributeAsync("href", System.Text.RegularExpressions.Regex("#page=2$"))
+        Assert.Contains(fake.RequestsTo("api.openai.com", "/v1/responses"), fun request -> request.Body.Contains(feedback))
+        do! click (button (page.Locator("body")) Texts.regenerate)
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) Texts.sendAndSummarize)
+        do! Assertions.Expect(page.GetByText(Texts.replacementFailed, PageGetByTextOptions(Exact = false))).ToBeVisibleAsync()
+        do! Assertions.Expect(page.Locator(".summary-points")).ToContainTextAsync("Nova tese")
+        // A terminal replacement failure does not trap the preserved summary behind disabled deletion.
+        let delete = button (page.Locator("section.summary")) Texts.delete
+        do! Assertions.Expect(delete).ToBeEnabledAsync()
+        do! click delete
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) Texts.cancel)
+        do! Assertions.Expect(page.Locator(".summary-points")).ToContainTextAsync("Nova tese")
+        do! click (button (page.Locator("body")) Texts.regenerate)
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) Texts.sendAndSummarize)
+        do! fourth.Task
+        do! click (button (page.Locator("body")) Texts.stop)
+        do! fake.Cancelled
+        do! Assertions.Expect(page.GetByLabel(Texts.feedbackLabel)).ToBeVisibleAsync()
+        do! Assertions.Expect(page.Locator(".summary-points")).ToContainTextAsync("Nova tese")
+        Assert.Empty deletes
+    })
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T025"); Trait("Category", "Browser")>]
+let ``feedback requires fresh consent and preserves the saved summary on cancellation`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use fake = new FakeOpenAi(ResponsesScript.Completed answer)
+        use harness = TestHarness.Start(serveClient = true, summaryHandler = fake)
+        let! page = Ui.openApp browser harness
+        do! SummaryJourneyTests.arrange page
+        do! Ui.signInWithChatGpt page harness fake
+        do! openDocument page "article-en.pdf"
+        do! click (button (page.Locator("body")) Texts.summarize)
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) Texts.sendAndSummarize)
+        do! Assertions.Expect(page.Locator(".summary-points")).ToContainTextAsync("Main idea")
+        let feedback = page.GetByLabel("Como melhorar este resumo?")
+        do! Assertions.Expect(feedback).ToBeVisibleAsync(LocatorAssertionsToBeVisibleOptions(Timeout = 5000.0f))
+        do! feedback.FillAsync("Explique os limites da tese.")
+        do! click (button (page.Locator("body")) "Refazer resumo")
+        let dialog = page.GetByRole(AriaRole.Alertdialog)
+        do! Assertions.Expect(dialog).ToBeVisibleAsync()
+        Assert.Single(fake.RequestsTo("api.openai.com", "/v1/responses")) |> ignore
+        do! click (button dialog Texts.cancel)
+        do! Assertions.Expect(feedback).ToHaveValueAsync("Explique os limites da tese.")
+        do! Assertions.Expect(page.Locator(".summary-points")).ToContainTextAsync("Main idea")
+    })
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T023"); Trait("Category", "Browser")>]
+let ``optional first summary instruction survives cancelled consent and is sent through the plan`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use fake = new FakeOpenAi(ResponsesScript.Completed answer)
+        use harness = TestHarness.Start(serveClient = true, summaryHandler = fake)
+        let! page = Ui.openApp browser harness
+        do! SummaryJourneyTests.arrange page
+        do! Ui.signInWithChatGpt page harness fake
+        do! openDocument page "article-en.pdf"
+        let field = page.GetByLabel(Texts.instructionLabel)
+        do! Assertions.Expect(field).ToHaveAttributeAsync("maxlength", "2000")
+        do! field.FillAsync("Quero comparar as teses do autor.")
+        do! click (button (page.Locator("body")) Texts.summarize)
+        let dialog = page.GetByRole(AriaRole.Alertdialog)
+        do! Assertions.Expect(dialog).ToContainTextAsync("sua instrução opcional")
+        Assert.Empty(fake.RequestsTo("api.openai.com", "/v1/responses"))
+        do! click (button dialog Texts.cancel)
+        do! Assertions.Expect(field).ToHaveValueAsync("Quero comparar as teses do autor.")
+        let instruction = "Quero os fundamentos e limites da tese."
+        do! field.FillAsync(instruction)
+        do! click (button (page.Locator("body")) Texts.summarize)
+        do! click (button dialog Texts.sendAndSummarize)
+        do! Assertions.Expect(page.Locator(".summary-points")).ToContainTextAsync("Main idea")
+        use outgoing = System.Text.Json.JsonDocument.Parse((Assert.Single(fake.RequestsTo("api.openai.com", "/v1/responses"))).Body)
+        Assert.DoesNotContain(instruction, outgoing.RootElement.GetProperty("instructions").GetString())
+        let input = outgoing.RootElement.GetProperty("input")
+        Assert.Equal(2, input.GetArrayLength())
+        Assert.Equal("user", input.[1].GetProperty("role").GetString())
+        Assert.Contains(instruction, input.[1].GetProperty("content").GetString())
+        do! Assertions.Expect(page.GetByText(instruction, PageGetByTextOptions(Exact = true))).ToHaveCountAsync(0)
+        do! Assertions.Expect(field).ToHaveCountAsync(0)
+    })
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T020"); Trait("Category", "Browser")>]
+let ``send confirmation is a centered modal with keyboard cancellation and deliberate send`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use fake = new FakeOpenAi(ResponsesScript.Completed answer)
+        use harness = TestHarness.Start(serveClient = true, summaryHandler = fake)
+        let! page = Ui.openApp browser harness
+        do! page.SetViewportSizeAsync(1440, 900)
+        do! SummaryJourneyTests.arrange page
+        do! Ui.signInWithChatGpt page harness fake
+        do! openDocument page "article-en.pdf"
+        let summarize = button (page.Locator("body")) Texts.summarize
+        do! click summarize
+        let dialog = page.GetByRole(AriaRole.Alertdialog)
+        do! Assertions.Expect(dialog).ToHaveAttributeAsync("aria-describedby", "send-disclosure send-information")
+        let! disclosure = dialog.Locator("#send-disclosure").InnerTextAsync()
+        let! information = dialog.Locator("#send-information").InnerTextAsync()
+        Assert.Contains("article-en.pdf", disclosure)
+        Assert.Contains("researcher@example.test", disclosure)
+        Assert.Equal(Texts.confirmationNote, information)
+        do! Assertions.Expect(dialog).ToHaveAccessibleDescriptionAsync($"{disclosure} {information}")
+        do! Assertions.Expect(dialog).ToHaveCSSAsync("position", "fixed")
+        do! Assertions.Expect(dialog).ToHaveAttributeAsync("aria-modal", "true")
+        let! modal = dialog.EvaluateAsync<bool>("e => e.matches(':modal')")
+        Assert.True(modal)
+        let! rect = dialog.BoundingBoxAsync()
+        Assert.InRange(float (rect.X + rect.Width / 2.0f), 719.0, 721.0)
+        Assert.InRange(float (rect.Y + rect.Height / 2.0f), 449.0, 451.0)
+        do! Assertions.Expect(dialog).ToHaveCSSAsync("width", "520px")
+        do! Assertions.Expect(dialog).ToHaveCSSAsync("font-family", "Inter, system-ui, sans-serif")
+        let! backdrop = dialog.EvaluateAsync<string>("e => getComputedStyle(e, '::backdrop').backgroundColor")
+        Assert.Equal("rgba(0, 0, 0, 0.4)", backdrop)
+        do! Assertions.Expect(dialog.Locator(".send-info")).ToHaveCSSAsync("background-color", "rgb(238, 246, 246)")
+        let cancel = button dialog Texts.cancel
+        let send = button dialog Texts.sendAndSummarize
+        do! Assertions.Expect(send).ToHaveCSSAsync("background-color", "rgb(14, 110, 128)")
+        do! Assertions.Expect(send).ToHaveCSSAsync("color", "rgb(255, 255, 255)")
+        do! Assertions.Expect(cancel).ToBeFocusedAsync()
+        do! page.Mouse.ClickAsync(20.0f, 80.0f)
+        do! Assertions.Expect(dialog).ToBeVisibleAsync()
+        Assert.Empty(fake.RequestsTo("api.openai.com", "/v1/responses"))
+        do! cancel.FocusAsync()
+        do! page.Keyboard.PressAsync("Tab")
+        do! Assertions.Expect(send).ToBeFocusedAsync()
+        do! page.Keyboard.PressAsync("Tab")
+        do! Assertions.Expect(dialog.GetByRole(AriaRole.Link)).ToBeFocusedAsync()
+        do! page.Keyboard.PressAsync("Shift+Tab")
+        do! Assertions.Expect(send).ToBeFocusedAsync()
+        do! page.SetViewportSizeAsync(480, 700)
+        let! narrow = dialog.BoundingBoxAsync()
+        Assert.InRange(float narrow.X, 15.0, 17.0)
+        Assert.InRange(float narrow.Width, 447.0, 449.0)
+        do! page.SetViewportSizeAsync(1440, 900)
+        do! page.Keyboard.PressAsync("Escape")
+        do! Assertions.Expect(dialog).ToHaveCountAsync(0)
+        do! Assertions.Expect(summarize).ToBeFocusedAsync()
+        Assert.Empty(fake.RequestsTo("api.openai.com", "/v1/responses"))
+        do! page.Keyboard.PressAsync("Enter")
+        do! Assertions.Expect(cancel).ToBeFocusedAsync()
+        do! page.Keyboard.PressAsync("Enter")
+        do! Assertions.Expect(dialog).ToHaveCountAsync(0)
+        do! Assertions.Expect(summarize).ToBeFocusedAsync()
+        Assert.Empty(fake.RequestsTo("api.openai.com", "/v1/responses"))
+        do! page.Keyboard.PressAsync("Enter")
+        do! Assertions.Expect(cancel).ToBeFocusedAsync()
+        do! page.Keyboard.PressAsync("Tab")
+        do! page.Keyboard.PressAsync("Enter")
+        do! Assertions.Expect(page.Locator(".summary-points")).ToContainTextAsync("Main idea")
+        Assert.Single(fake.RequestsTo("api.openai.com", "/v1/responses")) |> ignore
+    })
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T020"); Trait("Task", "T011"); Trait("Task", "T007"); Trait("Task", "T010"); Trait("Category", "Browser")>]
 let ``leaving a document while the confirmation is open sends nothing and she returns to an idle document`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
-        use fake = new FakeChatService(Reply answer)
-        use harness = TestHarness.Start(serveClient = true, settings = elsewhere, summaryHandler = fake)
+        use fake = new FakeOpenAi(ResponsesScript.Completed answer)
+        use harness = TestHarness.Start(serveClient = true, summaryHandler = fake)
         let! context = browser.NewContextAsync(BrowserNewContextOptions(BaseURL = harness.Client.BaseAddress.ToString()))
         let! page = context.NewPageAsync()
         let! _ = page.GotoAsync("/")
-        do! Assertions.Expect(page.GetByRole(AriaRole.Heading, PageGetByRoleOptions(Name = "Your projects"))).ToBeVisibleAsync()
-        do! page.GetByLabel("Project name").FillAsync("Alpha")
-        do! page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = "Create project")).ClickAsync()
+        do! Ui.enterWorkspace page
+        do! page.GetByLabel(LexScholar.Client.Texts.projectName).FillAsync("Alpha")
+        do! page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = LexScholar.Client.Texts.createProject)).ClickAsync()
         do! selectProject page "Alpha"
         do! importAndAdd page "article-en.pdf"
         do! importAndAdd page "article-pt.pdf"
         let dialog = page.GetByRole(AriaRole.Alertdialog)
-        let summarize = page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = "Summarize", Exact = true))
+        let summarize = page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = LexScholar.Client.Texts.summarize, Exact = true))
+        do! openDocument page "article-en.pdf"
+        do! Ui.signInWithChatGpt page harness fake
         do! openDocument page "article-en.pdf"
         do! click summarize
+        do! Assertions.Expect(dialog).ToHaveAccessibleNameAsync("Enviar documentos ao ChatGPT?")
+        do! Assertions.Expect(dialog.GetByRole(AriaRole.Link)).ToHaveAttributeAsync("href", "https://help.openai.com/pt-br/articles/20001542-using-your-chatgpt-plan-in-other-apps-and-sites")
         do! Assertions.Expect(dialog).ToContainTextAsync("article-en.pdf")
-        do! openDocument page "article-pt.pdf"
+        // Simulate an app-driven document change. The modal intentionally makes
+        // background controls inert to pointer/keyboard interaction.
+        let other = button (page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = "article-pt.pdf"))) Texts.openDocument
+        let! _ = other.EvaluateAsync("element => element.click()")
         do! Assertions.Expect(dialog).ToHaveCountAsync(0)
         do! openDocument page "article-en.pdf"
         // Back on A: idle, not asked, not running, not summarized.
         do! Assertions.Expect(summarize).ToBeVisibleAsync()
         do! Assertions.Expect(dialog).ToHaveCountAsync(0)
         do! Assertions.Expect(page.Locator("section.summary")).ToHaveCountAsync(0)
-        Assert.Empty(fake.Requests) })
+        Assert.Empty(fake.RequestsTo("api.openai.com", "/v1/responses")) })

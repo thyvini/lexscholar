@@ -23,6 +23,40 @@ let private beta = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
 let private paper = { Id = Guid.Parse("11111111-1111-1111-1111-111111111111"); FileName = "paper.pdf"; PageCount = 2; ContentUrl = "/api/documents/11111111-1111-1111-1111-111111111111/content" }
 let private notes = { Id = Guid.Parse("22222222-2222-2222-2222-222222222222"); FileName = "notes.pdf"; PageCount = 5; ContentUrl = "/api/documents/22222222-2222-2222-2222-222222222222/content" }
 
+[<Fact; Trait("Task", "T019")>]
+let ``source options follow only the opened association and clear on navigation or removal`` () =
+    let model = { initial with Project = Some alpha; Associations = [ { Document = paper; Role = FocusedSource }; { Document = notes; Role = ReferenceSource } ] }
+    let opened, effect = update (OpenDocument paper.Id) model
+    Assert.Equal(Some paper.Id, opened.Opened)
+    Assert.True(opened.Options.IsNone)
+    Assert.True(effect.IsNone)
+    let options, effect = update (RevealOptions paper.Id) opened
+    Assert.Equal(Some paper.Id, options.Options)
+    Assert.True(effect.IsNone)
+    let hidden, effect = update HideOptions options
+    Assert.Equal(Some paper.Id, hidden.Opened)
+    Assert.True(hidden.Options.IsNone)
+    Assert.True(effect.IsNone)
+    let reopened, _ = update (OpenDocument paper.Id) options
+    Assert.True(reopened.Options.IsNone)
+    let wrongOptions, _ = update (RevealOptions notes.Id) opened
+    Assert.Equal(opened, wrongOptions)
+    let invalid, _ = update (OpenDocument (Guid.NewGuid())) options
+    Assert.Equal(options, invalid)
+    let other, _ = update (OpenDocument notes.Id) options
+    Assert.True(other.Options.IsNone)
+    let changed, _ = update (ActiveProjectChanged (Some beta)) options
+    Assert.True(changed.Options.IsNone)
+    let pending, _ = update (Remove paper.Id) options
+    let duplicate, effect = update (Remove paper.Id) pending
+    Assert.Equal(pending, duplicate)
+    Assert.True(effect.IsNone)
+    let failed, _ = update (Removed (alpha, paper.Id, Error RequestFailed)) pending
+    Assert.Equal(Some paper.Id, failed.Options)
+    let removed, _ = update (Removed (alpha, paper.Id, Ok ())) pending
+    Assert.True(removed.Options.IsNone)
+    Assert.True(removed.Opened.IsNone)
+
 let private assertState<'a when 'a: equality> (expected: 'a) (actual: 'a) =
     Assert.True((expected = actual), sprintf "Expected: %A\nActual: %A" expected actual)
 
@@ -50,6 +84,73 @@ let private showing project associations documents =
     let model, effect = step LoadLibrary model
     let model, _ = step (LibraryLoaded (libraryRequest effect, Ok documents)) model
     model
+
+[<Fact; Trait("Task", "T004")>]
+let ``opened document closes on project change and association removal`` () =
+    let model = showing alpha [ { Document = paper; Role = FocusedSource } ] [ paper ]
+    let model, effect = step (OpenDocument paper.Id) model
+    assertState None effect
+    assertState (Some paper.Id) model.Opened
+    let changed, _ = step (ActiveProjectChanged (Some beta)) model
+    assertState None changed.Opened
+    let loading, effect = step ReloadProject model
+    let removed, _ = projectLoaded effect (Ok []) loading
+    assertState None removed.Opened
+    let removing, _ = step (Remove paper.Id) model
+    let removed, _ = step (Removed (alpha, paper.Id, Ok ())) removing
+    assertState None removed.Opened
+
+[<Fact; Trait("Task", "T004")>]
+let ``role changes are guarded and stale failures are ignored on return`` () =
+    let model = showing alpha [ { Document = paper; Role = FocusedSource } ] [ paper ]
+    let changing, effect = step (ChangeRole (paper.Id, ReferenceSource)) model
+    assertState (Some (SendRole (alpha, paper.Id, ReferenceSource))) effect
+    let same, effect = step (ChangeRole (notes.Id, FocusedSource)) changing
+    assertState changing same
+    assertState None effect
+    let betaModel, _ = step (ActiveProjectChanged (Some beta)) changing
+    let back, _ = step (ActiveProjectChanged (Some alpha)) betaModel
+    let finished, effect = step (RoleChanged (alpha, Error NotFound)) back
+    assertState None finished.RoleError
+    assertState None effect
+    let changing, _ = step (ChangeRole (paper.Id, ReferenceSource)) finished
+    let finished, effect = step (RoleChanged (alpha, Ok ())) changing
+    assertState alpha (fst (projectRequest effect))
+    assertState None finished.ChangingRole
+
+[<Fact; Trait("Task", "T004")>]
+let ``opening requires an associated document in an active project`` () =
+    let unchanged, effect = step (OpenDocument paper.Id) initial
+    assertState initial unchanged
+    assertState None effect
+    let model = showing alpha [] [ paper ]
+    let unchanged, effect = step (OpenDocument paper.Id) model
+    assertState model unchanged
+    assertState None effect
+
+[<Fact; Trait("Task", "T004")>]
+let ``role errors are shown in their project but not after switching`` () =
+    let model = showing alpha [ { Document = paper; Role = FocusedSource } ] [ paper ]
+    let changing, _ = step (ChangeRole (paper.Id, ReferenceSource)) model
+    let failed, _ = step (RoleChanged (alpha, Error NotFound)) changing
+    assertState (Some NotFound) failed.RoleError
+    let changing, _ = step (ChangeRole (paper.Id, ReferenceSource)) failed
+    let switched, _ = step (ActiveProjectChanged (Some beta)) changing
+    let finished, effect = step (RoleChanged (alpha, Error NotFound)) switched
+    assertState None finished.RoleError
+    assertState None effect
+
+[<Fact; Trait("Task", "T004")>]
+let ``a successful stale role change reloads on return without closing the opened document`` () =
+    let model = showing alpha [ { Document = paper; Role = FocusedSource } ] [ paper ]
+    let changing, _ = step (ChangeRole (paper.Id, ReferenceSource)) model
+    let switched, _ = step (ActiveProjectChanged (Some beta)) changing
+    let returned, effect = step (ActiveProjectChanged (Some alpha)) switched
+    let returned, _ = projectLoaded effect (Ok [ { Document = paper; Role = FocusedSource } ]) returned
+    let returned, _ = step (OpenDocument paper.Id) returned
+    let finished, effect = step (RoleChanged (alpha, Ok ())) returned
+    assertState (Some paper.Id) finished.Opened
+    assertState alpha (fst (projectRequest effect))
 
 [<Fact; Trait("Task", "T032")>]
 let ``loading the library requests it and shows the documents`` () =

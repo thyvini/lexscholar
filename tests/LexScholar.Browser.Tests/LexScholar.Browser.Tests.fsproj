@@ -11,15 +11,19 @@
     <Compile Include="../LexScholar.Server.Tests/TestHarness.fs" Link="TestHarness.fs" />
     <Compile Include="../LexScholar.Server.Tests/FakeChatService.fs" Link="FakeChatService.fs" />
     <Compile Include="../LexScholar.Server.Tests/FakeOpenAi.fs" Link="FakeOpenAi.fs" />
+    <Compile Include="Ui.fs" />
+    <Compile Include="TextsTests.fs" />
+    <Compile Include="SharedPiecesJourneyTests.fs" />
     <Compile Include="ProjectStateTests.fs" />
     <Compile Include="ProjectJourneyTests.fs" />
+    <Compile Include="OnboardingJourneyTests.fs" />
     <Compile Include="LibraryStateTests.fs" />
     <Compile Include="LibraryJourneyTests.fs" />
-    <Compile Include="ReaderStateTests.fs" />
-    <Compile Include="ReaderApiTests.fs" />
-    <Compile Include="ReaderJourneyTests.fs" />
+    <Compile Include="RoleApiTests.fs" />
     <Compile Include="SummaryStateTests.fs" />
     <Compile Include="SummaryJourneyTests.fs" />
+    <Compile Include="WorkspaceJourneyTests.fs" />
+    <Compile Include="MissingFileJourneyTests.fs" />
     <Compile Include="ChatGptStateTests.fs" />
     <Compile Include="ChatGptJourneyTests.fs" />
     <Compile Include="SummaryStatusStateTests.fs" />

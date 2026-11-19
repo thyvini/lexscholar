@@ -21,8 +21,12 @@ type ResponsesScript =
     | Failed of code: string
     /// A non-200 answer whose JSON body carries this error code.
     | Status of status: int * code: string
+    /// An error without the expected error object, matching the legacy fake's unstructured body.
+    | UnstructuredStatus of status: int
     /// Never answers until the request is cancelled.
     | WaitUntilCancelled
+    /// Waits for Release before returning a completed stream.
+    | Hold of text: string
 
 /// One request the fake saw. Bodies are kept so tests can assert on exact fields.
 type RecordedOpenAiRequest =
@@ -66,7 +70,8 @@ type FakeOpenAi(responses: int -> ResponsesScript) =
     let mutable responseCalls = 0
     let waiting = TaskCompletionSource()
     let cancelled = TaskCompletionSource()
-    let tokenArrived = TaskCompletionSource()
+    let release = TaskCompletionSource()
+    let mutable tokenArrived = TaskCompletionSource()
     let mutable tokenHold : TaskCompletionSource option = None
 
     new(always: ResponsesScript) = new FakeOpenAi(fun _ -> always)
@@ -75,6 +80,7 @@ type FakeOpenAi(responses: int -> ResponsesScript) =
     /// The client id the fake issues and the audience of its ID tokens.
     member val ClientId = "client-test" with get, set
     member val Email = "researcher@example.test" with get, set
+    member val SummaryErrorMessage = "service detail" with get, set
     /// Nonce placed in the ID token; tests copy it from the authorization URL.
     member val Nonce = "" with get, set
     member val Scope = "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct" with get, set
@@ -93,12 +99,14 @@ type FakeOpenAi(responses: int -> ResponsesScript) =
     /// Completes when a `WaitUntilCancelled` Responses request waits, and when it is cancelled (handshakes, no polling).
     member _.Waiting : Task = waiting.Task
     member _.Cancelled : Task = cancelled.Task
-    /// Completes when the first token request arrives.
+    member _.Release() = release.TrySetResult() |> ignore
+    /// Completes when the first token request arrives (reset by HoldTokens for a later refresh handshake).
     member _.TokenArrived : Task = tokenArrived.Task
 
     /// Holds every token response until the returned function is called (for race tests).
     member _.HoldTokens() : (unit -> unit) =
         let hold = TaskCompletionSource()
+        tokenArrived <- TaskCompletionSource()
         tokenHold <- Some hold
         fun () -> hold.TrySetResult() |> ignore
 
@@ -143,7 +151,16 @@ type FakeOpenAi(responses: int -> ResponsesScript) =
                 {| models = this.Models |> List.map (fun (slug, visibility) -> {| slug = slug; visibility = visibility |}) |}))
         | "api.openai.com", "/v1/responses" ->
             let number = Interlocked.Increment(&responseCalls)
-            match responses number with
+            let! answer = task {
+                match responses number with
+                | ResponsesScript.Hold text ->
+                    waiting.TrySetResult() |> ignore
+                    try do! release.Task.WaitAsync(cancellation)
+                    with :? OperationCanceledException as error -> cancelled.TrySetResult() |> ignore; raise error
+                    return ResponsesScript.Completed text
+                | answer -> return answer
+            }
+            match answer with
             | ResponsesScript.Completed text ->
                 let half = text.Length / 2
                 return this.Sse
@@ -153,13 +170,16 @@ type FakeOpenAi(responses: int -> ResponsesScript) =
                       "response.completed", box {| ``type`` = "response.completed" |} ]
             | ResponsesScript.Failed code ->
                 return this.Sse
-                    [ "response.failed", box {| ``type`` = "response.failed"; response = {| error = {| code = code; message = "service detail" |} |} |} ]
+                    [ "response.failed", box {| ``type`` = "response.failed"; response = {| error = {| code = code; message = this.SummaryErrorMessage |} |} |} ]
             | ResponsesScript.Status (status, code) ->
-                return this.Json(status, JsonSerializer.Serialize({| error = {| code = code; message = "service detail" |} |}))
+                return this.Json(status, JsonSerializer.Serialize({| error = {| code = code; message = this.SummaryErrorMessage |} |}))
+            | ResponsesScript.UnstructuredStatus status ->
+                return this.Json(status, """{"error":"service detail"}""")
             | ResponsesScript.WaitUntilCancelled ->
                 waiting.TrySetResult() |> ignore
                 try do! Task.Delay(Timeout.Infinite, cancellation)
                 with :? OperationCanceledException as error -> cancelled.TrySetResult() |> ignore; raise error
                 return new HttpResponseMessage(HttpStatusCode.OK)
+            | ResponsesScript.Hold _ -> return failwith "A held response must be released first."
         | _ -> return new HttpResponseMessage(HttpStatusCode.NotFound)
     }

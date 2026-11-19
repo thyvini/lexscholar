@@ -11,6 +11,7 @@
     <Compile Include="../RunnerSmoke.fs" Link="RunnerSmoke.fs" />
     <Compile Include="FakeChatService.fs" />
     <Compile Include="FakeOpenAi.fs" />
+    <Compile Include="FakeOpenAiHoldTests.fs" />
     <Compile Include="TestHarness.fs" />
     <Compile Include="ProcessHarness.fs" />
     <Compile Include="HarnessSmoke.fs" />
@@ -25,6 +26,7 @@
     <Compile Include="SummaryContractTests.fs" />
     <Compile Include="BackgroundSummaryContractTests.fs" />
     <Compile Include="ChatGptContractTests.fs" />
+    <Compile Include="RegenerationReviewTests.fs" />
     <Compile Include="PreSendRegressionTests.fs" />
     <Compile Include="ChatGptHygieneTests.fs" />
     <Compile Include="SummaryReferenceSetTests.fs" />

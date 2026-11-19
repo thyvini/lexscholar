@@ -141,14 +141,15 @@ let generated (element: JsonElement) : Summary.Generated =
       Model = element.GetProperty("model").GetString() }
 
 /// `confirmSend` names the service the researcher confirmed, so the server can check it is still the configured one.
-let requestBody (destination: Summary.Destination option) (confirmed: Summary.Confirmed option) : string =
+let requestBodyWithInstruction (destination: Summary.Destination option) (confirmed: Summary.Confirmed option) (instruction: string option) : string =
     let destinationName =
         match destination with
         | Some Summary.UsePlan -> Some "chatgpt"
         | Some Summary.UseConfigured -> Some "configured"
         | None -> None
     let fields =
-        [ yield! destinationName |> Option.map (fun name -> "destination", box name) |> Option.toList
+        [ yield! instruction |> Option.bind LexScholar.Domain.SummaryInstruction.normalize |> Option.map (fun value -> "instruction", box value) |> Option.toList
+          yield! destinationName |> Option.map (fun name -> "destination", box name) |> Option.toList
           match confirmed with
           | Some (Summary.ConfirmedService (host, model)) ->
               yield "confirmSend", box true
@@ -157,6 +158,8 @@ let requestBody (destination: Summary.Destination option) (confirmed: Summary.Co
           | Some Summary.ConfirmedPlan -> yield "confirmSend", box true
           | None -> yield "confirmSend", box false ]
     JsonSerializer.Serialize(dict fields)
+
+let requestBody destination confirmed = requestBodyWithInstruction destination confirmed None
 
 /// The job state of `GET .../summary` or of an answered POST (`SummaryState` of the contract), as the open
 /// document's summary reads it; None for a body that is not one.
