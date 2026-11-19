@@ -7,6 +7,7 @@ open System.Text.Json
 open Xunit
 open LexScholar.Domain
 open LexScholar.Infrastructure
+open LexScholar.Application
 open ChatGptContractTests
 
 let private seedSaved (harness: TestHarness) path =
@@ -23,6 +24,52 @@ let private wait (work: Task) = work.WaitAsync(TimeSpan.FromSeconds 30.).GetAwai
 let private status text =
     use json = JsonDocument.Parse(text: string)
     json.RootElement.GetProperty("status").GetString()
+
+[<Theory; Trait("Task", "T024")>]
+[<InlineData(false)>]
+[<InlineData(true)>]
+let ``ordinary Started response cannot expose a replacement registered before response construction`` fail =
+    let key : SummaryKey = { Project = Guid.NewGuid(); Document = Guid.NewGuid() }
+    let mutable saved = None
+    let jobs = SummaryJobs {
+        Find = fun _ -> saved
+        Save = fun _ summary -> saved <- Some summary
+        Delete = fun _ -> saved <- None
+        AssociationExists = fun _ -> true }
+    let summary : StoredSummary =
+        { DocumentId = key.Document; Points = [{ Text = "Original"; Pages = [1] }]
+          PagesCovered = [1]; UnreadablePages = []; OmittedPoints = 0
+          GeneratedAt = DateTimeOffset.UtcNow; ServiceHost = "old"; Model = "old" }
+    let handle = TaskCompletionSource<JobHandle>()
+    let finish = TaskCompletionSource()
+    let run given = task { handle.SetResult given; do! finish.Task }
+    // Suspend the caller after registration by retaining its outcome, before invoking the real response helper.
+    let ordinaryOutcome = jobs.Start(key, Threading.CancellationToken.None, run)
+    Assert.Equal(Started, ordinaryOutcome)
+    let ordinary = handle.Task.GetAwaiter().GetResult()
+    Assert.True(jobs.Complete(key, ordinary.Id, summary))
+    finish.SetResult()
+    let replacementHandle = TaskCompletionSource<JobHandle>()
+    let replacementFinish = TaskCompletionSource()
+    let replacementRun given = task { replacementHandle.SetResult given; do! replacementFinish.Task }
+    Assert.Equal(Started, jobs.Start(key, Threading.CancellationToken.None, replacementRun, regenerate = true))
+    let replacement = replacementHandle.Task.GetAwaiter().GetResult()
+    if fail then Assert.True(jobs.Fail(key, replacement.Id, "service_failed", "failed replacement", None))
+    try
+        // The same production helper must keep the two response audiences separate in either interleaving.
+        let response = LexScholar.Server.SummaryEndpoints.startAnswer false jobs key ordinaryOutcome
+        let statusResult = response :?> Microsoft.AspNetCore.Http.IStatusCodeHttpResult
+        Assert.Equal(Nullable 202, statusResult.StatusCode)
+        let json = JsonSerializer.Serialize((response :?> Microsoft.AspNetCore.Http.IValueHttpResult).Value)
+        Assert.Equal("finished", status json)
+        Assert.Contains("Original", json)
+        let awareResponse = LexScholar.Server.SummaryEndpoints.startAnswer true jobs key Started
+        let awareJson = JsonSerializer.Serialize((awareResponse :?> Microsoft.AspNetCore.Http.IValueHttpResult).Value)
+        Assert.Equal((if fail then "failed" else "running"), status awareJson)
+        Assert.Equal(Some summary, saved)
+    finally
+        jobs.Cancel key
+        replacementFinish.SetResult()
 
 [<Theory; Trait("Task", "T024")>]
 [<InlineData(false)>]

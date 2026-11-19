@@ -247,10 +247,12 @@ let private chatgptClient (injected: HttpMessageHandler) (real: unit -> HttpMess
     | handler -> new HttpClient(handler, false)
 
 /// The answer to a `Start`: the new job's state (202), or the one that already exists (200).
-let private startAnswer regenerate (jobs: SummaryJobs) (key: SummaryKey) (outcome: StartOutcome) : IResult =
+/// Kept callable for deterministic tests of state changes between registration and response construction.
+let startAnswer regenerate (jobs: SummaryJobs) (key: SummaryKey) (outcome: StartOutcome) : IResult =
     match outcome with
-    | Started -> stateResult 202 (jobs.State key |> Option.defaultValue (JobState.Running None))
-    | AlreadyRunning | AlreadyFinished -> stateResult 200 (jobs.State(key, includeReplacement = regenerate) |> Option.defaultValue (JobState.Running None))
+    | Started | AlreadyRunning | AlreadyFinished ->
+        let status = if outcome = Started then 202 else 200
+        stateResult status (jobs.State(key, includeReplacement = regenerate) |> Option.defaultValue (JobState.Running None))
     | NotAssociated -> problem 404 "not_found" "Association not found" null
     | NoSavedSummary -> problem 404 "no_summary" "No saved summary to replace" null
     | StartOutcome.Cancelled -> problem 409 "cancelled" "Replacement cancelled" "The saved summary is unchanged."

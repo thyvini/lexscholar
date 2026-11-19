@@ -24,3 +24,12 @@ Verdicts: GPT P0 (legacy Stop/Close can delete the durable version), GPT P1 (can
 - GREEN: `scripts/check.sh T024 T002 T003 T006 T008 T009` — warning-as-error build; **336 passed, zero failures/skips**, including four real Chromium/Firefox journeys and legacy deletion regressions.
 - Race handshakes: injected `PageExtraction` holds a real HTTP request inside extraction even while ignoring cancellation; `FakeOpenAi.HoldTokens` resets its arrival handshake and holds refresh after sign-in. Tests issue cancel while held, release, await the POST, assert 409, zero model/summary calls and unchanged SQLite content. Registry tests also cover all registration paths and DELETE/removal followed by a newer saved row.
 - Full suite/merge checks: CI and fresh GPT review are required on the pushed PR head. No merge performed.
+
+## Independent re-review — Started response race (must fix)
+
+The `Started` response branch bypassed the legacy/replacement audience filter used by the other successful outcomes. An ordinary job could finish and a replacement could register before response construction, exposing replacement progress/failure to the legacy client.
+
+- RED: `scripts/check.sh T024` — two assertion failures: ordinary 202 response contained `running`/`failed` instead of the saved `finished` summary (`/tmp/lexscholar-check.3Oo0fQ`); 38 tests, zero skips.
+- Deterministic regression: retain an actual ordinary `Start` outcome, complete that job, register a held replacement (running and failed variants), then invoke the exact production response helper. No sleeps, polling or test-only timing hook. Assert ordinary 202 contains the original finished summary, replacement-aware responses retain running/failed state, and storage is unchanged.
+- Fix: all successful outcomes share one state lookup with `includeReplacement = regenerate`; only the HTTP status differs.
+- GREEN: `scripts/check.sh T024 T002 T003 T006 T008 T009` — warning-as-error build; **338 passed, zero failures/skips**. CI/full-suite and fresh review remain required on the pushed head. No merge performed.
