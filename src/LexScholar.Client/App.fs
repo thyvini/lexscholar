@@ -617,19 +617,31 @@ module private Ui =
         | None -> empty ()
 
     let private confirmDialog (document: Library.Document) (target: Summary.ConfirmTarget) dispatch =
-        div {
-            attr.``class`` "summary-confirm"
+        elt "dialog" {
+            attr.id "send-confirmation"
+            attr.``class`` "send-dialog"
             "role" => "alertdialog"
             "aria-label" => Texts.confirmationTitle
+            "aria-modal" => "true"
+            on.event "cancel" (fun _ -> dispatch Summary.CancelSend)
             h3 { text Texts.confirmationTitle }
             match target with
             | Summary.Service (host, model) -> p { text (Texts.confirmationService document.FileName host model) }
             | Summary.Plan account ->
                 p { text (Texts.confirmationPlan document.FileName document.PageCount account) }
                 a { attr.href Texts.confirmationHelpUrl; "target" => "_blank"; "rel" => "noopener noreferrer"; text Texts.confirmationHelp }
-                p { text Texts.confirmationNote }
-            plainButton Texts.sendAndSummarize (Some "send-confirm") (fun _ -> dispatch Summary.ConfirmSend)
-            plainButton Texts.cancel (Some "send-cancel") (fun _ -> dispatch Summary.CancelSend)
+                p { attr.``class`` "send-info"; text Texts.confirmationNote }
+            div {
+                attr.``class`` "send-actions"
+                button {
+                    attr.``type`` "button"
+                    attr.``class`` "send-cancel"
+                    "autofocus" => "autofocus"
+                    on.click (fun _ -> dispatch Summary.CancelSend)
+                    text Texts.cancel
+                }
+                plainButton Texts.sendAndSummarize (Some "send-confirm") (fun _ -> dispatch Summary.ConfirmSend)
+            }
         }
 
     /// One link per consecutive run of validated pages, always for the open document.
@@ -795,6 +807,7 @@ module private Ui =
                         if summary.Available.Plan then
                             button {
                                 attr.``type`` "button"
+                                attr.id "summary-request"
                                 on.click (fun _ -> dispatch Summary.Summarize)
                                 text Texts.summarize
                             }
@@ -1114,6 +1127,12 @@ type App() =
     member val Navigation = Unchecked.defaultof<NavigationManager> with get, set
     [<Inject>]
     member val JavaScript = Unchecked.defaultof<IJSRuntime> with get, set
+    override this.OnAfterRenderAsync(firstRender) =
+        let rendered = base.OnAfterRenderAsync(firstRender)
+        task {
+            do! rendered
+            do! this.JavaScript.InvokeVoidAsync("lexScholarSendDialog.sync").AsTask()
+        }
     override this.Program =
         let http = new HttpClient(BaseAddress = Uri(this.Navigation.BaseUri))
         // One app origin owns both workspace and setup. Normalize localhost before

@@ -48,7 +48,70 @@ let private openDocument (page: IPage) (fileName: string) = task {
     do! click (button row Texts.openDocument)
     do! Assertions.Expect(page.GetByTestId("main").Locator("iframe")).ToHaveCountAsync(0) }
 
-[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T011"); Trait("Task", "T007"); Trait("Task", "T010"); Trait("Category", "Browser")>]
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T020"); Trait("Category", "Browser")>]
+let ``send confirmation is a centered modal with keyboard cancellation and deliberate send`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use fake = new FakeOpenAi(ResponsesScript.Completed answer)
+        use harness = TestHarness.Start(serveClient = true, summaryHandler = fake)
+        let! page = Ui.openApp browser harness
+        do! page.SetViewportSizeAsync(1440, 900)
+        do! SummaryJourneyTests.arrange page
+        do! Ui.signInWithChatGpt page harness fake
+        do! openDocument page "article-en.pdf"
+        let summarize = button (page.Locator("body")) Texts.summarize
+        do! click summarize
+        let dialog = page.GetByRole(AriaRole.Alertdialog)
+        do! Assertions.Expect(dialog).ToHaveCSSAsync("position", "fixed")
+        do! Assertions.Expect(dialog).ToHaveAttributeAsync("aria-modal", "true")
+        let! modal = dialog.EvaluateAsync<bool>("e => e.matches(':modal')")
+        Assert.True(modal)
+        let! rect = dialog.BoundingBoxAsync()
+        Assert.InRange(float (rect.X + rect.Width / 2.0f), 719.0, 721.0)
+        Assert.InRange(float (rect.Y + rect.Height / 2.0f), 449.0, 451.0)
+        do! Assertions.Expect(dialog).ToHaveCSSAsync("width", "520px")
+        do! Assertions.Expect(dialog).ToHaveCSSAsync("font-family", "Inter, system-ui, sans-serif")
+        let! backdrop = dialog.EvaluateAsync<string>("e => getComputedStyle(e, '::backdrop').backgroundColor")
+        Assert.Equal("rgba(0, 0, 0, 0.4)", backdrop)
+        do! Assertions.Expect(dialog.Locator(".send-info")).ToHaveCSSAsync("background-color", "rgb(238, 246, 246)")
+        let cancel = button dialog Texts.cancel
+        let send = button dialog Texts.sendAndSummarize
+        do! Assertions.Expect(send).ToHaveCSSAsync("background-color", "rgb(14, 110, 128)")
+        do! Assertions.Expect(send).ToHaveCSSAsync("color", "rgb(255, 255, 255)")
+        do! Assertions.Expect(cancel).ToBeFocusedAsync()
+        do! page.Mouse.ClickAsync(20.0f, 80.0f)
+        do! Assertions.Expect(dialog).ToBeVisibleAsync()
+        Assert.Empty(fake.RequestsTo("api.openai.com", "/v1/responses"))
+        do! cancel.FocusAsync()
+        do! page.Keyboard.PressAsync("Tab")
+        do! Assertions.Expect(send).ToBeFocusedAsync()
+        do! page.Keyboard.PressAsync("Tab")
+        do! Assertions.Expect(dialog.GetByRole(AriaRole.Link)).ToBeFocusedAsync()
+        do! page.Keyboard.PressAsync("Shift+Tab")
+        do! Assertions.Expect(send).ToBeFocusedAsync()
+        do! page.SetViewportSizeAsync(480, 700)
+        let! narrow = dialog.BoundingBoxAsync()
+        Assert.InRange(float narrow.X, 15.0, 17.0)
+        Assert.InRange(float narrow.Width, 447.0, 449.0)
+        do! page.SetViewportSizeAsync(1440, 900)
+        do! page.Keyboard.PressAsync("Escape")
+        do! Assertions.Expect(dialog).ToHaveCountAsync(0)
+        do! Assertions.Expect(summarize).ToBeFocusedAsync()
+        Assert.Empty(fake.RequestsTo("api.openai.com", "/v1/responses"))
+        do! page.Keyboard.PressAsync("Enter")
+        do! Assertions.Expect(cancel).ToBeFocusedAsync()
+        do! page.Keyboard.PressAsync("Enter")
+        do! Assertions.Expect(dialog).ToHaveCountAsync(0)
+        do! Assertions.Expect(summarize).ToBeFocusedAsync()
+        Assert.Empty(fake.RequestsTo("api.openai.com", "/v1/responses"))
+        do! page.Keyboard.PressAsync("Enter")
+        do! Assertions.Expect(cancel).ToBeFocusedAsync()
+        do! page.Keyboard.PressAsync("Tab")
+        do! page.Keyboard.PressAsync("Enter")
+        do! Assertions.Expect(page.Locator(".summary-points")).ToContainTextAsync("Main idea")
+        Assert.Single(fake.RequestsTo("api.openai.com", "/v1/responses")) |> ignore
+    })
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T020"); Trait("Task", "T011"); Trait("Task", "T007"); Trait("Task", "T010"); Trait("Category", "Browser")>]
 let ``leaving a document while the confirmation is open sends nothing and she returns to an idle document`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
         use fake = new FakeOpenAi(ResponsesScript.Completed answer)
@@ -71,7 +134,10 @@ let ``leaving a document while the confirmation is open sends nothing and she re
         do! Assertions.Expect(dialog).ToHaveAccessibleNameAsync("Enviar documentos ao ChatGPT?")
         do! Assertions.Expect(dialog.GetByRole(AriaRole.Link)).ToHaveAttributeAsync("href", "https://help.openai.com/pt-br/articles/20001542-using-your-chatgpt-plan-in-other-apps-and-sites")
         do! Assertions.Expect(dialog).ToContainTextAsync("article-en.pdf")
-        do! openDocument page "article-pt.pdf"
+        // Simulate an app-driven document change. The modal intentionally makes
+        // background controls inert to pointer/keyboard interaction.
+        let other = button (page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = "article-pt.pdf"))) Texts.openDocument
+        let! _ = other.EvaluateAsync("element => element.click()")
         do! Assertions.Expect(dialog).ToHaveCountAsync(0)
         do! openDocument page "article-en.pdf"
         // Back on A: idle, not asked, not running, not summarized.
