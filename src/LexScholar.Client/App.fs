@@ -827,7 +827,7 @@ module private Ui =
                 | Summary.Shown generated -> summaryPanel document generated dispatch
                 | Summary.ConfirmingDelete generated -> summaryPanel document generated dispatch
                 | _ -> empty ()
-            cond (match summary.State with Summary.Idle -> summary.Available.Plan | Summary.Shown generated -> generated.ServiceHost = "ChatGPT plan" | _ -> false) <| function
+            cond (match summary.State with Summary.Idle -> summary.Available.Plan | Summary.Shown generated | Summary.ConfirmingDelete generated -> generated.ServiceHost = "ChatGPT plan" | _ -> false) <| function
                 | true -> span { attr.``class`` "summary-using-plan"; text Texts.usingPlan; text " · "; usageLink Texts.manageUsage }
                 | false -> empty ()
         }

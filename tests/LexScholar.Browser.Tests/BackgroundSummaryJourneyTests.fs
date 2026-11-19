@@ -96,6 +96,8 @@ let ``deleting a finished summary requires confirmation and survives restart`` (
                 do! click (button (panel page) LexScholar.Client.Texts.delete)
                 let dialog = page.GetByRole(AriaRole.Alertdialog)
                 do! Assertions.Expect(dialog).ToContainTextAsync(LexScholar.Client.Texts.confirmDelete)
+                do! Assertions.Expect(page.Locator(".summary-using-plan")).ToContainTextAsync(LexScholar.Client.Texts.usingPlan)
+                do! Assertions.Expect(page.Locator(".summary-using-plan").GetByRole(AriaRole.Link)).ToBeVisibleAsync()
                 do! click (button dialog LexScholar.Client.Texts.cancel)
                 do! Assertions.Expect(panel page).ToContainTextAsync("Main idea")
                 do! click (button (panel page) LexScholar.Client.Texts.delete)
