@@ -61,6 +61,49 @@ let arrange (page: IPage) = task {
 
 let private panel (page: IPage) = page.Locator("section.summary")
 
+[<Theory; InlineData("chromium", false); InlineData("chromium", true); InlineData("firefox", false); InlineData("firefox", true); Trait("Task", "T024"); Trait("Category", "Browser")>]
+let ``legacy client keeps the durable summary instead of offering destructive replacement stop or close`` (browserName: string, fail: bool) =
+    withBrowser browserName (fun browser -> task {
+        use fake = new FakeChatService(if fail then Status 500 else WaitUntilCancelled)
+        use harness = TestHarness.Start(serveClient = true, settings = settings, summaryHandler = fake)
+        let! page = openApp browser harness
+        do! arrange page
+        use! projects = harness.Client.GetAsync("/api/projects")
+        let! projectBody = projects.Content.ReadAsStringAsync()
+        use projectJson = System.Text.Json.JsonDocument.Parse(projectBody)
+        let project = projectJson.RootElement.GetProperty("projects").[0].GetProperty("id").GetGuid()
+        use! documents = harness.Client.GetAsync("/api/documents")
+        let! documentBody = documents.Content.ReadAsStringAsync()
+        use documentJson = System.Text.Json.JsonDocument.Parse(documentBody)
+        let document = documentJson.RootElement.[0].GetProperty("id").GetGuid()
+        let key: LexScholar.Domain.SummaryKey = { Project = project; Document = document }
+        let original: LexScholar.Domain.StoredSummary =
+            { DocumentId = document; Points = [{ Text = "Durable original"; Pages = [1] }]
+              PagesCovered = [1]; UnreadablePages = []; OmittedPoints = 0
+              GeneratedAt = DateTimeOffset.UtcNow; ServiceHost = "old"; Model = "old" }
+        LexScholar.Infrastructure.SummaryRepository.save harness.Root key original
+        use! csrfResponse = harness.Client.GetAsync("/api/antiforgery")
+        let! csrfText = csrfResponse.Content.ReadAsStringAsync()
+        use csrf = System.Text.Json.JsonDocument.Parse csrfText
+        let path = $"/api/projects/{project}/documents/{document}/summary"
+        use request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, path + "/regenerate")
+        request.Headers.TryAddWithoutValidation("Origin", harness.Client.BaseAddress.GetLeftPart(UriPartial.Authority)) |> ignore
+        request.Headers.TryAddWithoutValidation("X-CSRF-TOKEN", csrf.RootElement.GetProperty("requestToken").GetString()) |> ignore
+        use! started = harness.Client.SendAsync request
+        Assert.Equal(System.Net.HttpStatusCode.Accepted, started.StatusCode)
+        if fail then do! SummaryJobsAccess.settled harness.App project document
+        else do! fake.Waiting
+        let! _ = page.ReloadAsync()
+        do! click (button (page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))) Texts.openDocument)
+        do! Assertions.Expect(panel page).ToContainTextAsync("Durable original")
+        do! Assertions.Expect(page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = Texts.stop, Exact = true))).ToHaveCountAsync(0)
+        do! Assertions.Expect(page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = Texts.close, Exact = true))).ToHaveCountAsync(0)
+        // Existing explicit deletion still requires confirmation; cancellation leaves the row untouched.
+        do! click (button (panel page) Texts.delete)
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) Texts.cancel)
+        Assert.Equal(Some original, LexScholar.Infrastructure.SummaryRepository.find harness.Root key)
+    })
+
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T007"); Trait("Task", "T011"); Trait("Category", "Browser")>]
 let ``historical configured service summary retains its recorded provenance`` (browserName: string) =
     withBrowser browserName (fun browser -> task {

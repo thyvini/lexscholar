@@ -100,3 +100,7 @@ All client slices T002–T011 except T005 share `App.fs`; code-map writers also 
 | SC-004 | T011 |
 | SC-005 | T007 |
 | SC-006 | T003–T011 (migrated journeys), T013 |
+
+## Approved follow-up — summary regeneration backend
+
+- [x] T024 Explicit replacement lifecycle, preserving the saved summary until successful atomic replacement. Add nondestructive cancellation and durable-version access; keep ordinary behavior/security and shared registry concurrency guards. Files: `SummaryJobs.fs`, `SummaryEndpoints.fs`, application/HTTP summary tests, code map and [contract](contracts/summary-regeneration.md). Backend only; feedback prompt and UI follow separately. [Evidence](evidence/t024-regeneration-lifecycle.md).

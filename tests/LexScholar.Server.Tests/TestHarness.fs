@@ -50,7 +50,7 @@ type TestHarness private (workspace: TemporaryWorkspace, ownsWorkspace: bool, ap
     member _.App = app
     member _.Client = client
 
-    static member Start(?settings: (string * string) list, ?serveClient: bool, ?configure: WebApplication -> unit, ?environment: string, ?workspace: TemporaryWorkspace, ?summaryHandler: HttpMessageHandler) =
+    static member Start(?settings: (string * string) list, ?serveClient: bool, ?configure: WebApplication -> unit, ?environment: string, ?workspace: TemporaryWorkspace, ?summaryHandler: HttpMessageHandler, ?summaryExtraction: SummaryEndpoints.PageExtraction) =
         let ownsWorkspace = Option.isNone workspace
         let workspace = match workspace with Some shared -> shared | None -> TemporaryWorkspace.Create()
         let mutable app: WebApplication option = None
@@ -58,6 +58,7 @@ type TestHarness private (workspace: TemporaryWorkspace, ownsWorkspace: bool, ap
             let builder = HostSetup.builder workspace.Root (defaultArg settings [])
             // The host takes the outgoing summary handler from DI when one is registered (research §7).
             summaryHandler |> Option.iter (fun handler -> builder.Services.AddSingleton<HttpMessageHandler>(handler) |> ignore)
+            summaryExtraction |> Option.iter (fun extraction -> builder.Services.AddSingleton<SummaryEndpoints.PageExtraction>(extraction) |> ignore)
             environment |> Option.iter (fun name -> builder.Environment.EnvironmentName <- name)
             if defaultArg serveClient false then
                 builder.WebHost.UseStaticWebAssets() |> ignore

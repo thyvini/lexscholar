@@ -106,6 +106,19 @@ let ``a stale job id cannot change state`` () =
     finish.SetResult()
     finish2.SetResult()
 
+[<Fact; Trait("Task", "T024")>]
+let ``replacement registration rejects a removed association and early plan failure preserves the saved version`` () =
+    let associated = ref true
+    let stored = ref (Some summary)
+    let jobs = registry associated stored
+    Assert.Equal(Started, jobs.StartFailed(key, "signed_out", "expired", regenerate = true))
+    Assert.Equal(Some summary, stored.Value)
+    jobs.Cancel key
+    Assert.Equal(Some (JobState.Finished summary), jobs.State key)
+    jobs.RemoveAssociation(key, fun () -> associated.Value <- false; stored.Value <- None)
+    Assert.Equal(NotAssociated, jobs.Start(key, CancellationToken.None, noJob, regenerate = true))
+    Assert.Equal(NotAssociated, jobs.StartFailed(key, "signed_out", "expired", regenerate = true))
+
 [<Fact; Trait("Task", "T002")>]
 let ``the job's token is linked to the application stopping, not to a request`` () =
     let jobs = registry (ref true) (ref None)
@@ -265,3 +278,101 @@ let ``a failed association delete leaves the stored summary alone`` () =
     let failed = jobs.RemoveAssociation(key, fun () -> Error "database error")
     Assert.Equal(Error "database error", failed)
     Assert.Equal(Some summary, stored.Value)
+
+[<Fact; Trait("Task", "T024")>]
+let ``replacement failure cancellation stale reports and restart preserve the durable version`` () =
+    let stored = ref (Some summary)
+    let jobs = registry (ref true) stored
+    let run, handle, finish = held ()
+    Assert.Equal(Started, jobs.Start(key, CancellationToken.None, run, regenerate = true))
+    let old = handle.Result
+    Assert.Equal(AlreadyRunning, jobs.Start(key, CancellationToken.None, noJob, regenerate = true))
+    Assert.Equal(AlreadyRunning, jobs.Start(key, CancellationToken.None, noJob))
+    Assert.True(jobs.Fail(key, old.Id, "service_failed", "failed", None))
+    Assert.Equal(Some summary, stored.Value)
+    let run2, handle2, finish2 = held ()
+    Assert.Equal(Started, jobs.Start(key, CancellationToken.None, run2, regenerate = true))
+    let newer = handle2.Result
+    Assert.False(jobs.Complete(key, old.Id, { summary with Model = "stale" }))
+    Assert.False(jobs.Fail(key, old.Id, "bad", "bad", None))
+    Assert.False(jobs.Progress(key, old.Id, Progress.Combining))
+    jobs.Cancel key
+    Assert.True newer.Token.IsCancellationRequested
+    Assert.False(jobs.Complete(key, newer.Id, { summary with Model = "late" }))
+    Assert.Equal(Some summary, stored.Value)
+    Assert.Equal(Some (JobState.Finished summary), (registry (ref true) stored).State key)
+    finish.SetResult()
+    finish2.SetResult()
+
+[<Fact; Trait("Task", "T024")>]
+let ``replacement commits atomically and cancel after commit keeps the new version but DELETE removes it`` () =
+    let stored = ref (Some summary)
+    let jobs = registry (ref true) stored
+    let run, handle, finish = held ()
+    jobs.Start(key, CancellationToken.None, run, regenerate = true) |> ignore
+    let replacement = { summary with Model = "replacement" }
+    Assert.Equal(Some summary, stored.Value)
+    Assert.True(jobs.Complete(key, handle.Result.Id, replacement))
+    jobs.Cancel key
+    Assert.Equal(Some replacement, stored.Value)
+    jobs.Stop key
+    Assert.Equal(None, stored.Value)
+    Assert.Equal(NoSavedSummary, jobs.Start(key, CancellationToken.None, noJob, regenerate = true))
+    finish.SetResult()
+
+[<Fact; Trait("Task", "T024")>]
+let ``save failure or cancelled effective token cannot replace the durable version`` () =
+    let stored = ref (Some summary)
+    let jobs =
+        SummaryJobs { Find = fun _ -> stored.Value
+                      Save = fun _ _ -> failwith "storage failure"
+                      Delete = fun _ -> stored.Value <- None
+                      AssociationExists = fun _ -> true }
+    use stopping = new CancellationTokenSource()
+    let run, handle, finish = held ()
+    jobs.Start(key, stopping.Token, run, regenerate = true) |> ignore
+    let given = handle.Result
+    Assert.Throws<Exception>(fun () -> jobs.Complete(key, given.Id, { summary with Model = "new" }) |> ignore) |> ignore
+    Assert.True(jobs.Fail(key, given.Id, "service_failed", "failed save", None))
+    Assert.Equal(Some summary, stored.Value)
+    let run2, handle2, finish2 = held ()
+    jobs.Start(key, stopping.Token, run2, regenerate = true) |> ignore
+    let next = handle2.Result
+    stopping.Cancel()
+    Assert.False(jobs.Complete(key, next.Id, { summary with Model = "cancelled" }))
+    Assert.Equal(Some summary, stored.Value)
+    finish.SetResult()
+    finish2.SetResult()
+
+[<Fact; Trait("Task", "T024")>]
+let ``cancelled admission fences every registration path while a fresh request can retry`` () =
+    let stored = ref (Some summary)
+    let jobs = registry (ref true) stored
+    let admission, lease = jobs.PrepareReplacement key
+    use _ = lease
+    jobs.Cancel key
+    Assert.True admission.IsCancellationRequested
+    use source = new CancellationTokenSource()
+    Assert.Equal(StartOutcome.Cancelled, jobs.StartWith(key, source, source.Token, noJob, regenerate = true, admission = admission))
+    Assert.Equal(StartOutcome.Cancelled, jobs.StartFailed(key, "signed_out", "expired", regenerate = true, admission = admission))
+    Assert.Equal(StartOutcome.Cancelled, jobs.Start(key, CancellationToken.None, noJob, regenerate = true, admission = admission))
+    let retry, retryLease = jobs.PrepareReplacement key
+    use _ = retryLease
+    Assert.False retry.IsCancellationRequested
+    Assert.Equal(Started, jobs.StartFailed(key, "service_failed", "retry", regenerate = true, admission = retry))
+    Assert.Equal(Some summary, stored.Value)
+
+[<Theory; Trait("Task", "T024")>]
+[<InlineData(false)>]
+[<InlineData(true)>]
+let ``DELETE and association removal invalidate preparation even if a new saved row appears`` removeAssociation =
+    let stored = ref (Some summary)
+    let jobs = registry (ref true) stored
+    let admission, lease = jobs.PrepareReplacement key
+    use _ = lease
+    if removeAssociation then jobs.RemoveAssociation(key, fun () -> stored.Value <- None)
+    else jobs.Stop key
+    // A later request has saved a different version before the old preparation resumes.
+    stored.Value <- Some { summary with Model = "newer" }
+    Assert.Equal(StartOutcome.Cancelled, jobs.Start(key, CancellationToken.None, noJob, regenerate = true, admission = admission))
+    Assert.Equal("newer", stored.Value.Value.Model)
