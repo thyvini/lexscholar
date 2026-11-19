@@ -57,17 +57,20 @@ let ``first run introduces the three steps`` (browserName: string) =
     withBrowser browserName (fun browser -> task {
         use workspace = TemporaryWorkspace.Create()
         use harness = startHost workspace
-        let! _, page = openApp browser harness
+        let! context = browser.NewContextAsync(BrowserNewContextOptions(BaseURL = harness.Client.BaseAddress.ToString()))
+        let! page = context.NewPageAsync()
+        let! _ = page.GotoAsync("/")
         do! Assertions.Expect(page.GetByText("Boas-vindas ao LexScholar", PageGetByTextOptions(Exact = true))).ToBeVisibleAsync()
         do! Assertions.Expect(page.GetByText("Crie seu primeiro projeto", PageGetByTextOptions(Exact = true))).ToBeVisibleAsync()
         do! Assertions.Expect(page.GetByText("Importe seus PDFs", PageGetByTextOptions(Exact = true))).ToBeVisibleAsync()
         do! Assertions.Expect(page.GetByText("Entre para gerar resumos", PageGetByTextOptions(Exact = true))).ToBeVisibleAsync()
         do! Assertions.Expect(page.GetByText("Requer um plano ChatGPT Plus ou Pro.", PageGetByTextOptions(Exact = true))).ToBeVisibleAsync()
         do! Assertions.Expect(Ui.button (page.Locator("body")) Texts.signIn).ToBeVisibleAsync()
-        do! Ui.click (Ui.button (page.Locator("body")) Texts.choosePdfs)
-        do! Assertions.Expect(page.GetByLabel(Texts.importPdf)).ToBeVisibleAsync()
+        do! Assertions.Expect(page.GetByLabel(Texts.choosePdfs)).ToHaveCountAsync(1)
         do! Assertions.Expect(Ui.button (page.Locator("body")) Texts.signIn).ToBeVisibleAsync()
-        do! createProject page "Alpha"
+        do! page.GetByLabel(Texts.projectName).FillAsync("Alpha")
+        do! Ui.click (Ui.button (page.Locator("body")) Texts.createProject)
+        do! Assertions.Expect(page.GetByText(Texts.projectCreated "Alpha", PageGetByTextOptions(Exact = true))).ToBeVisibleAsync()
         do! Assertions.Expect(Ui.button (page.Locator("body")) Texts.signIn).ToBeVisibleAsync() })
 
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T019"); Trait("Task", "T002"); Trait("Category", "Browser")>]
