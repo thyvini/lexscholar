@@ -62,7 +62,7 @@ let arrange (page: IPage) = task {
 let private panel (page: IPage) = page.Locator("section.summary")
 
 [<Theory; InlineData("chromium", false); InlineData("chromium", true); InlineData("firefox", false); InlineData("firefox", true); Trait("Task", "T024"); Trait("Category", "Browser")>]
-let ``legacy client keeps the durable summary instead of offering destructive replacement stop or close`` (browserName: string, fail: bool) =
+let ``replacement aware client keeps durable summary without destructive stop or close`` (browserName: string, fail: bool) =
     withBrowser browserName (fun browser -> task {
         use fake = new FakeChatService(if fail then Status 500 else WaitUntilCancelled)
         use harness = TestHarness.Start(serveClient = true, settings = settings, summaryHandler = fake)
@@ -96,11 +96,12 @@ let ``legacy client keeps the durable summary instead of offering destructive re
         let! _ = page.ReloadAsync()
         do! click (button (page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))) Texts.openDocument)
         do! Assertions.Expect(panel page).ToContainTextAsync("Durable original")
-        do! Assertions.Expect(page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = Texts.stop, Exact = true))).ToHaveCountAsync(0)
+        if fail then
+            do! Assertions.Expect(page.GetByText(Texts.replacementFailed, PageGetByTextOptions(Exact = false))).ToBeVisibleAsync()
+        else
+            do! click (button (page.Locator("body")) Texts.stop)
+            do! Assertions.Expect(page.GetByLabel(Texts.feedbackLabel)).ToBeVisibleAsync()
         do! Assertions.Expect(page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = Texts.close, Exact = true))).ToHaveCountAsync(0)
-        // Existing explicit deletion still requires confirmation; cancellation leaves the row untouched.
-        do! click (button (panel page) Texts.delete)
-        do! click (button (page.GetByRole(AriaRole.Alertdialog)) Texts.cancel)
         Assert.Equal(Some original, LexScholar.Infrastructure.SummaryRepository.find harness.Root key)
     })
 

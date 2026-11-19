@@ -1,5 +1,12 @@
 # Research: Summary first, in Portuguese (F006)
 
+## T025 — Feedback reuses the instruction pipeline
+
+- Decision: serialize optional regeneration feedback as T023's `instruction`, not a second prompt field, and reuse T024's `/regenerate` and `/cancel` routes. Feedback is fresh transient user input, bounded to 2,000 characters, subordinate to Portuguese/source-grounding/validated-citation rules in every stage.
+- Rationale: the same source-to-summary workflow already forwards this input in single/map/intermediate/final combine and keeps it out of durable metadata/logs. A parallel `feedback` property or workflow would duplicate validation and prompt handling without a different capability.
+- Alternative rejected: delete then generate. It loses the saved version on failure and conflicts with the owner's explicit requirement.
+- Client lifecycle: preserve `State.Shown`, track replacement separately, and load durable state before replacement-aware polling when returning. Always require fresh explicit consent, even after account sending consent was previously accepted. Cancellation drains an outstanding POST before permitting new replacement work.
+
 ## R11 — Brazilian Portuguese for all new summaries ($153, T016)
 
 - **Decision**: Owner clarification makes Brazilian Portuguese the output language of every new summary, whatever the source language. Replace the source/majority-language instruction in all three shared `Summarize.fs` prompts: single call, per-chunk map, and combine (both intermediate and final reductions). Both plan and configured-service paths use this workflow. This supersedes F003's language decision and F006's former F007 deferral; R7's unchanged backend refers to destination handling, not this later prompt correction.

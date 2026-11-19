@@ -1,5 +1,13 @@
 module LexScholar.Client.Texts
 
+let feedbackLabel = "Como melhorar este resumo?"
+let regenerate = "Refazer resumo"
+let feedbackPrivacy = "Seu feedback será enviado com o texto do documento ao ChatGPT como instrução para o novo resumo. Não é salvo. O resumo atual será mantido até o novo ficar pronto."
+let replacing = "Refazendo resumo. O resumo atual continua disponível."
+let replacementFailed = "Não foi possível refazer o resumo. O resumo anterior foi mantido."
+let reconcilingReplacement = "Verificando o estado do resumo…"
+let cancellationUncertain = "Não foi possível confirmar a interrupção. O resumo salvo continua disponível. Tente parar novamente antes de refazer."
+
 open System
 open System.Globalization
 

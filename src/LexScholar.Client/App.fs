@@ -155,9 +155,9 @@ module Api =
     /// Requests a summary. The server answers with the job's state (202, or 200 when one exists); nothing is streamed and
     /// leaving the document does not abort the request. Failures never show response details.
     /// The state of the pair's summary job: None when the server has nothing (404); Error when it could not be asked.
-    let summaryState (http: HttpClient) (projectId: Guid) (documentId: Guid) : Async<Result<Summary.Remote option, unit>> = async {
+    let summaryStateAt suffix (http: HttpClient) (projectId: Guid) (documentId: Guid) : Async<Result<Summary.Remote option, unit>> = async {
         try
-            use! response = http.GetAsync($"api/projects/{projectId:D}/documents/{documentId:D}/summary") |> Async.AwaitTask
+            use! response = http.GetAsync($"api/projects/{projectId:D}/documents/{documentId:D}/summary{suffix}") |> Async.AwaitTask
             if response.StatusCode = HttpStatusCode.NotFound then return Ok None
             elif not response.IsSuccessStatusCode then return Error ()
             else
@@ -166,6 +166,8 @@ module Api =
                 | Some remote -> return Ok (Some remote)
                 | None -> return Error ()
         with _ -> return Error () }
+
+    let summaryState http project document = summaryStateAt "" http project document
 
     /// The status of every summary, for the list markers; Error when it could not be read.
     let summaryStatuses (http: HttpClient) : Async<Result<SummaryStatus.StatusEntry list, unit>> = async {
@@ -180,27 +182,32 @@ module Api =
         with _ -> return Error () }
 
     /// Deletes the pair's finished or failed summary on the server (idempotent); false when it could not be deleted.
-    let dismissSummary (http: HttpClient) (projectId: Guid) (documentId: Guid) : Async<bool> = async {
+    let dismissSummaryAt replacement (http: HttpClient) (projectId: Guid) (documentId: Guid) : Async<bool> = async {
         try
             use! tokenResponse = http.GetAsync("api/antiforgery") |> Async.AwaitTask
             if not tokenResponse.IsSuccessStatusCode then return false
             else
                 let! tokenBody = tokenResponse.Content.ReadAsStringAsync() |> Async.AwaitTask
                 use tokenJson = JsonDocument.Parse(tokenBody)
-                use request = new HttpRequestMessage(HttpMethod.Delete, $"api/projects/{projectId:D}/documents/{documentId:D}/summary")
+                let suffix = if replacement then "/cancel" else ""
+                let method = if replacement then HttpMethod.Post else HttpMethod.Delete
+                use request = new HttpRequestMessage(method, $"api/projects/{projectId:D}/documents/{documentId:D}/summary{suffix}")
                 request.Headers.Add("X-CSRF-TOKEN", tokenJson.RootElement.GetProperty("requestToken").GetString())
                 use! response = http.SendAsync request |> Async.AwaitTask
                 return response.IsSuccessStatusCode
         with _ -> return false }
 
-    let summarize (http: HttpClient) (projectId: Guid) (documentId: Guid) (destination: Summary.Destination option) (confirmed: Summary.Confirmed option) (instruction: string option) (cancellation: Threading.CancellationToken) : Async<Result<Summary.Remote, Summary.Failure>> = async {
+    let dismissSummary http project document = dismissSummaryAt false http project document
+
+    let summarize replacement (http: HttpClient) (projectId: Guid) (documentId: Guid) (destination: Summary.Destination option) (confirmed: Summary.Confirmed option) (instruction: string option) (cancellation: Threading.CancellationToken) : Async<Result<Summary.Remote, Summary.Failure>> = async {
         try
             use! tokenResponse = http.GetAsync("api/antiforgery", cancellation) |> Async.AwaitTask
             if not tokenResponse.IsSuccessStatusCode then return Error Summary.RequestFailed
             else
                 let! tokenBody = tokenResponse.Content.ReadAsStringAsync() |> Async.AwaitTask
                 use tokenJson = JsonDocument.Parse(tokenBody)
-                use request = new HttpRequestMessage(HttpMethod.Post, $"api/projects/{projectId:D}/documents/{documentId:D}/summary")
+                let suffix = if replacement then "/regenerate" else ""
+                use request = new HttpRequestMessage(HttpMethod.Post, $"api/projects/{projectId:D}/documents/{documentId:D}/summary{suffix}")
                 request.Headers.Add("X-CSRF-TOKEN", tokenJson.RootElement.GetProperty("requestToken").GetString())
                 request.Content <- new StringContent(SummaryStatus.requestBodyWithInstruction destination confirmed instruction, Encoding.UTF8, "application/json")
                 use! response = http.SendAsync(request, cancellation) |> Async.AwaitTask
@@ -335,10 +342,27 @@ module private Ui =
         let send request projectId documentId destination confirmed instruction =
             Cmd.ofEffect (fun dispatch ->
                 Async.StartImmediate(async {
-                    match! Api.summarize http projectId documentId destination confirmed instruction Threading.CancellationToken.None with
+                    match! Api.summarize false http projectId documentId destination confirmed instruction Threading.CancellationToken.None with
                     | Ok remote -> dispatch (SummaryMsg (Summary.Accepted (request, projectId, documentId, remote)))
                     | Error failure -> dispatch (SummaryMsg (Summary.Responded (request, Error failure))) }))
         match effect with
+        | Some (Summary.RegenerateSummary (request, project, document, feedback)) ->
+            Cmd.ofEffect (fun dispatch ->
+                Async.StartImmediate(async {
+                    let! result = Api.summarize true http project document (Some Summary.UsePlan) (Some Summary.ConfirmedPlan) (LexScholar.Domain.SummaryInstruction.normalize feedback) Threading.CancellationToken.None
+                    dispatch (SummaryMsg (Summary.ReplacementAnswered (request, project, document, result))) }))
+        | Some (Summary.FetchReplacement (watch, project, document, delay)) ->
+            Cmd.ofEffect (fun dispatch ->
+                Async.StartImmediate(async {
+                    if delay then do! Async.Sleep summaryPollMilliseconds
+                    let! remote = Api.summaryStateAt "/regenerate" http project document
+                    let state = match remote with Ok value -> value | Error () -> Some (Summary.RemoteRunning None)
+                    dispatch (SummaryMsg (Summary.ReplacementPolled (watch, state))) }))
+        | Some (Summary.CancelRegeneration (watch, project, document)) ->
+            Cmd.ofEffect (fun dispatch ->
+                Async.StartImmediate(async {
+                    let! succeeded = Api.dismissSummaryAt true http project document
+                    dispatch (SummaryMsg (Summary.ReplacementCancelled (watch, project, document, succeeded))) }))
         | Some (Summary.Send (request, project, document, destination, confirmed)) ->
             send request project document destination confirmed None
         | Some (Summary.SendWithInstruction (request, project, document, destination, confirmed, instruction)) ->
@@ -405,6 +429,10 @@ module private Ui =
                 | Summary.Accepted (_, _, _, Summary.RemoteFailed failure)
                 | Summary.Polled (_, Some (Summary.RemoteFailed failure)) ->
                     summary.State = Summary.Failed failure && state.Summary.State <> summary.State && Summary.reloadsDestinations failure
+                | Summary.ReplacementAnswered (_, _, _, Error failure)
+                | Summary.ReplacementAnswered (_, _, _, Ok (Summary.RemoteFailed failure))
+                | Summary.ReplacementPolled (_, Some (Summary.RemoteFailed failure)) ->
+                    summary.Replacement = Some (Summary.ReplacementFailed failure) && summary.Replacement <> state.Summary.Replacement && Summary.reloadsDestinations failure
                 | _ -> false
             let chatGpt, chatGptEffect = if reload then ChatGpt.update ChatGpt.Load state.ChatGpt else state.ChatGpt, None
             { state with Summary = summary; ChatGpt = chatGpt },
@@ -620,7 +648,7 @@ module private Ui =
         | Some Summary.Combining -> span { attr.``class`` "summary-progress"; text Texts.combining }
         | None -> empty ()
 
-    let private confirmDialog (document: Library.Document) (target: Summary.ConfirmTarget) dispatch =
+    let private confirmDialog (document: Library.Document) (target: Summary.ConfirmTarget) replacement dispatch =
         elt "dialog" {
             attr.id "send-confirmation"
             attr.``class`` "send-dialog"
@@ -636,7 +664,11 @@ module private Ui =
             match target with
             | Summary.Service (host, model) -> p { attr.id "send-disclosure"; text (Texts.confirmationService document.FileName host model) }
             | Summary.Plan account ->
-                p { attr.id "send-disclosure"; text (Texts.confirmationPlan document.FileName document.PageCount account) }
+                p {
+                    attr.id "send-disclosure"
+                    text (Texts.confirmationPlan document.FileName document.PageCount account)
+                    if replacement then text Texts.feedbackPrivacy
+                }
                 a { attr.href Texts.confirmationHelpUrl; "target" => "_blank"; "rel" => "noopener noreferrer"; text Texts.confirmationHelp }
                 p { attr.id "send-information"; attr.``class`` "send-info"; text Texts.confirmationNote }
             div {
@@ -673,7 +705,7 @@ module private Ui =
             }
         }
 
-    let private summaryPanel (document: Library.Document) (generated: Summary.Generated) dispatch =
+    let private summaryPanel (document: Library.Document) (generated: Summary.Generated) replacing dispatch =
         section {
             attr.``class`` "summary card"
             div {
@@ -681,6 +713,7 @@ module private Ui =
                 h3 { text Texts.summaryReady }
                 button {
                     attr.``type`` "button"
+                    attr.disabled replacing
                     attr.style "color: var(--danger)"
                     on.click (fun _ -> dispatch Summary.Delete)
                     text Texts.delete
@@ -807,7 +840,7 @@ module private Ui =
                     }
                 | Summary.Dismissing Summary.Running -> span { "role" => "status"; text Texts.stopping }
                 | Summary.Dismissing _ -> span { "role" => "status"; text Texts.dismissing }
-                | Summary.Confirming target -> confirmDialog document target dispatch
+                | Summary.Confirming target -> confirmDialog document target false dispatch
                 | Summary.Idle ->
                     section {
                         attr.``class`` "summary-request card"
@@ -863,8 +896,57 @@ module private Ui =
                 | true -> p { attr.``class`` "error"; "role" => "alert"; text Texts.dismissFailed }
                 | false -> empty ()
             cond summary.State <| function
-                | Summary.Shown generated -> summaryPanel document generated dispatch
-                | Summary.ConfirmingDelete generated -> summaryPanel document generated dispatch
+                | Summary.Shown generated -> summaryPanel document generated (match summary.Replacement with None | Some (Summary.ReplacementFailed _) -> false | _ -> true) dispatch
+                | Summary.ConfirmingDelete generated -> summaryPanel document generated false dispatch
+                | _ -> empty ()
+            cond summary.State <| function
+                | Summary.Shown _ ->
+                    section {
+                        attr.``class`` "summary-feedback card"
+                        cond summary.Replacement <| function
+                            | Some (Summary.AwaitingConsent account) -> confirmDialog document (Summary.Plan account) true dispatch
+                            | Some (Summary.Submitting _ | Summary.Replacing) ->
+                                concat {
+                                    p { "role" => "status"; text Texts.replacing; progressText summary.Progress }
+                                    plainButton Texts.stop None (fun _ -> dispatch Summary.CancelReplacement)
+                                }
+                            | Some Summary.Cancelling -> p { "role" => "status"; text Texts.stopping }
+                            | Some Summary.Reconciling -> p { "role" => "status"; text Texts.reconcilingReplacement }
+                            | Some Summary.CancellationFailed ->
+                                concat {
+                                    p { "role" => "alert"; text Texts.cancellationUncertain }
+                                    plainButton Texts.stop None (fun _ -> dispatch Summary.CancelReplacement)
+                                }
+                            | Some (Summary.ReplacementFailed failure) ->
+                                concat {
+                                    p { "role" => "alert"; text Texts.replacementFailed; text Texts.space; text (FailureTexts.summary failure) }
+                                    if Summary.offersSignIn failure then signInButton (chatGpt.Status <> ChatGpt.SignedOut) dispatchChatGpt
+                                    if failure = Summary.UsageLimitReached then usageLink Texts.manageUsage
+                                }
+                            | None -> empty ()
+                        if (match summary.Replacement with None | Some Summary.Reconciling | Some (Summary.ReplacementFailed _) -> true | _ -> false) then
+                            label { attr.``for`` "summary-feedback"; text Texts.feedbackLabel }
+                            textarea {
+                                attr.id "summary-feedback"
+                                attr.``class`` "summary-instruction"
+                                "maxlength" => string LexScholar.Domain.SummaryInstruction.maximumCharacters
+                                "rows" => "3"
+                                "aria-describedby" => "summary-feedback-privacy"
+                                attr.value summary.Feedback
+                                on.input (fun event -> dispatch (Summary.EditFeedback (string event.Value)))
+                            }
+                            p { attr.id "summary-feedback-privacy"; attr.``class`` "muted"; text Texts.feedbackPrivacy }
+                            button {
+                                attr.``type`` "button"
+                                attr.id "summary-request"
+                                attr.disabled (not summary.Available.Plan || summary.Replacement = Some Summary.Reconciling || Summary.replacementBusy summary)
+                                on.click (fun _ ->
+                                    match chatGpt.Status with
+                                    | ChatGpt.SignedIn account -> dispatch (Summary.Regenerate account.Name)
+                                    | _ -> ())
+                                text Texts.regenerate
+                            }
+                    }
                 | _ -> empty ()
             cond (match summary.State with Summary.Idle -> summary.Available.Plan | Summary.Shown generated | Summary.ConfirmingDelete generated -> generated.ServiceHost = "ChatGPT plan" | _ -> false) <| function
                 | true -> span { attr.``class`` "summary-using-plan"; text Texts.usingPlan; text Texts.detailSeparator; usageLink Texts.manageUsage }

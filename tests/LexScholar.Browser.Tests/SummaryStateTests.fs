@@ -23,6 +23,253 @@ let private generated =
 
 let private reading = update (ReaderChanged (Some project, Some document)) { initial with Available = { Plan = true; Configured = false } } |> fst
 
+[<Fact; Trait("Task", "T025")>]
+let ``overlapping cancellation completes each pair independently even when the inactive answer arrives last`` () =
+    let runningA = { reading with State = Shown generated; Replacement = Some Replacing }
+    let stoppingA = update CancelReplacement runningA |> fst
+    let moved = update (ReaderChanged (Some other, Some document)) stoppingA |> fst
+    let runningB = { moved with State = Shown generated; Replacement = Some Replacing }
+    let stoppingB = update CancelReplacement runningB |> fst
+    let settledB, effect = update (ReplacementCancelled (stoppingB.Watch, other, document, true)) stoppingB
+    assertState (Some Reconciling) settledB.Replacement
+    assertState (Some (FetchReplacement (settledB.Watch, other, document, false))) effect
+    let shownB = update (ReplacementPolled (settledB.Watch, Some (RemoteFinished generated))) settledB |> fst
+    // Neither A's outstanding fence nor its eventual callback owns B's lifecycle.
+    assertState (Some (AwaitingConsent "B")) (update (Regenerate "B") shownB |> fst).Replacement
+    let finished, effect = update (ReplacementCancelled (stoppingA.Watch, project, document, true)) shownB
+    assertState None finished.Replacement
+    assertState None effect
+
+[<Fact; Trait("Task", "T025")>]
+let ``cancelled in flight submission from A cannot block the active pair B`` () =
+    let confirmingA = { reading with State = Shown generated; Replacement = Some (AwaitingConsent "A") }
+    let submittingA = update ConfirmSend confirmingA |> fst
+    let stoppingA = update CancelReplacement submittingA |> fst
+    let moved = update (ReaderChanged (Some other, Some document)) stoppingA |> fst
+    let shownB = { moved with State = Shown generated }
+    let consentingB, effect = update (Regenerate "B") shownB
+    assertState (Some (AwaitingConsent "B")) consentingB.Replacement
+    assertState None effect
+    let submittingB = update ConfirmSend consentingB |> fst
+    let drainedA, effect = update (ReplacementAnswered (submittingA.Request, project, document, Ok (RemoteRunning None))) submittingB
+    assertState (Some (CancelRegeneration (submittingB.Watch, project, document))) effect
+    assertState submittingB.Replacement drainedA.Replacement
+    let cancelledA, effect = update (ReplacementCancelled (drainedA.Watch, project, document, true)) drainedA
+    assertState None effect
+    assertState submittingB.Replacement cancelledA.Replacement
+    let runningB = update (ReplacementAnswered (submittingB.Request, other, document, Ok (RemoteRunning None))) cancelledA |> fst
+    assertState (Some Replacing) runningB.Replacement
+
+[<Fact; Trait("Task", "T025")>]
+let ``ignored legacy results cannot replace consent or an active replacement lifecycle`` () =
+    let states = [ AwaitingConsent "account"; Submitting 7; Replacing; Cancelling; CancellationFailed; ReplacementFailed RequestFailed ]
+    for replacement in states do
+        let shown = { reading with State = Shown generated; Replacement = Some replacement; Watch = 9; Request = 7 }
+        let ignored =
+            [ Polled (8, Some (RemoteFinished generated))
+              Polled (9, Some (RemoteFinished generated))
+              Accepted (7, project, document, RemoteFinished generated)
+              Accepted (7, other, document, RemoteFinished generated)
+              Accepted (6, project, document, RemoteFinished generated) ]
+        for message in ignored do
+            let actual, effect = update message shown
+            assertState shown actual
+            assertState None effect
+
+[<Theory; InlineData true; InlineData false; Trait("Task", "T025")>]
+let ``uncertain admission after returning hydrates the saved summary before cancellation reconciliation`` succeeded =
+    let confirming = { reading with State = Shown generated; Replacement = Some (AwaitingConsent "A") }
+    let sending = update ConfirmSend confirming |> fst
+    let away = update (ReaderChanged (Some other, Some document)) sending |> fst
+    let back = update (ReaderChanged (Some project, Some document)) away |> fst
+    let loading = update Refresh back |> fst
+    let uncertain = update (ReplacementAnswered (sending.Request, project, document, Error RequestFailed)) loading |> fst
+    assertState uncertain (update (Polled (loading.Watch, Some (RemoteFinished generated))) uncertain |> fst)
+    let cancelled, effect = update (ReplacementCancelled (uncertain.Watch, project, document, succeeded)) uncertain
+    let watch =
+        match effect with
+        | Some (Fetch (watch, p, d, false)) when (p, d) = (project, document) -> watch
+        | _ -> -1
+    Assert.NotEqual(-1, watch)
+    let restored, effect = update (Polled (watch, Some (RemoteFinished generated))) cancelled
+    assertState (Shown generated) restored.State
+    assertState (Some (FetchReplacement (watch, project, document, false))) effect
+    let reconciled = update (ReplacementPolled (watch, Some (RemoteFinished generated))) restored |> fst
+    assertState (Shown generated) reconciled.State
+    assertState (if succeeded then None else Some CancellationFailed) reconciled.Replacement
+
+[<Fact; Trait("Task", "T025")>]
+let ``submitting replacement survives leaving returning and a saved state before the POST answer`` () =
+    let confirming = { reading with State = Shown generated; Replacement = Some (AwaitingConsent "account") }
+    let sending = update ConfirmSend confirming |> fst
+    let away = update (ReaderChanged (Some other, Some document)) sending |> fst
+    let back = update (ReaderChanged (Some project, Some document)) away |> fst
+    let restored = update (Polled (back.Watch, Some (RemoteFinished generated))) back |> fst
+    // No second consent/request while admission of the first is still outstanding.
+    assertState restored (update (Regenerate "account") restored |> fst)
+    let running, effect = update (ReplacementAnswered (sending.Request, project, document, Ok (RemoteRunning None))) restored
+    assertState (Shown generated) running.State
+    assertState (Some Replacing) running.Replacement
+    Assert.True(match effect with Some (FetchReplacement (_, p, d, true)) -> (p, d) = (project, document) | _ -> false)
+    let stale = update (ReplacementPolled (back.Watch, Some (RemoteFinished generated))) running |> fst
+    assertState running stale
+
+[<Fact; Trait("Task", "T025")>]
+let ``failed cancellation reconciles original work before accepting new feedback`` () =
+    let running = { reading with State = Shown generated; Replacement = Some Replacing }
+    let stopping = update CancelReplacement running |> fst
+    let failed, effect = update (ReplacementCancelled (stopping.Watch, project, document, false)) stopping
+    Assert.True(match effect with Some (FetchReplacement (_, p, d, false)) -> (p, d) = (project, document) | _ -> false)
+    assertState failed (update (Regenerate "account") failed |> fst)
+    let reconciled = update (ReplacementPolled (failed.Watch, Some (RemoteRunning None))) failed |> fst
+    assertState (Some CancellationFailed) reconciled.Replacement
+    assertState reconciled (update (Regenerate "account") reconciled |> fst)
+
+[<Fact; Trait("Task", "T025")>]
+let ``successful cancel observes a completion that already atomically replaced the saved version`` () =
+    let running = { reading with State = Shown generated; Replacement = Some Replacing }
+    let stopping = update CancelReplacement running |> fst
+    let cancelled, effect = update (ReplacementCancelled (stopping.Watch, project, document, true)) stopping
+    let watch =
+        match effect with
+        | Some (FetchReplacement (watch, _, _, false)) -> watch
+        | _ -> -1
+    Assert.NotEqual(-1, watch)
+    let newer = { generated with Model = "new" }
+    let reconciled = update (ReplacementPolled (watch, Some (RemoteFinished newer))) cancelled |> fst
+    assertState (Shown newer) reconciled.State
+
+[<Fact; Trait("Task", "T025")>]
+let ``terminal failed replacement permits explicit confirmed deletion of the preserved summary`` () =
+    let failed = { reading with State = Shown generated; Replacement = Some (ReplacementFailed RequestFailed) }
+    let deleting, effect = update Delete failed
+    assertState (ConfirmingDelete generated) deleting.State
+    assertState None deleting.Replacement
+    assertState None effect
+    let cancelled = update CancelDelete deleting |> fst
+    assertState (Shown generated) cancelled.State
+    let confirming = update Delete cancelled |> fst
+    let _, effect = update ConfirmDelete confirming
+    assertState (Some (DeleteSummary (project, document))) effect
+
+[<Fact; Trait("Task", "T025")>]
+let ``lost POST response reconciles existing job instead of silently retrying with different feedback`` () =
+    let confirming = { reading with State = Shown generated; Replacement = Some (AwaitingConsent "account"); Feedback = "first" }
+    let sending = update ConfirmSend confirming |> fst
+    let uncertain, effect = update (ReplacementAnswered (sending.Request, project, document, Error RequestFailed)) sending
+    Assert.True(match effect with Some (CancelRegeneration (_, _, _)) -> true | _ -> false)
+    assertState uncertain (update (Regenerate "account") uncertain |> fst)
+    let cancelled = update (ReplacementCancelled (uncertain.Watch, project, document, true)) uncertain |> fst
+    let idle = update (ReplacementPolled (cancelled.Watch, Some (RemoteFinished generated))) cancelled |> fst
+    assertState "first" idle.Feedback
+    assertState None idle.Replacement
+
+[<Fact; Trait("Task", "T025")>]
+let ``discovery of the same durable version never erases feedback typed while loading`` () =
+    let shown = { reading with State = Shown generated }
+    let draft = update (EditFeedback "new draft") shown |> fst
+    let discovered = update (ReplacementPolled (draft.Watch, Some (RemoteFinished generated))) draft |> fst
+    assertState "new draft" discovered.Feedback
+
+[<Fact; Trait("Task", "T025")>]
+let ``returning before saved fetch completes retains the admitted replacement and rejects stale discovery`` () =
+    let confirming = { reading with State = Shown generated; Replacement = Some (AwaitingConsent "account") }
+    let sending = update ConfirmSend confirming |> fst
+    let away = update (ReaderChanged (Some other, Some document)) sending |> fst
+    let back = update (ReaderChanged (Some project, Some document)) away |> fst
+    let refreshed = update Refresh back |> fst
+    let answered, effect = update (ReplacementAnswered (sending.Request, project, document, Ok (RemoteRunning None))) refreshed
+    let watch = match effect with Some (Fetch (watch, _, _, false)) -> watch | _ -> failwith "Expected saved version fetch"
+    assertState answered (update (Polled (refreshed.Watch, Some (RemoteFinished generated))) answered |> fst)
+    let restored, effect = update (Polled (watch, Some (RemoteFinished generated))) answered
+    assertState (Shown generated) restored.State
+    assertState (Some (FetchReplacement (watch, project, document, false))) effect
+    let running = update (ReplacementPolled (watch, Some (RemoteRunning None))) restored |> fst
+    assertState (Some Replacing) running.Replacement
+
+[<Fact; Trait("Task", "T025")>]
+let ``uncertain POST cancellation failure remains fenced across navigation even when discovery finds saved version`` () =
+    let confirming = { reading with State = Shown generated; Replacement = Some (AwaitingConsent "account") }
+    let sending = update ConfirmSend confirming |> fst
+    let uncertain = update (ReplacementAnswered (sending.Request, project, document, Error RequestFailed)) sending |> fst
+    let failed = update (ReplacementCancelled (uncertain.Watch, project, document, false)) uncertain |> fst
+    let away = update (ReaderChanged (Some other, Some document)) failed |> fst
+    let back = update (ReaderChanged (Some project, Some document)) away |> fst
+    let saved = update (Polled (back.Watch, Some (RemoteFinished generated))) back |> fst
+    let discovered = update (ReplacementPolled (saved.Watch, Some (RemoteFinished generated))) saved |> fst
+    assertState (Shown generated) discovered.State
+    assertState (Some CancellationFailed) discovered.Replacement
+    assertState discovered (update (Regenerate "new feedback") discovered |> fst)
+    let cancelling, effect = update CancelReplacement discovered
+    assertState (Some (CancelRegeneration (cancelling.Watch, project, document))) effect
+    let cancelled = update (ReplacementCancelled (cancelling.Watch, project, document, true)) cancelling |> fst
+    let reconciled = update (ReplacementPolled (cancelled.Watch, Some (RemoteFinished generated))) cancelled |> fst
+    assertState None reconciled.Replacement
+    assertState (Some (AwaitingConsent "account")) (update (Regenerate "account") reconciled |> fst).Replacement
+
+[<Fact; Trait("Task", "T025")>]
+let ``replacement keeps old summary through consent running failure and navigation and swaps only on success`` () =
+    let shown = { reading with State = Shown generated }
+    let draft = update (EditFeedback "Explique os limites") shown |> fst
+    let confirming, effect = update (Regenerate "account") draft
+    assertState None effect
+    assertState (Shown generated) confirming.State
+    assertState confirming (update (EditFeedback "changed") confirming |> fst)
+    let cancelled = update CancelSend confirming |> fst
+    assertState draft.Feedback cancelled.Feedback
+    let sending, effect = update ConfirmSend confirming
+    assertState (Some (RegenerateSummary (1, project, document, draft.Feedback))) effect
+    let running, _ = update (ReplacementAnswered (1, project, document, Ok (RemoteRunning None))) sending
+    assertState (Shown generated) running.State
+    let failed, _ = update (ReplacementPolled (running.Watch, Some (RemoteFailed RequestFailed))) running
+    assertState (Shown generated) failed.State
+    assertState (Some (ReplacementFailed RequestFailed)) failed.Replacement
+    let newer = { generated with Points = [{ Text = "Novo"; Pages = [2] }] }
+    let finished, _ = update (ReplacementPolled (running.Watch, Some (RemoteFinished newer))) running
+    assertState (Shown newer) finished.State
+    let away, _ = update (ReaderChanged (Some other, Some document)) running
+    assertState "" away.Feedback
+    assertState away (update (ReplacementPolled (running.Watch, Some (RemoteFinished newer))) away |> fst)
+    let back, _ = update (ReaderChanged (Some project, Some document)) away
+    let restored, effect = update (Polled (back.Watch, Some (RemoteFinished generated))) back
+    assertState (Shown generated) restored.State
+    assertState (Some (FetchReplacement (back.Watch, project, document, false))) effect
+    let resumed, _ = update (ReplacementPolled (back.Watch, Some (RemoteRunning None))) restored
+    assertState (Shown generated) resumed.State
+    assertState (Some Replacing) resumed.Replacement
+
+[<Fact; Trait("Task", "T025")>]
+let ``replacement cancellation drains an in flight POST without destructive DELETE or a later cancellation of a new job`` () =
+    let confirming = { reading with State = Shown generated; Replacement = Some (AwaitingConsent "account") }
+    let sending, _ = update ConfirmSend confirming
+    let stopping, effect = update CancelReplacement sending
+    assertState (Some (CancelRegeneration (stopping.Watch, project, document))) effect
+    assertState (Shown generated) stopping.State
+    let waiting, _ = update (ReplacementCancelled (stopping.Watch, project, document, true)) stopping
+    assertState (Some Cancelling) waiting.Replacement
+    let drained, effect = update (ReplacementAnswered (sending.Request, project, document, Ok (RemoteRunning None))) waiting
+    assertState (Some (CancelRegeneration (stopping.Watch, project, document))) effect
+    assertState drained (update (Regenerate "account") drained |> fst)
+    let stopped, _ = update (ReplacementCancelled (stopping.Watch, project, document, true)) drained
+    assertState (Shown generated) stopped.State
+    assertState (Some Reconciling) stopped.Replacement
+
+[<Fact; Trait("Task", "T025")>]
+let ``feedback is bounded and cancel failure leaves old summary without deleting it`` () =
+    let shown = { reading with State = Shown generated }
+    assertState shown (update (EditFeedback (String('x', 2001))) shown |> fst)
+    let draft = update (EditFeedback "Foco") shown |> fst
+    let confirming = update (Regenerate "account") draft |> fst
+    let sending = update ConfirmSend confirming |> fst
+    let running = update (ReplacementAnswered (sending.Request, project, document, Ok (RemoteRunning None))) sending |> fst
+    assertState "" running.Feedback
+    let stopping = update CancelReplacement running |> fst
+    let failed, effect = update (ReplacementCancelled (stopping.Watch, project, document, false)) stopping
+    assertState (Some (FetchReplacement (failed.Watch, project, document, false))) effect
+    assertState (Shown generated) failed.State
+    assertState (Some CancellationFailed) failed.Replacement
+    assertState failed (update (ReplacementPolled (running.Watch, Some (RemoteFinished { generated with Model = "late" }))) failed |> fst)
+
 [<Fact; Trait("Task", "T023")>]
 let ``instruction is frozen across consent preserved on cancel and cleared on document change`` () =
     let draft = update (EditInstruction "  Compare os argumentos  ") reading |> fst
@@ -325,10 +572,15 @@ let ``a 202 with a running job keeps waiting and polls after the interval`` () =
         assertState (Some (Fetch (watch, project, document, true))) next
     | other -> failwithf "Expected a delayed Fetch, got %A" other
 
-[<Fact; Trait("Task", "T002"); Trait("Task", "T007")>]
+[<Fact; Trait("Task", "T002"); Trait("Task", "T007"); Trait("Task", "T025")>]
 let ``a job answered while the POST was open is shown, or its failure`` () =
     let shown, effect = update (Accepted (1, project, document, RemoteFinished generated)) asked
     assertState (Shown generated) shown.State
+    assertState (Some Reconciling) shown.Replacement
+    assertState (Some (FetchReplacement (shown.Watch, project, document, false))) effect
+    let discovered, effect = update (ReplacementPolled (shown.Watch, Some (RemoteFinished generated))) shown
+    assertState (Shown generated) discovered.State
+    assertState None discovered.Replacement
     assertState None effect
     let failed, _ = update (Accepted (1, project, document, RemoteFailed UsageLimitReached)) asked
     assertState (Failed UsageLimitReached) failed.State
@@ -435,7 +687,7 @@ let ``returning to a running document shows its progress and keeps polling until
     let finished, stop = update (Polled (watch, Some (RemoteFinished generated))) running
     assertState (Shown generated) finished.State
     assertState None finished.Progress
-    assertState None stop
+    assertState (Some (FetchReplacement (watch, project, document, false))) stop
 
 [<Fact; Trait("Task", "T004"); Trait("Task", "T007")>]
 let ``a failed job clears progress and stops polling, and a response for another document is dropped`` () =

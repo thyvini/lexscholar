@@ -14,6 +14,8 @@
 
 **Owner-directed scope extension (2026-11-19, T023)**: The optional commentary/instruction before a first summary (screen 08) is now in F006. Regeneration/feedback remains a separate upcoming slice. This supersedes the original F007 deferral of this field only.
 
+**Owner-approved feedback extension (T025)**: Existing summaries now offer optional free-text feedback to regenerate, with fresh explicit sending consent. Feedback uses the existing bounded instruction pipeline in every generation stage. The current summary stays available through running work, failure, cancellation and navigation; only successful validated completion replaces it atomically. Cancellation is nondestructive. Feedback is transient, not separately saved or logged. This supersedes the earlier regeneration/feedback deferral; ratings, flags and history remain out of scope.
+
 ### Session 2026-11-16
 
 - Q: Does "Excluir" ask for confirmation or delete at once? → A: It asks first ("Excluir" / "Cancelar"); nothing is deleted on "Cancelar".

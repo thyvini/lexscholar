@@ -1,6 +1,24 @@
 # Summary replacement lifecycle (T024)
 
-Backend lifecycle only; no regeneration controls or feedback prompt are introduced here.
+T024 defines the backend lifecycle; T025 adds the replacement-aware feedback client described below.
+
+## Feedback client (T025)
+
+- A saved summary offers a transient optional feedback field, bounded to 2,000 characters. It is serialized as the existing `instruction` field on `POST /regenerate`, not a new `feedback` property. Blank feedback uses the default summary. The existing validation, user-role treatment and forwarding through single/map/intermediate/final-combine stages apply unchanged.
+- Every regeneration requires an explicit fresh confirmation naming the document/account and disclosing that feedback and extracted document text leave the machine. Confirmation cancel sends nothing and retains the draft. The confirmed request uses `destination: "chatgpt"` and `confirmSend: true`.
+- The client first loads the durable version through base GET, then polls `GET /regenerate`. The old version stays visible during consent, submission, progress, failure and cancellation; only a finished response replaces it. Returning after navigation resumes this lifecycle. Drafts clear on document/project change and after admission; neither browser storage nor logs contain a separate copy.
+- Stop is `POST /cancel` with antiforgery, never DELETE. If the POST is still in flight, the client also cancels after its eventual answer and waits for outstanding cancellation requests before allowing another replacement. This prevents a late cancel from deleting or stopping newly requested work. Explicit summary deletion remains a separate legacy operation.
+- No instruction history, rating/flags, saved feedback metadata or automatic retry. Generated text may reflect feedback; this does not store the raw draft separately.
+
+### Admission and uncertainty reconciliation
+
+- Cancellation counts, pending-admission guards and uncertainty are pair-owned. An inactive pair's pending or completed cancellation cannot block or advance the open pair's lifecycle. A cancelled POST still drains against its original pair.
+- Ignored/stale legacy summary responses do not initiate replacement discovery or change replacement/consent state. If an uncertain POST invalidates a pending durable fetch before it renders, cancellation completion first reloads the durable version, then performs replacement-aware reconciliation.
+
+- Submission request identities survive document/project navigation. Returning while admission is pending cannot start another replacement, and the eventual POST response invalidates pre-admission discovery results.
+- A POST transport failure may be a lost successful response. The client therefore fences pending admission with POST `/cancel` before allowing another submission. A failed/unknown cancellation remains unresolved across navigation: even a finished discovery response cannot prove a delayed admission has ended. Stop can retry the nondestructive fence; fresh generation stays unavailable until successful cancellation and reconciliation.
+- After successful cancellation, GET `/regenerate` reconciles the actual saved state, including a replacement whose atomic completion beat cancellation. It is not routed through legacy fetch handling that ignores results while a saved summary is shown.
+- Discovery of the same durable version preserves feedback typed while the GET was pending. Terminal replacement failures permit explicit, confirmed summary deletion; uncertain/running replacements do not.
 
 Base: `/api/projects/{projectId}/documents/{documentId}/summary`.
 
