@@ -91,6 +91,12 @@ let ``feedback replacement is atomic across navigation failure and non destructi
         do! click (button (page.GetByRole(AriaRole.Alertdialog)) Texts.sendAndSummarize)
         do! Assertions.Expect(page.GetByText(Texts.replacementFailed, PageGetByTextOptions(Exact = false))).ToBeVisibleAsync()
         do! Assertions.Expect(page.Locator(".summary-points")).ToContainTextAsync("Nova tese")
+        // A terminal replacement failure does not trap the preserved summary behind disabled deletion.
+        let delete = button (page.Locator("section.summary")) Texts.delete
+        do! Assertions.Expect(delete).ToBeEnabledAsync()
+        do! click delete
+        do! click (button (page.GetByRole(AriaRole.Alertdialog)) Texts.cancel)
+        do! Assertions.Expect(page.Locator(".summary-points")).ToContainTextAsync("Nova tese")
         do! click (button (page.Locator("body")) Texts.regenerate)
         do! click (button (page.GetByRole(AriaRole.Alertdialog)) Texts.sendAndSummarize)
         do! fourth.Task

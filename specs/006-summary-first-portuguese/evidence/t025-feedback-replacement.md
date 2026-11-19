@@ -20,3 +20,19 @@
 - Linux, pinned .NET SDK, Playwright Chromium and Firefox, isolated `TestHarness` workspaces and fake OpenAI responses. No researcher data or real upstream service used.
 - Tests establish prompt propagation, privacy boundaries and validated citation handling, not real-model adherence to feedback or Portuguese.
 - Based on `22b49d5` from #132, whose tree matches squash `909171a` on `release/0.4.0`. The task branch is rebased onto that release commit for handoff so only T025 remains in its diff.
+
+## PR #134 review follow-up
+
+All reported findings are **must fix**:
+
+- P1 navigation during POST admission: retain per-pair submission identities across navigation, restore submitting state when returning, and consume the eventual response with a fresh watch. Both response-before-saved-fetch and response-after-saved-fetch permutations have deterministic state regressions.
+- P1 failed cancellation / uncertain POST transport: a lost answer cannot prove no job exists. Fence pending admission with nondestructive POST `/cancel`; retain per-pair uncertainty across navigation until cancellation succeeds. Discovery alone cannot clear that uncertainty (a pending admission may not be visible yet). Failed cancellation offers another Stop, not another regeneration. Only after a successful fence and replacement-aware reconciliation can new feedback be submitted.
+- P1 completion/cancellation race: successful cancellation now requests `/regenerate` through a replacement-aware observation, not a legacy fetch ignored while `Shown`. A completed atomic replacement is adopted even if completion won the race.
+- P1 draft loss during discovery: observing the already displayed durable version preserves a newly typed draft; actual replacement with a different version clears it.
+- P2 terminal failure deletion: terminal replacement errors no longer disable explicit deletion; its existing confirmation/cancel behavior remains intact. Uncertain/running operations remain protected.
+
+RED: `scripts/check.sh T025` — **six deterministic assertion failures**, 23 tests, zero skips (`/tmp/lexscholar-check.SC7eSc`), covering all four original review findings plus uncertain POST and discovery draft loss.
+
+GREEN: `scripts/check.sh T025 T023 T024 T004 T008` — warning-as-error build, **185 passed, zero failures/skips**. Additional deterministic coverage keeps uncertainty fenced across navigation even when discovery sees the old saved version; both browser journeys also verify terminal failure deletion is enabled and cancellation preserves the summary.
+
+Full-suite CI and fresh GPT review remain required on the pushed PR head. No merge performed.

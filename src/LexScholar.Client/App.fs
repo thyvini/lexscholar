@@ -362,7 +362,7 @@ module private Ui =
             Cmd.ofEffect (fun dispatch ->
                 Async.StartImmediate(async {
                     let! succeeded = Api.dismissSummaryAt true http project document
-                    dispatch (SummaryMsg (Summary.ReplacementCancelled (watch, succeeded))) }))
+                    dispatch (SummaryMsg (Summary.ReplacementCancelled (watch, project, document, succeeded))) }))
         | Some (Summary.Send (request, project, document, destination, confirmed)) ->
             send request project document destination confirmed None
         | Some (Summary.SendWithInstruction (request, project, document, destination, confirmed, instruction)) ->
@@ -896,7 +896,7 @@ module private Ui =
                 | true -> p { attr.``class`` "error"; "role" => "alert"; text Texts.dismissFailed }
                 | false -> empty ()
             cond summary.State <| function
-                | Summary.Shown generated -> summaryPanel document generated summary.Replacement.IsSome dispatch
+                | Summary.Shown generated -> summaryPanel document generated (match summary.Replacement with None | Some (Summary.ReplacementFailed _) -> false | _ -> true) dispatch
                 | Summary.ConfirmingDelete generated -> summaryPanel document generated false dispatch
                 | _ -> empty ()
             cond summary.State <| function
@@ -911,6 +911,12 @@ module private Ui =
                                     plainButton Texts.stop None (fun _ -> dispatch Summary.CancelReplacement)
                                 }
                             | Some Summary.Cancelling -> p { "role" => "status"; text Texts.stopping }
+                            | Some Summary.Reconciling -> p { "role" => "status"; text Texts.reconcilingReplacement }
+                            | Some Summary.CancellationFailed ->
+                                concat {
+                                    p { "role" => "alert"; text Texts.cancellationUncertain }
+                                    plainButton Texts.stop None (fun _ -> dispatch Summary.CancelReplacement)
+                                }
                             | Some (Summary.ReplacementFailed failure) ->
                                 concat {
                                     p { "role" => "alert"; text Texts.replacementFailed; text Texts.space; text (FailureTexts.summary failure) }
@@ -918,7 +924,7 @@ module private Ui =
                                     if failure = Summary.UsageLimitReached then usageLink Texts.manageUsage
                                 }
                             | None -> empty ()
-                        if (match summary.Replacement with None | Some (Summary.ReplacementFailed _) -> true | _ -> false) then
+                        if (match summary.Replacement with None | Some Summary.Reconciling | Some (Summary.ReplacementFailed _) -> true | _ -> false) then
                             label { attr.``for`` "summary-feedback"; text Texts.feedbackLabel }
                             textarea {
                                 attr.id "summary-feedback"
@@ -933,7 +939,7 @@ module private Ui =
                             button {
                                 attr.``type`` "button"
                                 attr.id "summary-request"
-                                attr.disabled (not summary.Available.Plan || summary.ReplacementCancels > 0 || not summary.CancelledReplacements.IsEmpty)
+                                attr.disabled (not summary.Available.Plan || summary.Replacement = Some Summary.Reconciling || summary.ReplacementCancels > 0 || not summary.CancelledReplacements.IsEmpty)
                                 on.click (fun _ ->
                                     match chatGpt.Status with
                                     | ChatGpt.SignedIn account -> dispatch (Summary.Regenerate account.Name)
