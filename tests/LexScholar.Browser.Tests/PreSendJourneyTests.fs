@@ -1,5 +1,6 @@
 /// F004 T011: leaving a document while the confirmation is open sends nothing and leaves her with no summary (FR-006, scenario 7).
 module LexScholar.Browser.Tests.PreSendJourneyTests
+open LexScholar.Client
 
 open System
 open System.IO
@@ -36,16 +37,16 @@ let private selectProject (page: IPage) (name: string) = task {
 
 let private importAndAdd (page: IPage) (fileName: string) = task {
     do! click (button (page.Locator("body")) LexScholar.Client.Texts.library)
-    let input = page.GetByLabel("Import a PDF")
+    let input = page.GetByLabel(Texts.importPdf)
     do! Assertions.Expect(input).ToBeVisibleAsync()
     do! input.SetInputFilesAsync(Path.Combine(AppContext.BaseDirectory, "Fixtures", "summary", fileName))
-    do! Assertions.Expect(page.GetByText($"Imported {fileName}.")).ToBeVisibleAsync()
-    do! click (button (page.Locator("ul.documents li").Filter(LocatorFilterOptions(HasText = fileName))) "Add as Focused Source")
-    do! Assertions.Expect(page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = fileName))).ToContainTextAsync("Focused Source") }
+    do! Assertions.Expect(page.GetByText((Texts.imported fileName))).ToBeVisibleAsync()
+    do! click (button (page.Locator("ul.documents li").Filter(LocatorFilterOptions(HasText = fileName))) Texts.addFocused)
+    do! Assertions.Expect(page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = fileName))).ToContainTextAsync(Texts.focusedSource) }
 
 let private openDocument (page: IPage) (fileName: string) = task {
     let row = page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = fileName))
-    do! click (button row "Open")
+    do! click (button row Texts.openDocument)
     do! Assertions.Expect(page.GetByTestId("main").Locator("iframe")).ToHaveCountAsync(0) }
 
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T011"); Trait("Task", "T007"); Trait("Category", "Browser")>]

@@ -1,5 +1,6 @@
 module LexScholar.Browser.Tests.SummaryJourneyTests
 
+open LexScholar.Client
 open System
 open System.IO
 open System.Threading.Tasks
@@ -49,14 +50,14 @@ let arrange (page: IPage) = task {
     do! click (button row LexScholar.Client.Texts.select)
     do! Assertions.Expect(row.Locator("strong.active")).ToHaveTextAsync(LexScholar.Client.Texts.active)
     do! click (button (page.Locator("body")) LexScholar.Client.Texts.library)
-    let input = page.GetByLabel("Import a PDF")
+    let input = page.GetByLabel(Texts.importPdf)
     do! Assertions.Expect(input).ToBeVisibleAsync()
     do! input.SetInputFilesAsync(Path.Combine(AppContext.BaseDirectory, "Fixtures", "summary", "article-en.pdf"))
-    do! Assertions.Expect(page.GetByText("Imported article-en.pdf.")).ToBeVisibleAsync()
-    do! click (button (page.Locator("ul.documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))) "Add as Focused Source")
+    do! Assertions.Expect(page.GetByText((Texts.imported "article-en.pdf"))).ToBeVisibleAsync()
+    do! click (button (page.Locator("ul.documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))) Texts.addFocused)
     let documentRow = page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))
-    do! Assertions.Expect(documentRow).ToContainTextAsync("Focused Source")
-    do! click (button documentRow "Open")
+    do! Assertions.Expect(documentRow).ToContainTextAsync(Texts.focusedSource)
+    do! click (button documentRow Texts.openDocument)
     do! Assertions.Expect(page.GetByTestId("main").GetByRole(AriaRole.Heading, LocatorGetByRoleOptions(Name = "article-en.pdf"))).ToBeVisibleAsync() }
 
 let private panel (page: IPage) = page.Locator("section.summary")
@@ -85,7 +86,7 @@ let ``historical configured service summary retains its recorded provenance`` (b
               GeneratedAt = generatedAt; ServiceHost = "archive.example.test:8080"; Model = "historic-model" }
         LexScholar.Infrastructure.SummaryRepository.save harness.Root key summary
         let! _ = page.ReloadAsync()
-        do! click (button (page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))) "Open")
+        do! click (button (page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))) Texts.openDocument)
         let context = (panel page).Locator(".summary-context")
         do! Assertions.Expect(context).ToContainTextAsync("archive.example.test:8080")
         do! Assertions.Expect(context).ToContainTextAsync("historic-model")
@@ -104,7 +105,7 @@ let ``a requested summary is labelled as generated, shows its context and plain-
         let! page = openApp browser harness
         do! arrange page
         do! Ui.signInWithChatGpt page harness fake
-        do! click (button (page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))) "Open")
+        do! click (button (page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))) Texts.openDocument)
         do! click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = LexScholar.Client.Texts.summarize, Exact = true)))
         do! click (button (page.GetByRole(AriaRole.Alertdialog)) "Send")
         do! Assertions.Expect(panel page).ToContainTextAsync("Generated summary")
@@ -125,7 +126,7 @@ let ``a requested summary is labelled as generated, shows its context and plain-
         do! Assertions.Expect(panel page).ToHaveCountAsync(0)
         // Dismissing changes nothing about the document or its association.
         do! Assertions.Expect(page.Locator("ul.project-documents li")).ToHaveCountAsync(1)
-        do! Assertions.Expect(page.Locator("ul.project-documents li")).ToContainTextAsync("Focused Source")
+        do! Assertions.Expect(page.Locator("ul.project-documents li")).ToContainTextAsync(Texts.focusedSource)
         do! Assertions.Expect(page.GetByTestId("main").GetByRole(AriaRole.Heading, LocatorGetByRoleOptions(Name = "article-en.pdf"))).ToBeVisibleAsync() })
 
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T004"); Trait("Task", "T007"); Trait("Category", "Browser")>]
@@ -146,7 +147,7 @@ let ``citations are page references that leave the reader and summary unchanged`
         let! page = openApp browser harness
         do! arrange page
         do! Ui.signInWithChatGpt page harness fake
-        do! click (button (page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))) "Open")
+        do! click (button (page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))) Texts.openDocument)
         do! click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = LexScholar.Client.Texts.summarize, Exact = true)))
         do! click (button (page.GetByRole(AriaRole.Alertdialog)) "Send")
         let citation = (panel page).GetByRole(AriaRole.Link, LocatorGetByRoleOptions(Name = "p. 3", Exact = true))
@@ -164,7 +165,7 @@ let ``with a configured service the plan alone is offered and confirmation can b
         let! page = openApp browser harness
         do! arrange page
         do! Ui.signInWithChatGpt page harness fake
-        do! click (button (page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))) "Open")
+        do! click (button (page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))) Texts.openDocument)
         do! Assertions.Expect(page.Locator(".summary-destination")).ToHaveCountAsync(0)
         do! Assertions.Expect(page.Locator("body")).Not.ToContainTextAsync("LexScholar:Summary:Endpoint")
         do! Assertions.Expect(page.Locator(".summary-using-plan")).ToContainTextAsync("Usando seu plano ChatGPT")
@@ -191,7 +192,7 @@ let ``a rejected request shows its explanation and Try again asks the service ag
         let! page = openApp browser harness
         do! arrange page
         do! Ui.signInWithChatGpt page harness fake
-        do! click (button (page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))) "Open")
+        do! click (button (page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = "article-en.pdf"))) Texts.openDocument)
         do! click (page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = LexScholar.Client.Texts.summarize, Exact = true)))
         do! click (button (page.GetByRole(AriaRole.Alertdialog)) "Send")
         let alert = page.GetByRole(AriaRole.Alert).Filter(LocatorFilterOptions(HasText = "The summary service"))

@@ -84,6 +84,8 @@ Errors are ProblemDetails with a `code` extension (`problem` helpers in the endp
 
 **F006 summary deletion (T008).** `Delete` on `Shown` enters `ConfirmingDelete`, retaining the summary; `CancelDelete` restores it without an effect, and `ConfirmDelete` sends the existing guarded `DeleteSummary`. `Close` immediately deletes a failed summary. The running `Stop` and in-flight POST dismissal paths remain unchanged.
 
+**F006 projects and library in Portuguese (T009).** `FailureTexts.fs`, compiled after `SummaryStatus.fs` and before `App.fs`, maps project and library failure unions to the Portuguese values in `Texts.fs`; unexpected failures use the generic message. With no projects the main area offers first-run project creation, library import navigation and ChatGPT sign-in using the existing actions.
+
 ## Request flow
 
 Client `update` returns an `Effect` → `App.fs` runs the HTTP call (`Api.*`) → host middleware (`HostSecurity.useSecurity`: error handler, Host and Origin checks, antiforgery on unsafe methods) → endpoint → Application workflow → Infrastructure functions → SQLite or files → `Result` → HTTP status and JSON → `App.fs` maps it to a `Message` → `update`.

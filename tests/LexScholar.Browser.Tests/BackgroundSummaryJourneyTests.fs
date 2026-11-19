@@ -1,6 +1,7 @@
 /// Journeys for background summaries (F004): leaving a document or project neither stops the work nor loses its result.
 /// Only Playwright's auto-waiting assertions and the fake's handshakes are used; there are no sleeps.
 module LexScholar.Browser.Tests.BackgroundSummaryJourneyTests
+open LexScholar.Client
 
 open System
 open System.IO
@@ -52,16 +53,16 @@ let private createProject (page: IPage) (name: string) = task {
 
 let private importAndAdd (page: IPage) (fileName: string) = task {
     do! click (button (page.Locator("body")) LexScholar.Client.Texts.library)
-    let input = page.GetByLabel("Import a PDF")
+    let input = page.GetByLabel(Texts.importPdf)
     do! Assertions.Expect(input).ToBeVisibleAsync()
     do! input.SetInputFilesAsync(Path.Combine(AppContext.BaseDirectory, "Fixtures", "summary", fileName))
-    do! Assertions.Expect(page.GetByText($"Imported {fileName}.")).ToBeVisibleAsync()
-    do! click (button (page.Locator("ul.documents li").Filter(LocatorFilterOptions(HasText = fileName))) "Add as Focused Source")
-    do! Assertions.Expect(page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = fileName))).ToContainTextAsync("Focused Source") }
+    do! Assertions.Expect(page.GetByText((Texts.imported fileName))).ToBeVisibleAsync()
+    do! click (button (page.Locator("ul.documents li").Filter(LocatorFilterOptions(HasText = fileName))) Texts.addFocused)
+    do! Assertions.Expect(page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = fileName))).ToContainTextAsync(Texts.focusedSource) }
 
 let private openDocument (page: IPage) (fileName: string) = task {
     let row = page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = fileName))
-    do! click (button row "Open")
+    do! click (button row Texts.openDocument)
     do! Assertions.Expect(page.GetByTestId("main").Locator("iframe")).ToHaveCountAsync(0) }
 
 let private summarizeButton (page: IPage) = page.GetByRole(AriaRole.Button, PageGetByRoleOptions(Name = LexScholar.Client.Texts.summarize, Exact = true))
@@ -339,7 +340,7 @@ let ``removing a document with a finished summary clears the project's marker`` 
         // Another document is open when the removal happens, so the view does not change.
         do! openDocument page "article-pt.pdf"
         do! Assertions.Expect((projectRow page "Alpha").Locator(".summary-marker")).ToHaveTextAsync(LexScholar.Client.Texts.summaryReady)
-        do! click (button (documentRow page "article-en.pdf") "Remove")
+        do! click (button (documentRow page "article-en.pdf") Texts.remove)
         do! Assertions.Expect(documentRow page "article-en.pdf").ToHaveCountAsync(0)
         do! Assertions.Expect((projectRow page "Alpha").Locator(".summary-marker")).ToHaveCountAsync(0) })
 
