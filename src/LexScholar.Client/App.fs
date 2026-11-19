@@ -987,6 +987,7 @@ module private Ui =
                                 forEach model.Snapshot.Projects <| fun project ->
                                     li {
                                         attr.``class`` (if model.Snapshot.Active = Some project.Id then "selected" else "")
+                                        "aria-current" => (if model.Snapshot.Active = Some project.Id then "true" else "false")
                                         span { attr.``class`` "project-name"; text project.Name }
                                         div {
                                             attr.``class`` "project-metadata"

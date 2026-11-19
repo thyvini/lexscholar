@@ -44,6 +44,7 @@ let private createProject (page: IPage) (name: string) = task {
 let private expectActive (page: IPage) (name: string) = task {
     do! Assertions.Expect(row page name).ToHaveCountAsync(1)
     do! Assertions.Expect(row page name).ToHaveClassAsync("selected")
+    do! Assertions.Expect(row page name).ToHaveAttributeAsync("aria-current", "true")
     do! Assertions.Expect(page.Locator("ul.projects li.selected")).ToHaveCountAsync(1) }
 
 let private expectSelectable (page: IPage) (name: string) =
@@ -64,6 +65,7 @@ let ``active project title has its own line above metadata`` (browserName: strin
         do! Assertions.Expect(project.Locator(".project-name")).ToHaveTextAsync("Dissertação")
         do! Assertions.Expect(project.Locator(".project-metadata .project-count")).ToHaveTextAsync("0")
         do! Assertions.Expect(project.Locator("strong.active")).ToHaveCountAsync(0)
+        do! Assertions.Expect(project).ToHaveAttributeAsync("aria-current", "true")
         let! title = project.Locator(".project-name").BoundingBoxAsync()
         let! metadata = project.Locator(".project-metadata").BoundingBoxAsync()
         Assert.True(metadata.Y >= title.Y + title.Height)
