@@ -90,6 +90,8 @@ Errors are ProblemDetails with a `code` extension (`problem` helpers in the endp
 
 **F006 summary and ChatGPT in Portuguese (T010).** `FailureTexts.summary` maps every summary failure to `Texts`, using the generic message for unrecognized service details. `App.fs` renders Portuguese summary context, progress, confirmation, account and notices; stored service host and model are preserved. The confirmation links to the Portuguese OpenAI help article.
 
+**Onboarding handoff lifecycle (T014 review fixes).** Before moving from localhost, `App` marks that origin's setup finished; numeric loopback owns active setup from then on. The pending automatic sign-in is consumed by an already-signed-in account and cancelled by finish, including while the destination request is pending. Regressions cover source-origin revisits and later sign-out without unexpected authorization.
+
 ## Request flow
 
 Client `update` returns an `Effect` → `App.fs` runs the HTTP call (`Api.*`) → host middleware (`HostSecurity.useSecurity`: error handler, Host and Origin checks, antiforgery on unsafe methods) → endpoint → Application workflow → Infrastructure functions → SQLite or files → `Result` → HTTP status and JSON → `App.fs` maps it to a `Message` → `update`.

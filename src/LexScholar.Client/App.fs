@@ -1110,15 +1110,23 @@ type App() =
                         libraryEffect |> Option.map (Ui.libraryCommand http) |> Option.defaultValue Cmd.none ]
         let update msg state =
             let next, command = Ui.update http this.Navigation msg state
+            // A handoff transfers ownership of setup to numeric loopback. The source
+            // origin must no longer remember active setup when this tab visits it again.
+            let handingOff =
+                msg = ChatGptMsg ChatGpt.SignIn && state.Onboarding = Some true && Uri(this.Navigation.Uri).Host = "localhost"
+            // An already signed-in account satisfies the intent; finishing setup cancels
+            // it. Neither should leave a delayed authorization waiting for a later sign-out.
+            if next.Onboarding = Some false || (match next.ChatGpt.Status with ChatGpt.SignedIn _ -> true | _ -> false) then
+                resumeSignIn <- false
             let next, command =
                 if resumeSignIn && next.ChatGpt.Status = ChatGpt.SignedOut then
                     resumeSignIn <- false
                     let next, signIn = Ui.update http this.Navigation (ChatGptMsg ChatGpt.SignIn) next
                     next, Cmd.batch [ command; signIn ]
                 else next, command
-            if next.Onboarding <> state.Onboarding then
+            if next.Onboarding <> state.Onboarding || handingOff then
                 try
-                    js.InvokeVoid("sessionStorage.setItem", [| box "lexscholar.onboarding"; box (if next.Onboarding = Some true then "active" else "finished") |])
+                    js.InvokeVoid("sessionStorage.setItem", [| box "lexscholar.onboarding"; box (if next.Onboarding = Some true && not handingOff then "active" else "finished") |])
                 with _ -> ()
             next, command
         Program.mkProgram start update Ui.view

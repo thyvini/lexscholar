@@ -36,6 +36,8 @@ Each task is one vertical slice and one PR: tests first (meaningful RED, then GR
 
   **T014 review corrections**: test and preserve setup when starting at `localhost` and returning through the actual numeric-loopback OAuth callback; test account-load failure and retry recovery. Use a client-only pre-authorization handoff and the existing account retry UI; no server/auth changes. Results are in the same evidence file.
 
+  **T014 second review corrections**: transfer setup ownership away from the source localhost session marker; consume automatic sign-in intent when already signed in and cancel it on finish. Both P2s are must fix. Browser regressions cover revisiting the source origin, sign-out after an already-signed-in handoff, and finish before account loading completes; evidence above.
+
 - [ ] T012 Code-map audit and manual validation. **Files**: `docs/agents/codebase.md` (audit the same-PR updates owned by earlier slices for accuracy and completeness; correct gaps, not defer their documentation here), `specs/006-summary-first-portuguese/evidence/t012-manual-validation.md` (quickstart steps 1–9 in Firefox and Chromium, including that each citation shows the cited page and historical configured-service provenance remains intact). Depends on T001–T011.
 - [ ] T013 Owner smoke check with her real ChatGPT plan, both browsers (SC-001–SC-006). **Files**: `specs/006-summary-first-portuguese/evidence/t013-owner-smoke-check.md`. Depends on T012.
 

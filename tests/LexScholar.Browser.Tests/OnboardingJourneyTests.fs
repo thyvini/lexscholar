@@ -101,6 +101,10 @@ let ``localhost onboarding survives the numeric loopback sign-in callback`` brow
         do! noMenus page
         do! Ui.click (Ui.button (page.Locator("body")) Texts.finishOnboarding)
         do! Assertions.Expect(page.Locator("aside")).ToHaveCountAsync(2)
+        let! _ = page.GotoAsync(address.Uri.ToString())
+        do! Assertions.Expect(page.Locator(".workspace[data-ready='True']")).ToBeVisibleAsync()
+        do! Assertions.Expect(page.GetByText(Texts.welcome, PageGetByTextOptions(Exact = true))).ToHaveCountAsync(0)
+        do! Assertions.Expect(page.Locator("aside")).ToHaveCountAsync(2)
     })
 
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T014"); Trait("Category", "Browser")>]
@@ -121,4 +125,58 @@ let ``onboarding account failure offers retry and recovers sign-in`` browserName
         do! Assertions.Expect(Ui.button (page.Locator(".onboarding")) Texts.signIn).ToBeVisibleAsync()
         do! Assertions.Expect(page.GetByRole(AriaRole.Alert)).ToHaveCountAsync(0)
         do! noMenus page
+    })
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T014"); Trait("Category", "Browser")>]
+let ``already signed-in handoff does not retain authorization intent after finish and sign-out`` browserName =
+    Ui.withBrowser browserName (fun browser -> task {
+        use fake = new FakeOpenAi()
+        use harness = TestHarness.Start(serveClient = true, summaryHandler = fake)
+        let! page = Ui.openApp browser harness
+        do! page.GetByLabel(Texts.projectName).FillAsync("Pesquisa")
+        do! Ui.click (Ui.button (page.Locator("body")) Texts.createProject)
+        do! Assertions.Expect(page.Locator("ul.projects li")).ToContainTextAsync("Pesquisa")
+        do! Ui.signInWithChatGpt page harness fake
+        do! Assertions.Expect(page.Locator(".top-bar").GetByText(Texts.signedIn, LocatorGetByTextOptions(Exact = true))).ToBeVisibleAsync()
+        // Another sign-in may have completed while a localhost handoff was navigating.
+        let! _ = page.GotoAsync("/index.html?onboarding=sign-in")
+        do! Assertions.Expect(page.Locator(".onboarding").GetByText(Texts.signedIn, LocatorGetByTextOptions(Exact = true))).ToBeVisibleAsync()
+        do! Ui.click (Ui.button (page.Locator("body")) Texts.finishOnboarding)
+        let bar = page.Locator(".top-bar")
+        do! bar.GetByText(Texts.account, LocatorGetByTextOptions(Exact = true)).ClickAsync()
+        do! Ui.click (Ui.button bar Texts.signOut)
+        do! Assertions.Expect(Ui.button bar Texts.signIn).ToBeVisibleAsync()
+        do! Assertions.Expect(Ui.button bar Texts.signIn).ToBeEnabledAsync()
+        do! Assertions.Expect(page.Locator("aside")).ToHaveCountAsync(2)
+    })
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T014"); Trait("Category", "Browser")>]
+let ``finish cancels handoff sign-in while destinations are still loading`` browserName =
+    Ui.withBrowser browserName (fun browser -> task {
+        use harness = TestHarness.Start(serveClient = true)
+        let! page = Ui.openApp browser harness
+        do! page.GetByLabel(Texts.projectName).FillAsync("Pesquisa")
+        do! Ui.click (Ui.button (page.Locator("body")) Texts.createProject)
+        do! Assertions.Expect(page.Locator("ul.projects li")).ToContainTextAsync("Pesquisa")
+        let arrived = System.Threading.Tasks.TaskCompletionSource()
+        let release = System.Threading.Tasks.TaskCompletionSource()
+        let intercept (route: IRoute) =
+            route.FulfillAsync(RouteFulfillOptions(Status = 200, ContentType = "text/html", Body = "<html><body>Unexpected authorization</body></html>"))
+        use! _ = page.RouteAsync("https://auth.openai.com/**", Func<IRoute, System.Threading.Tasks.Task>(intercept))
+        let hold (route: IRoute) : System.Threading.Tasks.Task = task {
+            arrived.TrySetResult() |> ignore
+            do! release.Task
+            do! route.ContinueAsync()
+        }
+        use! _ = page.RouteAsync("**/api/summary/destinations", Func<IRoute, System.Threading.Tasks.Task>(hold))
+        let! _ = page.GotoAsync("/index.html?onboarding=sign-in")
+        do! arrived.Task
+        try
+            do! Assertions.Expect(page.GetByText(Texts.projectCreated "Pesquisa", PageGetByTextOptions(Exact = true))).ToBeVisibleAsync()
+            do! Ui.click (Ui.button (page.Locator("body")) Texts.finishOnboarding)
+            do! Assertions.Expect(page.Locator("aside")).ToHaveCountAsync(2)
+        finally
+            release.TrySetResult() |> ignore
+        do! Assertions.Expect(Ui.button (page.Locator(".top-bar")) Texts.signIn).ToBeVisibleAsync()
+        do! Assertions.Expect(Ui.button (page.Locator(".top-bar")) Texts.signIn).ToBeEnabledAsync()
     })

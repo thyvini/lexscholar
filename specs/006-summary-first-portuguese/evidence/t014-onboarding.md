@@ -36,3 +36,16 @@ Both P1 findings against `ca4280d` are **must fix**:
 **RED**: `LOG=/tmp/opencode/f006-review-red.log scripts/check.sh T014` — **10 total, 4 failed, 0 skipped**. Both browsers lost welcome after starting from localhost, creating a project and following the numeric callback; both also lacked the expected account failure alert on a forced destinations 503. The original six cases passed.
 
 **GREEN**: `LOG=/tmp/opencode/f006-review-green.log scripts/check.sh T014 T009 T002 T001 T007 T008` — **354 passed, 0 failed, 0 skipped**; Release `-warnaserror` build: **0 warnings, 0 errors**. The localhost tests verify signed-in setup on `127.0.0.1`, no sidebars, reload retention and explicit completion. Failure tests restore the destinations endpoint, retry and verify the sign-in button returns with no remaining alert, still within onboarding. Full-suite CI remains pending PR.
+
+## Second review corrections
+
+Both P2 findings against `25a4eb6` are **must fix**:
+
+1. The handoff left the source `localhost` session marker active. Starting the handoff now marks the source finished before navigation, transferring ownership of active setup to numeric loopback. The existing cross-origin journey now finishes there, revisits the original localhost address, and asserts no welcome or missing sidebars.
+2. The pending automatic sign-in intent remained after loading an already-signed-in account. Loading a signed-in account now consumes it; finishing setup cancels it even while account loading is pending. New journeys cover already-signed-in handoff → finish → sign-out without authorization, and finish while a held destinations request is pending → release signed-out result without authorization.
+
+**RED**: `LOG=/tmp/opencode/f006-review2-red-confirm.log scripts/check.sh T014` — **12 total, 4 failed, 0 skipped**. Both browsers showed welcome again on the source origin; both lost the expected signed-out action after finishing and signing out because authorization started instead.
+
+**Finish-cancellation sensitivity RED**: with the signed-in consumption/source handoff fixes present but finish cancellation deliberately omitted, `LOG=/tmp/opencode/f006-review2-finish-red.log scripts/check.sh T014` — **14 total, 2 failed, 0 skipped**. Both held-load cases started authorization after completion rather than retaining the enabled sign-in action. Restored finish cancellation before GREEN.
+
+**GREEN**: `LOG=/tmp/opencode/f006-review2-green.log scripts/check.sh T014 T009 T002 T001 T007 T008` — **358 passed, 0 failed, 0 skipped**; Release `-warnaserror` build: **0 warnings, 0 errors**. Fourteen T014 browser cases included. Full-suite CI remains pending PR; no server/auth changes.
