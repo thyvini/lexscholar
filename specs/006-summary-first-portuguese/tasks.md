@@ -71,6 +71,8 @@ All client slices T002–T011 except T005 share `App.fs`; code-map writers also 
 
 ## Coverage
 
+- [x] T023 Optional commentary/instruction before the first summary (owner-approved extension, FR-017/018; [evidence](evidence/t023-first-summary-instruction.md)). Screen 08 field with bounded transient draft, consent disclosure, optional request field and shared single/map/all-combine generation input; Portuguese/source-grounding/citation rules preserved, no logging or separate persistence. Tests cover state/serialization, HTTP validation, privacy, generation stages and both browsers. **Files**: Domain `Summaries.fs`; Application `Summarize.fs`; Server `SummaryEndpoints.fs`; Client `Summary.fs`, `SummaryStatus.fs`, `App.fs`, `Texts.fs`, `wwwroot/app.css`; existing Application/Server/Browser test files; F006 spec/plan/research/contracts/mockup scope/quickstart/evidence and code map. No feedback regeneration or instruction history.
+
 | Requirement | Tasks |
 |---|---|
 | FR-001 summary in the main area, no reader | T004 |
@@ -85,6 +87,7 @@ All client slices T002–T011 except T005 share `App.fs`; code-map writers also 
 | FR-010 dates | T001, T011 |
 | FR-011 no language choice | T001 (no setting exists; nothing to build) |
 | FR-016 new summaries in Brazilian Portuguese; stored content unchanged | T016 |
+| FR-017/018 optional first-summary instruction and sensitive handling | T023 |
 | FR-012 glossary | T001, T009, T010 |
 | FR-013 pt-BR help link | T010 |
 | FR-014 F003–F005 unchanged | T004, T007, T008 (existing tests migrated, not weakened) |

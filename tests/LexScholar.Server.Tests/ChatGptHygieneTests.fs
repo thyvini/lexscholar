@@ -61,6 +61,34 @@ let private callbackObserved (harness: TestHarness) (path: string) =
 
 let private answerJson = """{"points":[{"text":"Main idea","pages":[1,2]}]}"""
 
+[<Fact; Trait("Task", "T023")>]
+let ``optional instruction is absent from logs status and local files`` () =
+    let lines = new Lines()
+    use fake = new FakeOpenAi(ResponsesScript.Completed answerJson)
+    use harness =
+        TestHarness.Start(
+            summaryHandler = fake,
+            configure = fun host -> host.Services.GetRequiredService<ILoggerFactory>().AddProvider lines)
+    let path = documentPath harness
+    signInThrough harness fake "" |> ignore
+    let secret = "PRIVATE-INSTRUCTION-T023-DO-NOT-STORE"
+    let status, response = sendJson harness path (JsonSerializer.Serialize({| confirmSend = true; instruction = secret |}))
+    Assert.Equal(HttpStatusCode.Accepted, status)
+    Assert.DoesNotContain(secret, response)
+    let parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries)
+    SummaryJobsAccess.settled harness.App (Guid.Parse parts.[2]) (Guid.Parse parts.[4])
+    |> fun task -> task.WaitAsync(TimeSpan.FromSeconds 30.).GetAwaiter().GetResult()
+    let state = harness.Client.GetStringAsync(path).GetAwaiter().GetResult()
+    Assert.DoesNotContain(secret, state)
+    Assert.NotEmpty lines.All
+    Assert.DoesNotContain(secret, String.Join('\n', lines.All))
+    for file in IO.Directory.EnumerateFiles(harness.Root, "*", IO.SearchOption.AllDirectories)
+                |> Seq.filter (fun f -> IO.Path.GetFileName f <> ".lexscholar.lock") do
+        use stream = new IO.FileStream(file, IO.FileMode.Open, IO.FileAccess.Read, IO.FileShare.ReadWrite ||| IO.FileShare.Delete)
+        use memory = new IO.MemoryStream()
+        stream.CopyTo memory
+        Assert.DoesNotContain(secret, Text.Encoding.UTF8.GetString(memory.ToArray()))
+
 [<Fact; Trait("Task", "T008")>]
 let ``no secret reaches a log line, a response or a file in any flow`` () =
     observed.Clear()

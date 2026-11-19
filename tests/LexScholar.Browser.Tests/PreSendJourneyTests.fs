@@ -48,6 +48,39 @@ let private openDocument (page: IPage) (fileName: string) = task {
     do! click (button row Texts.openDocument)
     do! Assertions.Expect(page.GetByTestId("main").Locator("iframe")).ToHaveCountAsync(0) }
 
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T023"); Trait("Category", "Browser")>]
+let ``optional first summary instruction survives cancelled consent and is sent through the plan`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use fake = new FakeOpenAi(ResponsesScript.Completed answer)
+        use harness = TestHarness.Start(serveClient = true, summaryHandler = fake)
+        let! page = Ui.openApp browser harness
+        do! SummaryJourneyTests.arrange page
+        do! Ui.signInWithChatGpt page harness fake
+        do! openDocument page "article-en.pdf"
+        let field = page.GetByLabel(Texts.instructionLabel)
+        do! Assertions.Expect(field).ToHaveAttributeAsync("maxlength", "2000")
+        do! field.FillAsync("Quero comparar as teses do autor.")
+        do! click (button (page.Locator("body")) Texts.summarize)
+        let dialog = page.GetByRole(AriaRole.Alertdialog)
+        do! Assertions.Expect(dialog).ToContainTextAsync("sua instrução opcional")
+        Assert.Empty(fake.RequestsTo("api.openai.com", "/v1/responses"))
+        do! click (button dialog Texts.cancel)
+        do! Assertions.Expect(field).ToHaveValueAsync("Quero comparar as teses do autor.")
+        let instruction = "Quero os fundamentos e limites da tese."
+        do! field.FillAsync(instruction)
+        do! click (button (page.Locator("body")) Texts.summarize)
+        do! click (button dialog Texts.sendAndSummarize)
+        do! Assertions.Expect(page.Locator(".summary-points")).ToContainTextAsync("Main idea")
+        use outgoing = System.Text.Json.JsonDocument.Parse((Assert.Single(fake.RequestsTo("api.openai.com", "/v1/responses"))).Body)
+        Assert.DoesNotContain(instruction, outgoing.RootElement.GetProperty("instructions").GetString())
+        let input = outgoing.RootElement.GetProperty("input")
+        Assert.Equal(2, input.GetArrayLength())
+        Assert.Equal("user", input.[1].GetProperty("role").GetString())
+        Assert.Contains(instruction, input.[1].GetProperty("content").GetString())
+        do! Assertions.Expect(page.GetByText(instruction, PageGetByTextOptions(Exact = true))).ToHaveCountAsync(0)
+        do! Assertions.Expect(field).ToHaveCountAsync(0)
+    })
+
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T020"); Trait("Category", "Browser")>]
 let ``send confirmation is a centered modal with keyboard cancellation and deliberate send`` (browserName: string) =
     withBrowser browserName (fun browser -> task {

@@ -65,7 +65,7 @@ let private stateResult (status: int) (state: JobState) : IResult = Results.Json
 
 /// The job's body (research §1, §3): runs the summary on the job's own token and reports into the registry.
 /// Nothing here touches the request, which is long gone. A change of state is ignored when the job was replaced or stopped.
-let private runJob (logger: ILogger) (jobs: SummaryJobs) (key: SummaryKey) (job: JobHandle) (ended: Summarize.ServiceError -> Task<unit>) (maxChunkCharacters: int) (complete: Summarize.ChatMessage list -> System.Threading.CancellationToken -> Task<Result<string, Summarize.ServiceError>>) (serviceHost: string) (model: string) (pages: ReadablePages) : Task<unit> = task {
+let private runJob (logger: ILogger) (jobs: SummaryJobs) (key: SummaryKey) (job: JobHandle) (ended: Summarize.ServiceError -> Task<unit>) (maxChunkCharacters: int) (complete: Summarize.ChatMessage list -> System.Threading.CancellationToken -> Task<Result<string, Summarize.ServiceError>>) (serviceHost: string) (model: string) (pages: ReadablePages) (instruction: string option) : Task<unit> = task {
     let capabilities : Summarize.Capabilities =
         { ExtractPages = fun _ -> failwith "pages are extracted by the endpoint"
           Complete = complete
@@ -80,7 +80,7 @@ let private runJob (logger: ILogger) (jobs: SummaryJobs) (key: SummaryKey) (job:
     logger.LogInformation("Summarizing document {DocumentId}: {Readable} readable pages, {Unreadable} unreadable",
                           box key.Document, pages.Readable.Length, pages.Unreadable.Length)
     try
-        let! result = Summarize.summarize capabilities maxChunkCharacters pages job.Token
+        let! result = Summarize.summarizeWithInstruction capabilities maxChunkCharacters pages instruction job.Token
         // Checked before `ended`, which cancels a plan run's own token: a sign-out that came after the last call still ends
         // the run, whatever the result, so no service error is reported once she is signed out (FR-007, as F005).
         // A finished summary is checked by `Complete` itself, inside the registry lock.
@@ -142,15 +142,17 @@ type private Requested =
     | Unrecognized
 
 /// The request body as far as it is understood: anything missing, malformed, oversized or of
-/// another type counts as absent, so it can never confirm anything.
+/// another type cannot confirm anything. Invalid instructions and oversized bodies are rejected.
 type private Body =
     { Destination: Requested
       /// `"confirmSend": true`, the JSON boolean.
       ConfirmSend: bool
       /// The (host, model) a `configured` confirmation names.
-      ConfirmedService: (string * string) option }
+      ConfirmedService: (string * string) option
+      Instruction: string option
+      InvalidInstruction: bool }
 
-let private emptyBody = { Destination = NotNamed; ConfirmSend = false; ConfirmedService = None }
+let private emptyBody = { Destination = NotNamed; ConfirmSend = false; ConfirmedService = None; Instruction = None; InvalidInstruction = false }
 
 let private parseBody (root: JsonElement) : Body =
     let confirmSend =
@@ -166,15 +168,26 @@ let private parseBody (root: JsonElement) : Body =
             | _ -> Unrecognized
         | true, _ -> Unrecognized
         | _ -> NotNamed
+    let instruction, invalid =
+        match root.TryGetProperty "instruction" with
+        | false, _ -> None, false
+        | true, value when value.ValueKind = JsonValueKind.String ->
+            let text = value.GetString()
+            if text.Length > SummaryInstruction.maximumCharacters then None, true
+            else SummaryInstruction.normalize text, false
+        | _ -> None, true
     { Destination = destination
+      Instruction = instruction
+      InvalidInstruction = invalid
       ConfirmSend = confirmSend
       ConfirmedService =
         if confirmSend then Option.map2 (fun host model -> host, model) (stringProperty "confirmedHost" root) (stringProperty "confirmedModel" root)
         else None }
 
 let private readBody (context: HttpContext) : Task<Body> = task {
-    match! readBoundedBody context 4096 with
-    | None -> return emptyBody
+    // Covers 2000 UTF-16 characters even when JSON escapes every character.
+    match! readBoundedBody context 16384 with
+    | None -> return { emptyBody with InvalidInstruction = true }
     | Some body ->
         try
             use document = JsonDocument.Parse body
@@ -203,7 +216,7 @@ let private confirmationRequired (summary: SummaryConfiguration) : IResult =
     Results.Problem(
         statusCode = Nullable 409,
         title = "Confirmation needed",
-        detail = "The text of this document will leave this machine. Nothing was sent.",
+        detail = "The text of this document and any optional instruction will leave this machine. Nothing was sent.",
         extensions = dict [ "code", box "confirmation_required"
                             "serviceHost", box summary.Endpoint.Authority
                             "model", box summary.Model ])
@@ -212,7 +225,7 @@ let private chatgptConfirmationRequired (account: string) : IResult =
     Results.Problem(
         statusCode = Nullable 409,
         title = "Confirmation needed",
-        detail = "The text of this document will be sent to your ChatGPT plan. Nothing was sent.",
+        detail = "The text of this document and any optional instruction will be sent to your ChatGPT plan. Nothing was sent.",
         extensions = dict [ "code", box "confirmation_required"
                             "destination", box "chatgpt"
                             "account", box account ])
@@ -283,7 +296,7 @@ let private summarizeViaPlan (context: HttpContext) (vault: ChatGptAccess.Vault)
                         | None -> jobs.Fail(key, job.Id, "service_failed", Summarize.failureDetail Summarize.ServiceError.UnusableOutput, None) |> ignore
                         | Some model ->
                             let settings : ResponsesApi.Settings = { Model = model; AccessToken = credentials.AccessToken }
-                            do! runJob logger jobs key job ended chatgptChunkCharacters (ResponsesApi.complete logger client settings) "ChatGPT plan" model pages
+                            do! runJob logger jobs key job ended chatgptChunkCharacters (ResponsesApi.complete logger client settings) "ChatGPT plan" model pages body.Instruction
                 with
                 | :? OperationCanceledException when job.Token.IsCancellationRequested ->
                     // Signed out (or stopped) while the model list was requested: nothing was sent.
@@ -324,7 +337,7 @@ let private summarizeConfigured (context: HttpContext) (jobs: SummaryJobs) (conf
                 { Endpoint = configured.Endpoint; Model = configured.Model; ApiKey = configured.ApiKey
                   Temperature = configured.Temperature; MaxOutputTokens = configured.MaxOutputTokens }
             return! runJob logger jobs key job (fun _ -> Task.FromResult()) configured.MaxChunkCharacters (ChatCompletions.complete logger client settings)
-                        configured.Endpoint.Authority configured.Model pages }
+                        configured.Endpoint.Authority configured.Model pages body.Instruction }
         return startAnswer jobs key (jobs.Start(key, stopping, run)) }
 
 /// Resolves the destination before anything else (research §10): `Error` is the answer to send.
@@ -385,6 +398,8 @@ let map (app: WebApplication) (configuration: WorkspaceConfiguration) (vault: Ch
             | Some (JobState.Running _ | JobState.Finished _ as state) when not (notAssociated directory projectId documentId) -> Some state
             | _ -> None
         match existing with
+        | _ when body.InvalidInstruction ->
+            return problem 400 "invalid_instruction" "Invalid instruction" "Use an optional instruction of at most 2000 characters. Nothing was sent."
         | Some state -> return stateResult 200 state
         | None ->
             // Reading the vault waits for a refresh in flight, so a request that explicitly names its

@@ -8,9 +8,9 @@ Reference screens for the redesigned workspace, made with the owner on 2026-11-1
 | `05-first-run.png` | First run: create a project, import PDFs, sign in with ChatGPT | Yes. Only the layout and texts; the steps themselves are unchanged |
 | `06-summary-first.png` | A document opened: summary in the main area, "Abrir PDF", citations as links, "Excluir" | Yes, without the F007 parts below |
 | `07-regenerate-with-feedback.png` | Regenerating with feedback and an instruction | No, F007 |
-| `08-ask-with-instruction.png` | A document with no summary: the request to summarize it | Yes, without the instruction field and its shortcuts (F007) |
+| `08-ask-with-instruction.png` | A document with no summary: the request to summarize it | Yes, including the optional instruction (T023 owner extension); no Recentes/history shortcuts |
 
-These parts of the screens belong to F007, not F006: "Gerar novamente", the instruction ("Sua instrução" and the "O que você quer desta fonte?" field), flags on points, "Este resumo foi útil?", and the whole of screen 7.
+Not in T023: "Gerar novamente", saved "Sua instrução", Recentes/history shortcuts, flags on points, "Este resumo foi útil?", and screen 7. Regeneration/feedback is a separate upcoming slice. The owner moved the first-summary instruction field into F006 on 2026-11-19.
 
 Not shown, but in the spec:
 - the Delete confirmation (FR-006);

@@ -111,10 +111,13 @@ let documentDetails count role project = $"{pageCount count} · {role} {inProjec
 let dateTime (value: DateTimeOffset) = value.LocalDateTime.ToString("dd/MM/yyyy HH:mm", CultureInfo.InvariantCulture)
 
 let requestDescription = "Sem instrução, você recebe os pontos principais. Cada ponto cita as páginas de onde vem."
+let instructionLabel = "O que você quer desta fonte? (opcional)"
+let instructionPlaceholder = "ex.: Quero extrair as questões mais polêmicas levantadas pelo autor em relação ao tema."
+let instructionPrivacy = "Até 2.000 caracteres. A instrução será enviada com o texto do documento; não será salva no LexScholar."
 let confirmationHelp = "Como usar seu plano do ChatGPT em outros apps e sites"
 let confirmationHelpUrl = "https://help.openai.com/pt-br/articles/20001542-using-your-chatgpt-plan-in-other-apps-and-sites"
-let confirmationPlan name count account = $"Para resumir {name}, o texto das suas {pageCount count} vai para a OpenAI pela sua conta do ChatGPT ({account}). O uso e a guarda desse texto seguem os controles de dados da sua conta do ChatGPT."
-let confirmationService name host model = $"O texto de {name} será enviado para {host} (modelo {model}), que não está neste computador."
+let confirmationPlan name count account = $"Para resumir {name}, o texto das suas {pageCount count} e sua instrução opcional vão para a OpenAI pela sua conta do ChatGPT ({account}). O uso e a guarda desses dados seguem os controles de dados da sua conta do ChatGPT."
+let confirmationService name host model = $"O texto de {name} e sua instrução opcional serão enviados para {host} (modelo {model}), que não está neste computador."
 let confirmationNote = "Esta pergunta aparece uma vez por login. Depois disso, os resumos usam seu plano do ChatGPT sem perguntar de novo, até você sair da conta."
 let covered name pages = $"{name}, abrangendo {pages}."
 let unreadable pages = $" Sem texto (sem camada de texto): {pages}."

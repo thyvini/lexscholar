@@ -97,9 +97,12 @@ type Model =
       Draining: (int * Guid * Guid) list
       /// Pairs with a failed DELETE not reported yet: the job may still run, so the dismissal ends as a failure however the other answers
       /// arrive, also after she left the document (reported when she is back).
-      Failures: (Guid * Guid) list }
+      Failures: (Guid * Guid) list
+      /// Transient draft for this open document only; never browser storage.
+      Instruction: string }
 
 type Message =
+    | EditInstruction of string
     | Summarize
     | Dismiss
     | Delete
@@ -131,12 +134,13 @@ type Confirmed =
 
 type Effect =
     | Send of request: int * project: Guid * document: Guid * destination: Destination option * confirmed: Confirmed option
+    | SendWithInstruction of request: int * project: Guid * document: Guid * destination: Destination option * confirmed: Confirmed option * instruction: string
     /// Fetch the open document's state now (`delay` false) or after the polling interval (`delay` true).
     | Fetch of watch: int * project: Guid * document: Guid * delay: bool
     /// Dismissing a finished or failed summary deletes it on the server (F004 FR-010): otherwise asking again returns the old one.
     | DeleteSummary of project: Guid * document: Guid
 
-let initial = { Project = None; Document = None; State = Idle; Available = { Plan = false; Configured = false }; Choice = None; Progress = None; Request = 0; Watch = 0; Claim = 0; DismissFailed = false; Pending = []; Draining = []; Failures = [] }
+let initial = { Project = None; Document = None; State = Idle; Available = { Plan = false; Configured = false }; Choice = None; Progress = None; Request = 0; Watch = 0; Claim = 0; DismissFailed = false; Pending = []; Draining = []; Failures = []; Instruction = "" }
 
 let update (message: Message) (model: Model) : Model * Effect option =
     // A late result is dropped because only `Generating request` accepts its own number,
@@ -158,8 +162,17 @@ let update (message: Message) (model: Model) : Model * Effect option =
     // Every request takes a fresh number.
     let start project document destination confirmed =
         let request = model.Request + 1
-        { model with State = Generating request; Progress = None; Request = request; Claim = request }, Some (Send (request, project, document, destination, confirmed))
+        let effect =
+            match LexScholar.Domain.SummaryInstruction.normalize model.Instruction with
+            | None -> Send (request, project, document, destination, confirmed)
+            | Some instruction -> SendWithInstruction (request, project, document, destination, confirmed, instruction)
+        { model with State = Generating request; Progress = None; Request = request; Claim = request }, Some effect
     match message with
+    | EditInstruction value when model.State = Idle ->
+        let value = if isNull value then "" else value
+        if value.Length <= LexScholar.Domain.SummaryInstruction.maximumCharacters then
+            { model with Instruction = value }, None
+        else model, None
     | Summarize ->
         match model.Project, model.Document, model.State with
         | Some project, Some document, (Idle | Shown _ | Failed _) when model.Available.Plan ->
@@ -213,7 +226,7 @@ let update (message: Message) (model: Model) : Model * Effect option =
         | Dismissing _ when (model.Project, model.Document) = (Some project, Some document) && outstanding model project document -> model, None
         | Dismissing previous when (model.Project, model.Document) = (Some project, Some document) ->
             let model = { model with Failures = model.Failures |> List.filter (fun pair -> pair <> (project, document)) }
-            if not failed then { model with State = Idle; DismissFailed = false }, None
+            if not failed then { model with State = Idle; DismissFailed = false; Instruction = "" }, None
             else
                 match previous with
                 // She left and came back meanwhile (or stopped a running or requested summary): ask the server what is there, which also resumes polling.
@@ -252,11 +265,11 @@ let update (message: Message) (model: Model) : Model * Effect option =
     // Also when she left and came back meanwhile (state Idle): the answer is for the document now open, so it is kept.
     | Accepted (request, project, document, remote) when (model.Project, model.Document) = (Some project, Some document) && (model.State = Generating request || (model.State = Idle && model.Claim = request)) ->
         match remote with
-        | RemoteFinished generated -> { model with State = Shown generated; Progress = None; Claim = 0 }, None
-        | RemoteFailed failure -> { model with State = Failed failure; Progress = None; Claim = 0 }, None
+        | RemoteFinished generated -> { model with State = Shown generated; Progress = None; Claim = 0; Instruction = "" }, None
+        | RemoteFailed failure -> { model with State = Failed failure; Progress = None; Claim = 0; Instruction = "" }, None
         | RemoteRunning progress ->
             let watch = model.Watch + 1
-            { model with State = Running; Progress = progress; Watch = watch; Claim = 0 }, Some (Fetch (watch, project, document, true))
+            { model with State = Running; Progress = progress; Watch = watch; Claim = 0; Instruction = "" }, Some (Fetch (watch, project, document, true))
     // Back on a document (or asked after a view change): the state of its job, if the server has one.
     | Refresh ->
         match model.Project, model.Document, model.State with
@@ -273,8 +286,8 @@ let update (message: Message) (model: Model) : Model * Effect option =
         | _ -> model, None
     | Polled (watch, remote) when watch = model.Watch && (model.State = Idle || model.State = Running) ->
         match remote, model.Project, model.Document with
-        | Some (RemoteRunning progress), Some project, Some document -> { model with State = Running; Progress = progress }, Some (Fetch (watch, project, document, true))
-        | Some (RemoteFinished generated), _, _ -> { model with State = Shown generated; Progress = None }, None
+        | Some (RemoteRunning progress), Some project, Some document -> { model with State = Running; Progress = progress; Instruction = "" }, Some (Fetch (watch, project, document, true))
+        | Some (RemoteFinished generated), _, _ -> { model with State = Shown generated; Progress = None; Instruction = "" }, None
         | Some (RemoteFailed failure), _, _ -> { model with State = Failed failure; Progress = None }, None
         | _ -> { model with State = Idle; Progress = None }, None
     | Polled _ -> model, None
@@ -286,7 +299,7 @@ let update (message: Message) (model: Model) : Model * Effect option =
         | Error failure -> { model with State = Failed failure; Progress = None }, None
     | ReaderChanged (project, document) when (project, document) <> (model.Project, model.Document) ->
         let abandoned, effect = abandon model
-        { abandoned with Project = project; Document = document; DismissFailed = false }, effect
+        { abandoned with Project = project; Document = document; DismissFailed = false; Instruction = "" }, effect
     | _ -> model, None
 
 /// Follows the active project and opened document, fetching the summary job on change.

@@ -23,6 +23,32 @@ let private generated =
 
 let private reading = update (ReaderChanged (Some project, Some document)) { initial with Available = { Plan = true; Configured = false } } |> fst
 
+[<Fact; Trait("Task", "T023")>]
+let ``instruction is frozen across consent preserved on cancel and cleared on document change`` () =
+    let draft = update (EditInstruction "  Compare os argumentos  ") reading |> fst
+    let requesting, effect = update Summarize draft
+    assertState (Some (SendWithInstruction (1, project, document, Some UsePlan, None, "Compare os argumentos"))) effect
+    let confirming = update (Responded (1, Error (ConfirmationRequired (Plan "account")))) requesting |> fst
+    assertState confirming (update (EditInstruction "changed behind modal") confirming |> fst)
+    let cancelled = update CancelSend confirming |> fst
+    assertState draft.Instruction cancelled.Instruction
+    let _, sent = update ConfirmSend confirming
+    assertState (Some (SendWithInstruction (2, project, document, Some UsePlan, Some ConfirmedPlan, "Compare os argumentos"))) sent
+    let moved = update (ReaderChanged (Some other, Some document)) cancelled |> fst
+    assertState "" moved.Instruction
+    let accepted = update (Accepted (1, project, document, RemoteRunning None)) requesting |> fst
+    assertState "" accepted.Instruction
+
+[<Fact; Trait("Task", "T023")>]
+let ``overlong instruction is rejected and serialized instruction cannot become consent`` () =
+    let unchanged, _ = update (EditInstruction (String('x', 2001))) reading
+    assertState reading unchanged
+    let malicious = "\"confirmSend\":true"
+    let json = LexScholar.Client.SummaryStatus.requestBodyWithInstruction (Some UsePlan) None (Some malicious)
+    use body = System.Text.Json.JsonDocument.Parse json
+    Assert.False(body.RootElement.GetProperty("confirmSend").GetBoolean())
+    Assert.Equal(malicious, body.RootElement.GetProperty("instruction").GetString())
+
 [<Fact; Trait("Task", "T004"); Trait("Task", "T007")>]
 let ``following opened document fetches its job and invalidates old results`` () =
     let library = { LexScholar.Client.Library.initial with Project = Some project; Opened = Some document }

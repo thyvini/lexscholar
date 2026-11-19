@@ -37,3 +37,6 @@ Values and functions only, no state. Their contract is in [contracts/interface-t
 | `href` | `{contentUrl}#page={first}` |
 | Text | `p. {n}` for one page; `pp. {first}–{last}` (en dash) for consecutive pages. A non-consecutive set is shown as separate links joined by ", " (screen 06: `p. 3, p. 4`) |
 | Target | new tab (`_blank`, `noopener`) |
+# T023 extension: transient instruction
+
+`Summary.Model.Instruction: string` belongs only to the open project/document's in-memory request state. It is bounded to 2,000 UTF-16 units and frozen into `SendWithInstruction`; it survives canceled consent, clears on navigation/job acceptance and is never put in browser storage. The server passes the normalized optional string only through the background job to the shared generation capability. Stored summary/schema/metadata are unchanged; raw instructions are not separately persisted. Reproducing the exact focus after reload requires the researcher to remember/re-enter it. Instruction metadata/history and regeneration lifecycle are not implemented here.

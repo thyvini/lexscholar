@@ -193,7 +193,7 @@ module Api =
                 return response.IsSuccessStatusCode
         with _ -> return false }
 
-    let summarize (http: HttpClient) (projectId: Guid) (documentId: Guid) (destination: Summary.Destination option) (confirmed: Summary.Confirmed option) (cancellation: Threading.CancellationToken) : Async<Result<Summary.Remote, Summary.Failure>> = async {
+    let summarize (http: HttpClient) (projectId: Guid) (documentId: Guid) (destination: Summary.Destination option) (confirmed: Summary.Confirmed option) (instruction: string option) (cancellation: Threading.CancellationToken) : Async<Result<Summary.Remote, Summary.Failure>> = async {
         try
             use! tokenResponse = http.GetAsync("api/antiforgery", cancellation) |> Async.AwaitTask
             if not tokenResponse.IsSuccessStatusCode then return Error Summary.RequestFailed
@@ -202,7 +202,7 @@ module Api =
                 use tokenJson = JsonDocument.Parse(tokenBody)
                 use request = new HttpRequestMessage(HttpMethod.Post, $"api/projects/{projectId:D}/documents/{documentId:D}/summary")
                 request.Headers.Add("X-CSRF-TOKEN", tokenJson.RootElement.GetProperty("requestToken").GetString())
-                request.Content <- new StringContent(SummaryStatus.requestBody destination confirmed, Encoding.UTF8, "application/json")
+                request.Content <- new StringContent(SummaryStatus.requestBodyWithInstruction destination confirmed instruction, Encoding.UTF8, "application/json")
                 use! response = http.SendAsync(request, cancellation) |> Async.AwaitTask
                 let! body = response.Content.ReadAsStringAsync() |> Async.AwaitTask
                 if not response.IsSuccessStatusCode then return Error (SummaryStatus.failureOfBody body)
@@ -332,13 +332,17 @@ module private Ui =
     let private summaryPollMilliseconds = 2000
 
     let private summaryCommand http (effect: Summary.Effect option) : Cmd<Msg> =
-        match effect with
-        | Some (Summary.Send (request, projectId, documentId, destination, confirmed)) ->
+        let send request projectId documentId destination confirmed instruction =
             Cmd.ofEffect (fun dispatch ->
                 Async.StartImmediate(async {
-                    match! Api.summarize http projectId documentId destination confirmed Threading.CancellationToken.None with
+                    match! Api.summarize http projectId documentId destination confirmed instruction Threading.CancellationToken.None with
                     | Ok remote -> dispatch (SummaryMsg (Summary.Accepted (request, projectId, documentId, remote)))
                     | Error failure -> dispatch (SummaryMsg (Summary.Responded (request, Error failure))) }))
+        match effect with
+        | Some (Summary.Send (request, project, document, destination, confirmed)) ->
+            send request project document destination confirmed None
+        | Some (Summary.SendWithInstruction (request, project, document, destination, confirmed, instruction)) ->
+            send request project document destination confirmed (Some instruction)
         | Some (Summary.Fetch (watch, projectId, documentId, delay)) ->
             Cmd.ofEffect (fun dispatch ->
                 Async.StartImmediate(async {
@@ -809,6 +813,18 @@ module private Ui =
                         attr.``class`` "summary-request card"
                         h3 { text Texts.requestSummary }
                         p { text Texts.requestDescription }
+                        label { attr.``for`` "summary-instruction"; text Texts.instructionLabel }
+                        textarea {
+                            attr.id "summary-instruction"
+                            attr.``class`` "summary-instruction"
+                            "maxlength" => string LexScholar.Domain.SummaryInstruction.maximumCharacters
+                            "rows" => "3"
+                            "aria-describedby" => "summary-instruction-privacy"
+                            attr.placeholder Texts.instructionPlaceholder
+                            attr.value summary.Instruction
+                            on.input (fun event -> dispatch (Summary.EditInstruction (string event.Value)))
+                        }
+                        p { attr.id "summary-instruction-privacy"; attr.``class`` "muted"; text Texts.instructionPrivacy }
                         if summary.Available.Plan then
                             div {
                                 attr.``class`` "summary-request-actions"

@@ -50,6 +50,10 @@ The other texts follow the mockups (screens 04, 05, 06, 08) where they show them
 
 Each problem `code` the client receives maps to a Portuguese message via the existing failure unions. An unknown code, or a body without a code, shows the generic failure. The server's `title` and `detail` are never shown.
 
-## Not built (F007)
+## Optional first-summary instruction (T023)
 
-"Gerar novamente", "Sua instrução", the field "O que você quer desta fonte?" and its "Recentes" suggestions, flags on points and "1 ponto marcado", "Este resumo foi útil?", and screen 07.
+The field is labelled "O que você quer desta fonte? (opcional)", with a Portuguese example and privacy/limit hint. Both send-confirmation variants disclose "sua instrução opcional". No raw instruction is interpolated into the confirmation. See [summary-instruction.md](summary-instruction.md).
+
+## Not built in T023
+
+"Gerar novamente", saved "Sua instrução", "Recentes" suggestions, flags on points and "1 ponto marcado", "Este resumo foi útil?", and screen 07.
