@@ -67,6 +67,16 @@ small { color: #596778; }
 .siwc-button img { width: 21px; height: 21px; }
 .chatgpt-welcome, .chatgpt-notice { border-color: #b7c4d1; }
 .summary-points { font-family: var(--font-interface); }
+.send-dialog { position: fixed; inset: 0; box-sizing: border-box; width: 520px; max-width: calc(100vw - 32px); max-height: calc(100vh - 32px); margin: auto; padding: 28px; border: 0; border-radius: 14px; background: var(--surface); color: var(--text); font-family: var(--font-interface); font-size: 14px; line-height: 1.5; box-shadow: 0 20px 50px rgb(0 0 0 / .2); }
+.send-dialog::backdrop { background: rgb(0 0 0 / .4); }
+.send-dialog h3 { margin: 0 0 8px; font-size: 20px; line-height: 1.4; }
+.send-dialog p { margin: 0 0 8px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.send-dialog a { color: var(--accent); font-size: 13px; }
+.send-dialog .send-info { margin: 18px 0 20px; padding: 12px 14px; border-radius: 10px; background: var(--info-tint); font-size: 13px; }
+.send-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
+.send-actions button { min-height: 44px; padding: 10px 18px; border-radius: 8px; }
+.send-actions .send-confirm { background: var(--accent); border-color: var(--accent); color: white; font-weight: 600; }
+.send-actions .send-confirm:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); color: white; }
 .document-heading { display: flex; justify-content: space-between; align-items: start; gap: 1rem; }
 .open-pdf { display: inline-flex; align-items: center; gap: .5rem; flex-shrink: 0; padding: .5rem .8rem; border: 1px solid var(--control-border); border-radius: .4rem; background: var(--surface); color: var(--text); font: inherit; text-decoration: none; white-space: nowrap; }
 .open-pdf:hover { border-color: var(--accent); color: var(--accent-hover); }
