@@ -102,6 +102,8 @@ T019 review correction: `OpenDocument` always opens without disclosure; `RevealO
 
 **Single-origin onboarding lifecycle (T014 review fixes).** There is no cross-origin completion synchronization, handoff marker/query or pending automatic sign-in intent. All localhost entries normalize before workspace initialization, replacing the history entry and preserving query parameters. Explicitly reopening localhost cannot bypass numeric-loopback setup, even when projects already exist. Completion is one local session write and never navigates. Regressions cover interrupted initial navigation, Back/Forward before and after completion, localhost revisits while setup is active and completed, blocked completion-navigation paths, finish during account loading and later sign-out without unexpected authorization.
 
+**F006 summary presentation (T021).** The document heading (filename, details and secondary `Abrir PDF` link) sits outside the separate white `.summary-request.card` or `.summary.card`. The request's primary `Resumir` action is aligned right; the finished summary has a tinted generated notice and unbulleted, spaced points. T017's Inter override, existing summary states, account controls and new-tab links are unchanged; no F007 instruction, regeneration or feedback controls are introduced.
+
 ## Request flow
 
 Client `update` returns an `Effect` → `App.fs` runs the HTTP call (`Api.*`) → host middleware (`HostSecurity.useSecurity`: error handler, Host and Origin checks, antiforgery on unsafe methods) → endpoint → Application workflow → Infrastructure functions → SQLite or files → `Result` → HTTP status and JSON → `App.fs` maps it to a `Message` → `update`.

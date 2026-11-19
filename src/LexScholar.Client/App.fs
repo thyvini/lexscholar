@@ -671,7 +671,7 @@ module private Ui =
 
     let private summaryPanel (document: Library.Document) (generated: Summary.Generated) dispatch =
         section {
-            attr.``class`` "summary"
+            attr.``class`` "summary card"
             div {
                 attr.style "display: flex; justify-content: space-between; align-items: center"
                 h3 { text Texts.summaryReady }
@@ -805,15 +805,20 @@ module private Ui =
                 | Summary.Dismissing _ -> span { "role" => "status"; text Texts.dismissing }
                 | Summary.Confirming target -> confirmDialog document target dispatch
                 | Summary.Idle ->
-                    concat {
+                    section {
+                        attr.``class`` "summary-request card"
                         h3 { text Texts.requestSummary }
                         p { text Texts.requestDescription }
                         if summary.Available.Plan then
-                            button {
-                                attr.``type`` "button"
-                                attr.id "summary-request"
-                                on.click (fun _ -> dispatch Summary.Summarize)
-                                text Texts.summarize
+                            div {
+                                attr.``class`` "summary-request-actions"
+                                button {
+                                    attr.``type`` "button"
+                                    attr.id "summary-request"
+                                    attr.``class`` "summary-primary"
+                                    on.click (fun _ -> dispatch Summary.Summarize)
+                                    text Texts.summarize
+                                }
                             }
                     }
                 | Summary.Failed failure ->
@@ -1103,10 +1108,13 @@ module private Ui =
                                 section {
                                     let document = association.Document
                                     let role = if association.Role = FocusedSource then Texts.focusedSource else Texts.referenceSource
-                                    attr.``class`` "card"
+                                    attr.``class`` "document-workspace"
                                     div {
                                         attr.``class`` "document-heading"
-                                        h2 { text document.FileName }
+                                        div {
+                                            h2 { text document.FileName }
+                                            p { text (Texts.documentDetails document.PageCount role projectLabel) }
+                                        }
                                         a {
                                             attr.``class`` "open-pdf"
                                             attr.href document.ContentUrl
@@ -1116,7 +1124,6 @@ module private Ui =
                                             span { "aria-hidden" => "true"; text "↗" }
                                         }
                                     }
-                                    p { text (Texts.documentDetails document.PageCount role projectLabel) }
                                     chatGptAccount state.ChatGpt (ChatGptMsg >> dispatch')
                                     summaryView document state.Summary state.ChatGpt (SummaryMsg >> dispatch') (ChatGptMsg >> dispatch')
                                 }
