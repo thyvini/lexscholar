@@ -873,6 +873,10 @@ module private Ui =
                                 }
                             }
                         }
+                    | ChatGpt.SignedOut when (state.ShowLibrary || not model.Snapshot.Projects.IsEmpty) && (state.ShowLibrary || opened.IsNone) ->
+                        signInButton false (ChatGptMsg >> dispatch')
+                    | ChatGpt.Starting when (state.ShowLibrary || not model.Snapshot.Projects.IsEmpty) && (state.ShowLibrary || opened.IsNone) ->
+                        signInButton true (ChatGptMsg >> dispatch')
                     | _ -> empty ()
             }
             aside {

@@ -65,7 +65,10 @@ let ``first run introduces the three steps`` (browserName: string) =
         do! Assertions.Expect(page.GetByText("Requer um plano ChatGPT Plus ou Pro.", PageGetByTextOptions(Exact = true))).ToBeVisibleAsync()
         do! Assertions.Expect(Ui.button (page.Locator("body")) Texts.signIn).ToBeVisibleAsync()
         do! Ui.click (Ui.button (page.Locator("body")) Texts.choosePdfs)
-        do! Assertions.Expect(page.GetByLabel(Texts.importPdf)).ToBeVisibleAsync() })
+        do! Assertions.Expect(page.GetByLabel(Texts.importPdf)).ToBeVisibleAsync()
+        do! Assertions.Expect(Ui.button (page.Locator("body")) Texts.signIn).ToBeVisibleAsync()
+        do! createProject page "Alpha"
+        do! Assertions.Expect(Ui.button (page.Locator("body")) Texts.signIn).ToBeVisibleAsync() })
 
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T019"); Trait("Task", "T002"); Trait("Category", "Browser")>]
 let ``empty workspace shows the project-list empty state`` (browserName: string) =
