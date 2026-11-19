@@ -90,6 +90,8 @@ Errors are ProblemDetails with a `code` extension (`problem` helpers in the endp
 
 **F006 summary and ChatGPT in Portuguese (T010).** `FailureTexts.summary` maps every summary failure to `Texts`, using the generic message for unrecognized service details. `App.fs` renders Portuguese summary context, progress, confirmation, account and notices; stored service host and model are preserved. The confirmation links to the Portuguese OpenAI help article.
 
+**F006 new summary language (T016, $153).** `Summarize.fs` requests Brazilian Portuguese regardless of source language in every single/map/combine prompt, including intermediate reductions, for both destinations. Stored summaries and source text are untouched. Application tests capture these instructions; fake replies do not establish real-model compliance.
+
 **Single-origin onboarding lifecycle (T014 review fixes).** There is no cross-origin completion synchronization, handoff marker/query or pending automatic sign-in intent. All localhost entries normalize before workspace initialization, replacing the history entry and preserving query parameters. Explicitly reopening localhost cannot bypass numeric-loopback setup, even when projects already exist. Completion is one local session write and never navigates. Regressions cover interrupted initial navigation, Back/Forward before and after completion, localhost revisits while setup is active and completed, blocked completion-navigation paths, finish during account loading and later sign-out without unexpected authorization.
 
 ## Request flow

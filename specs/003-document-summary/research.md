@@ -1,5 +1,7 @@
 # Research: Document Summary with Page References (F003)
 
+> The source/majority-language prompt decision below is superseded by [F006 R11](../006-summary-first-portuguese/research.md#r11--brazilian-portuguese-for-all-new-summaries-153-t016): single, chunk and combine requests now ask for Brazilian Portuguese regardless of source language. Historical stored summaries are unchanged.
+
 Decisions for [plan.md](plan.md). Each has the decision, why, and what else was considered.
 
 ## 1. Talking to the researcher's chosen service

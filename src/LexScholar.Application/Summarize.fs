@@ -66,20 +66,20 @@ let private jsonForm = "{\"points\": [{\"text\": \"...\", \"pages\": [3, 4]}]}"
 
 let private systemPrompt =
     "You summarize a document for a researcher. The text is split by page markers such as [Page 7]. "
-    + "Write 5 to 10 main points, in the language of most of the text. Each point cites the page markers it comes from. "
+    + "Write 5 to 10 main points in Brazilian Portuguese, regardless of the source language. Each point cites the page markers it comes from. "
     + $"Answer only with JSON of this form and nothing else: {jsonForm}. "
     + "Use {\"points\": []} when the text has no main points. Cite only pages that appear as markers."
 
 let private mapPrompt =
     "You summarize part of a document for a researcher. The text is split by page markers such as [Page 7]. "
-    + "Write at most 5 main points of this part, in the language of most of the text. Each point cites the page markers it comes from. "
+    + "Write at most 5 main points of this part in Brazilian Portuguese, regardless of the source language. Each point cites the page markers it comes from. "
     + $"Answer only with JSON of this form and nothing else: {jsonForm}. "
     + "Use {\"points\": []} when the text has no main points. Cite only pages that appear as markers."
 
 let private combinePrompt (final: bool) =
     let count = if final then "5 to 10 main points" else "at most 5 main points"
     "You merge points from a document into a shorter list for a researcher. Each line is a point, with the pages it cites in parentheses. "
-    + $"Write {count} that cover them, in the language of the points. Each point cites pages taken only from the lines it merges. "
+    + $"Write {count} that cover them in Brazilian Portuguese, regardless of the source language. Each point cites pages taken only from the lines it merges. "
     + $"Answer only with JSON of this form and nothing else: {jsonForm}."
 
 /// Combining stops after this many rounds (research §4).
