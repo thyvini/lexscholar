@@ -82,6 +82,8 @@ Errors are ProblemDetails with a `code` extension (`problem` helpers in the endp
 
 **F006 plan-only requests (T007).** `Summary.update` sends new requests only to `UsePlan` when the plan is available; a configured destination alone cannot start a request. The view offers sign-in when signed out, with no destination chooser or settings-file explanation. A stored summary still renders its recorded service host, model, date and context; plan attribution is shown for a stored summary only when its recorded host is `ChatGPT plan`, not based on the current sign-in. The server's configured-service path is unchanged.
 
+**F006 summary deletion (T008).** `Delete` on `Shown` enters `ConfirmingDelete`, retaining the summary; `CancelDelete` restores it without an effect, and `ConfirmDelete` sends the existing guarded `DeleteSummary`. `Close` immediately deletes a failed summary. The running `Stop` and in-flight POST dismissal paths remain unchanged.
+
 ## Request flow
 
 Client `update` returns an `Effect` → `App.fs` runs the HTTP call (`Api.*`) → host middleware (`HostSecurity.useSecurity`: error handler, Host and Origin checks, antiforgery on unsafe methods) → endpoint → Application workflow → Infrastructure functions → SQLite or files → `Result` → HTTP status and JSON → `App.fs` maps it to a `Message` → `update`.

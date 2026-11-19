@@ -76,6 +76,40 @@ let private expectCitation (page: IPage) = task {
     do! click citation
     do! Assertions.Expect(panel page).ToContainTextAsync("Main idea") }
 
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T008"); Trait("Category", "Browser")>]
+let ``deleting a finished summary requires confirmation and survives restart`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use workspace = TemporaryWorkspace.Create()
+        use fake = new FakeOpenAi(ResponsesScript.Completed answer)
+        do!
+            task {
+                use harness = TestHarness.Start(serveClient = true, summaryHandler = fake, workspace = workspace)
+                let! page = openApp browser harness
+                do! createProject page "Alpha"
+                do! importAndAdd page "article-en.pdf"
+                do! openDocument page "article-en.pdf"
+                do! Ui.signInWithChatGpt page harness fake
+                do! openDocument page "article-en.pdf"
+                do! click (summarizeButton page)
+                do! click (button (page.GetByRole(AriaRole.Alertdialog)) "Send")
+                do! expectCitation page
+                do! click (button (panel page) LexScholar.Client.Texts.delete)
+                let dialog = page.GetByRole(AriaRole.Alertdialog)
+                do! Assertions.Expect(dialog).ToContainTextAsync(LexScholar.Client.Texts.confirmDelete)
+                do! Assertions.Expect(page.Locator(".summary-using-plan")).ToContainTextAsync(LexScholar.Client.Texts.usingPlan)
+                do! Assertions.Expect(page.Locator(".summary-using-plan").GetByRole(AriaRole.Link)).ToBeVisibleAsync()
+                do! click (button dialog LexScholar.Client.Texts.cancel)
+                do! Assertions.Expect(panel page).ToContainTextAsync("Main idea")
+                do! click (button (panel page) LexScholar.Client.Texts.delete)
+                do! click (button dialog LexScholar.Client.Texts.delete)
+                do! Assertions.Expect(summarizeButton page).ToBeVisibleAsync()
+                do! page.Context.CloseAsync() }
+        use restarted = TestHarness.Start(serveClient = true, workspace = workspace)
+        let! page = openApp browser restarted
+        do! openDocument page "article-en.pdf"
+        do! Assertions.Expect(summarizeButton page).ToBeVisibleAsync()
+        do! Assertions.Expect(panel page).ToHaveCountAsync(0) })
+
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T002"); Trait("Task", "T004"); Trait("Task", "T007"); Trait("Category", "Browser")>]
 let ``a summary asked on one document is found on return after opening another document`` (browserName: string) =
     withBrowser browserName (fun browser -> task {

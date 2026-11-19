@@ -74,7 +74,7 @@ let ``a failure is kept as the state, with not configured distinct`` () =
 [<Fact; Trait("Task", "T004"); Trait("Task", "T007")>]
 let ``dismissing returns to idle and drops a late result`` () =
     let shown, _ = update (Responded (1, Ok generated)) (update Summarize reading |> fst)
-    let dismissing, _ = update Dismiss shown
+    let dismissing, _ = update ConfirmDelete (fst (update Delete shown))
     // The server's answer to the delete (F004 T006) ends the dismissal.
     let dismissed, _ = update (Dismissed (project, document, true)) dismissing
     assertState Idle dismissed.State
@@ -468,14 +468,14 @@ let ``a failure found on return is shown with its actions, and Summarize asks ag
 // F004 T006: dismissing a finished or failed summary deletes it on the server.
 
 [<Fact; Trait("Task", "T006"); Trait("Task", "T007")>]
-let ``dismissing a shown or failed summary sends the delete, anything else sends nothing`` () =
+let ``confirming deletion or closing a failure sends the delete`` () =
     let asked, _ = update Summarize reading
     let shown, _ = update (Responded (1, Ok generated)) asked
-    let dismissedShown, shownEffect = update Dismiss shown
+    let dismissedShown, shownEffect = update ConfirmDelete (fst (update Delete shown))
     assertState (Dismissing (Shown generated)) dismissedShown.State
     assertState (Some (DeleteSummary (project, document))) shownEffect
     let failed, _ = update (Responded (1, Error (ServiceFailed None))) asked
-    assertState (Some (DeleteSummary (project, document))) (snd (update Dismiss failed))
+    assertState (Some (DeleteSummary (project, document))) (snd (update Close failed))
     // Nothing asked, finished or failed: nothing to delete.
     assertState None (snd (update Dismiss reading))
     // An ask in flight is deleted too (T013).
@@ -487,7 +487,7 @@ let ``dismissing a shown or failed summary sends the delete, anything else sends
 let ``while the delete is in flight nothing can be asked; its answer ends or restores the summary`` () =
     let asked, _ = update Summarize reading
     let shown, _ = update (Responded (1, Ok generated)) asked
-    let dismissing, _ = update Dismiss shown
+    let dismissing, _ = update ConfirmDelete (fst (update Delete shown))
     // Asking again, or dismissing again, does nothing until the server answers.
     assertState (dismissing, None) (update Summarize dismissing)
     assertState (dismissing, None) (update Dismiss dismissing)
@@ -499,7 +499,7 @@ let ``while the delete is in flight nothing can be asked; its answer ends or res
     let refused, _ = update (Dismissed (project, document, false)) dismissing
     assertState (Shown generated) refused.State
     assertState true refused.DismissFailed
-    assertState false (fst (update Dismiss refused)).DismissFailed
+    assertState false (fst (update ConfirmDelete (fst (update Delete refused)))).DismissFailed
     // An answer for another document, or when not dismissing, is ignored.
     assertState (dismissing, None) (update (Dismissed (project, Guid.NewGuid(), true)) dismissing)
     assertState (shown, None) (update (Dismissed (project, document, true)) shown)
@@ -508,7 +508,7 @@ let ``while the delete is in flight nothing can be asked; its answer ends or res
 let ``coming back while the delete is in flight waits for its answer`` () =
     let asked, _ = update Summarize reading
     let shown, _ = update (Responded (1, Ok generated)) asked
-    let dismissing, _ = update Dismiss shown
+    let dismissing, _ = update ConfirmDelete (fst (update Delete shown))
     let away, _ = update (ReaderChanged (Some project, Some other)) dismissing
     let returned, _ = update (ReaderChanged (Some project, Some document)) away
     let back, fetch = update Refresh returned
@@ -649,3 +649,24 @@ let ``a delete that fails while she is away is reported when she is back`` () =
     let last, _ = update (Dismissed (project, document, true)) failedFirst
     let back2, _ = update (ReaderChanged (Some project, Some document)) last
     assertState true (fst (update Refresh back2)).DismissFailed
+
+[<Fact; Trait("Task", "T008")>]
+let ``delete confirmation can be cancelled or confirmed and failure closes immediately`` () =
+    let shown = { reading with State = Shown generated }
+    let confirming, effect = update Delete shown
+    assertState (ConfirmingDelete generated) confirming.State
+    assertState None effect
+    let cancelled, effect = update CancelDelete confirming
+    assertState shown cancelled
+    assertState None effect
+    let deleting, effect = update ConfirmDelete confirming
+    assertState (Dismissing (Shown generated)) deleting.State
+    assertState (Some (DeleteSummary (project, document))) effect
+    let failed = { reading with State = Failed NoText }
+    let closed, effect = update Close failed
+    assertState (Dismissing (Failed NoText)) closed.State
+    assertState (Some (DeleteSummary (project, document))) effect
+    assertState (shown, None) (update ConfirmDelete shown)
+    let moved, _ = update (ReaderChanged (Some project, Some other)) confirming
+    assertState Idle moved.State
+    assertState (moved, None) (update ConfirmDelete moved)
