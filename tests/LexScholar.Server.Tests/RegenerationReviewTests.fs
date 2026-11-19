@@ -8,6 +8,8 @@ open Xunit
 open LexScholar.Domain
 open LexScholar.Infrastructure
 open LexScholar.Application
+open Microsoft.Extensions.DependencyInjection
+open Microsoft.Extensions.Logging
 open ChatGptContractTests
 
 let private seedSaved (harness: TestHarness) path =
@@ -163,3 +165,60 @@ let ``cancel during held plan refresh invalidates pending replacement before it 
     wait (SummaryJobsAccess.settled harness.App key.Project key.Document)
     Assert.Empty(openAiRequests fake)
     Assert.Equal(saved, SummaryRepository.find harness.Root key)
+
+[<Theory; Trait("Task", "T024")>]
+[<InlineData("configured", false)>]
+[<InlineData("configured", true)>]
+[<InlineData("chatgpt", false)>]
+[<InlineData("chatgpt", true)>]
+let ``replacement forwards the instruction without retaining its raw input or service error echoes`` destination fail =
+    let secret = "PRIVATE-REPLACEMENT-INSTRUCTION-T024"
+    let reply = """{"points":[{"text":"Replacement","pages":[1]}]}"""
+    use configured = new FakeChatService(if fail then StatusWithBody(400, JsonSerializer.Serialize({| error = {| message = secret |} |})) else Reply reply)
+    use plan = new FakeOpenAi(if fail then ResponsesScript.Status(400, "unknown_error") else ResponsesScript.Completed reply)
+    plan.SummaryErrorMessage <- secret
+    let handler : System.Net.Http.HttpMessageHandler = if destination = "configured" then configured else plan
+    let lines = new CapturingProvider()
+    use harness = TestHarness.Start(
+        summaryHandler = handler,
+        settings = [ "LexScholar:Summary:Endpoint", "http://127.0.0.1:9/v1"; "LexScholar:Summary:Model", "m" ],
+        configure = fun host -> host.Services.GetRequiredService<ILoggerFactory>().AddProvider lines)
+    let path = documentPath harness
+    let key, original = seedSaved harness path
+    if destination = "chatgpt" then signInThrough harness plan "" |> ignore
+    let started, response = sendJson harness (path + "/regenerate") (JsonSerializer.Serialize({| destination = destination; confirmSend = true; instruction = secret |}))
+    Assert.Equal(HttpStatusCode.Accepted, started)
+    Assert.DoesNotContain(secret, response)
+    wait (SummaryJobsAccess.settled harness.App key.Project key.Document)
+    let outgoing =
+        if destination = "configured" then Assert.Single(configured.Requests).Body
+        else Assert.Single(plan.RequestsTo("api.openai.com", "/v1/responses")).Body
+    Assert.Contains(secret, outgoing)
+    let replacement = harness.Client.GetStringAsync(path + "/regenerate").GetAwaiter().GetResult()
+    Assert.Equal((if fail then "failed" else "finished"), status replacement)
+    Assert.DoesNotContain(secret, replacement)
+    let ordinary = harness.Client.GetStringAsync(path).GetAwaiter().GetResult()
+    Assert.Equal("finished", status ordinary)
+    Assert.DoesNotContain(secret, ordinary)
+    if fail then Assert.Equal(original, SummaryRepository.find harness.Root key)
+    else Assert.Equal("Replacement", (SummaryRepository.find harness.Root key).Value.Points.Head.Text)
+    Assert.DoesNotContain(secret, String.Join('\n', lines.Lines))
+    for file in IO.Directory.EnumerateFiles(harness.Root, "*", IO.SearchOption.AllDirectories) do
+        if IO.Path.GetFileName(file) <> ".lexscholar.lock" then
+            use stream = new IO.FileStream(file, IO.FileMode.Open, IO.FileAccess.Read, IO.FileShare.ReadWrite ||| IO.FileShare.Delete)
+            use memory = new IO.MemoryStream()
+            stream.CopyTo memory
+            Assert.DoesNotContain(secret, Text.Encoding.Latin1.GetString(memory.ToArray()))
+
+[<Fact; Trait("Task", "T024")>]
+let ``invalid replacement instruction is rejected without changing the saved version`` () =
+    use fake = new FakeChatService(Status 500)
+    use harness = TestHarness.Start(summaryHandler = fake, settings = [
+        "LexScholar:Summary:Endpoint", "http://127.0.0.1:9/v1"; "LexScholar:Summary:Model", "m" ])
+    let path = documentPath harness
+    let key, original = seedSaved harness path
+    let response, content = sendJson harness (path + "/regenerate") (JsonSerializer.Serialize({| instruction = String('x', 2001) |}))
+    Assert.Equal(HttpStatusCode.BadRequest, response)
+    Assert.Contains("invalid_instruction", content)
+    Assert.Empty(fake.Requests)
+    Assert.Equal(original, SummaryRepository.find harness.Root key)

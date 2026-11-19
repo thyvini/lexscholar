@@ -33,3 +33,12 @@ The `Started` response branch bypassed the legacy/replacement audience filter us
 - Deterministic regression: retain an actual ordinary `Start` outcome, complete that job, register a held replacement (running and failed variants), then invoke the exact production response helper. No sleeps, polling or test-only timing hook. Assert ordinary 202 contains the original finished summary, replacement-aware responses retain running/failed state, and storage is unchanged.
 - Fix: all successful outcomes share one state lookup with `includeReplacement = regenerate`; only the HTTP status differs.
 - GREEN: `scripts/check.sh T024 T002 T003 T006 T008 T009` — warning-as-error build; **338 passed, zero failures/skips**. CI/full-suite and fresh review remain required on the pushed head. No merge performed.
+
+## Integration with release after #133
+
+- Rebased the feature onto `origin/release/0.4.0` at `cf728ad` (T023; also retains T022). Conflicts were in `SummaryEndpoints.fs`, `SummaryContractTests.fs` and the code map; preserved both test sets and documentation. Tasks/spec changes otherwise applied cleanly.
+- Both background paths retain T023's parsed instruction forwarding and `summarizeWithInstruction`, including its service-error prose sanitization. Replacement admission/state filtering remains intact. No instruction UI or privacy code was reverted.
+- Added combined HTTP regressions: instructed replacements through both destinations, success/failure, forwarded request input, no raw instruction in job state/logs/local files, old version preserved on failure, and rejection of an oversized replacement instruction.
+- Sensitivity RED: temporarily dropped instruction forwarding (uncommitted); `scripts/check.sh T024` — four combined-path assertions failed because the upstream input lacked the instruction; 43 tests, zero skips (`/tmp/lexscholar-check.g0OmoW`). Restored forwarding.
+- GREEN: `scripts/check.sh T023 T024 T002 T003 T006 T008 T009` — warning-as-error build; **384 passed, zero failures/skips**, including instruction privacy tests, replacement races and both-browser journeys.
+- No known semantic integration issue remains. Feedback composition/regeneration controls remain a later slice; no PR merge performed.
