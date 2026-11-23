@@ -62,3 +62,23 @@ type WorkspaceDbModelSnapshot() =
         summary.Property<System.DateTimeOffset>("GeneratedAt").HasConversion<UtcDateTimeOffsetConverter>().HasColumnType("TEXT") |> ignore
         summary.HasKey("ProjectId", "DocumentId") |> ignore
         summary.HasOne("LexScholar.Infrastructure.ProjectDocumentRow", null).WithMany().HasForeignKey("ProjectId", "DocumentId").OnDelete(DeleteBehavior.Cascade) |> ignore
+        let deletion = model.Entity("LexScholar.Infrastructure.DeletionOperationRow")
+        deletion.ToTable("DeletionOperations") |> ignore
+        deletion.Property<System.Guid>("Id").ValueGeneratedNever().HasConversion<CanonicalGuidConverter>().HasColumnType("TEXT") |> ignore
+        deletion.Property<System.DateTimeOffset>("CreatedUtc").HasConversion<UtcDateTimeOffsetConverter>().HasColumnType("TEXT") |> ignore
+        deletion.HasKey("Id") |> ignore
+        let item = model.Entity("LexScholar.Infrastructure.DeletionItemRow")
+        item.ToTable("DeletionItems", fun (table: TableBuilder) ->
+            table.HasCheckConstraint("CK_DeletionItems_Status", "Status IN ('pending', 'metadata_removed', 'deleted', 'incomplete')") |> ignore
+            table.HasCheckConstraint("CK_DeletionItems_Phase", "Phase IN ('pending', 'metadata_removed')") |> ignore
+            table.HasCheckConstraint("CK_DeletionItems_StatusPhase", "(Status = 'pending' AND Phase = 'pending') OR (Status IN ('metadata_removed', 'deleted') AND Phase = 'metadata_removed') OR Status = 'incomplete'") |> ignore) |> ignore
+        item.Property<System.Guid>("OperationId").HasConversion<CanonicalGuidConverter>().HasColumnType("TEXT") |> ignore
+        item.Property<System.Guid>("DocumentId").HasConversion<CanonicalGuidConverter>().HasColumnType("TEXT") |> ignore
+        item.Property<string>("OriginalFileName").IsRequired().HasColumnType("TEXT") |> ignore
+        item.Property<string>("StorageKey").IsRequired().HasColumnType("TEXT") |> ignore
+        item.Property<string>("Status").IsRequired().HasColumnType("TEXT") |> ignore
+        item.Property<string>("Phase").IsRequired().HasColumnType("TEXT") |> ignore
+        item.Property<string>("Reason").HasColumnType("TEXT") |> ignore
+        item.HasKey("OperationId", "DocumentId") |> ignore
+        item.HasIndex([| "DocumentId" |]).IsUnique().HasFilter("Status <> 'deleted'") |> ignore
+        item.HasOne("LexScholar.Infrastructure.DeletionOperationRow", null).WithMany().HasForeignKey("OperationId").OnDelete(DeleteBehavior.Cascade) |> ignore

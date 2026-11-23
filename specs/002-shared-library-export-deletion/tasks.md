@@ -12,7 +12,7 @@ For each automated slice, write task-tagged xUnit v3 tests (`Trait("Task", "Txxx
 
 ## Phase 1 — Shared setup
 
-- [ ] T001 Establish shared F002 composition and schema without enabling destructive operations in `src/LexScholar.Application/LibraryControls.fs`, `src/LexScholar.Infrastructure/Migrations/LibraryDeletions.fs`, `src/LexScholar.Infrastructure/WorkspaceDb.fs`, `src/LexScholar.Infrastructure/Migrations/WorkspaceDbModelSnapshot.fs`, `src/LexScholar.Server/Endpoints.fs`, relevant `.fsproj` files and `docs/agents/codebase.md`; add `tests/LexScholar.Infrastructure.Tests/LibraryDeletionSchemaTests.fs` and registration. Verify real migration/restart, unique operation/document identity, valid pending/metadata_removed/deleted/incomplete states, and that no existing workspace behavior or public destructive action changes.
+- [x] T001 Establish shared F002 composition and schema without enabling destructive operations in `src/LexScholar.Application/LibraryControls.fs`, `src/LexScholar.Infrastructure/Migrations/LibraryDeletions.fs`, `src/LexScholar.Infrastructure/WorkspaceDb.fs`, `src/LexScholar.Infrastructure/Migrations/WorkspaceDbModelSnapshot.fs`, `src/LexScholar.Server/Endpoints.fs`, relevant `.fsproj` files and `docs/agents/codebase.md`; add `tests/LexScholar.Infrastructure.Tests/LibraryDeletionSchemaTests.fs` and registration. Verify real migration/restart, unique operation/document identity, valid pending/metadata_removed/deleted/incomplete states, and that no existing workspace behavior or public destructive action changes. [Evidence](evidence/t001-foundations.md)
 
 ## Phase 2 — Risk-first architectural checkpoints (parallel after T001)
 
