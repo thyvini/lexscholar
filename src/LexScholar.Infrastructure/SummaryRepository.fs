@@ -25,7 +25,7 @@ let private serialize (summary: StoredSummary) : string =
 let private ints (element: JsonElement) = [ for item in element.EnumerateArray() -> item.GetInt32() ]
 
 /// Reads a stored row; a content version this build does not know is refused rather than guessed at.
-let private deserialize (key: SummaryKey) (generatedAt: DateTimeOffset) (content: string) : StoredSummary =
+let internal deserialize (key: SummaryKey) (generatedAt: DateTimeOffset) (content: string) : StoredSummary =
     use json = JsonDocument.Parse content
     let root = json.RootElement
     match root.TryGetProperty "version" with

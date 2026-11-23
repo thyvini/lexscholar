@@ -23,6 +23,7 @@
     <Compile Include="OpenAiAuth.fs" />
     <Compile Include="ResponsesApi.fs" />
     <Compile Include="SummaryRepository.fs" />
+    <Compile Include="LibraryExportSnapshot.fs" />
     <ProjectReference Include="../LexScholar.Domain/LexScholar.Domain.fsproj" />
     <ProjectReference Include="../LexScholar.Application/LexScholar.Application.fsproj" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
