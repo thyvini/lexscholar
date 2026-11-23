@@ -14,7 +14,7 @@ let private navigationError (context: HttpContext) (status: int) title sentence 
     Results.Content($"<!doctype html><html lang=\"pt-BR\"><head><meta charset=\"utf-8\"><title>{title}</title></head><body><h1>{title}</h1><p>{sentence}</p></body></html>",
                     "text/html; charset=utf-8", statusCode = Nullable status)
 
-let map (app: WebApplication) (configuration: WorkspaceConfiguration) =
+let map (app: WebApplication) (configuration: WorkspaceConfiguration) (coordination: LibraryCoordination) =
     let directory = configuration.DataDirectory
     let changeRole = DocumentRoles.changeRole (LibraryRepository.changeRole directory)
     let openContent = VerifiedDocumentContent.openRead directory
@@ -24,7 +24,7 @@ let map (app: WebApplication) (configuration: WorkspaceConfiguration) =
         match! LibraryEndpoints.associationRequest context.Request with
         | None, _ -> return LibraryEndpoints.problem 400 "invalid_role" "Choose a role: FocusedSource or ReferenceSource."
         | Some role, _ ->
-            match changeRole projectId documentId role with
+            match coordination.Mutation(fun () -> changeRole projectId documentId role) with
             | Ok view -> return Results.Ok(LibraryEndpoints.associationDto view)
             | Error DocumentRoles.RoleChangeError.AssociationNotFound ->
                 return LibraryEndpoints.problem 404 "not_found" "Association not found" })) |> ignore

@@ -1,6 +1,23 @@
 namespace LexScholar.Application
 
 open System
+open System.Threading
+
+/// Process-local coordination shared by import, library changes and summaries.
+type LibraryCoordination() =
+    let mutation = obj ()
+    let files = new SemaphoreSlim(1, 1)
+
+    member _.Mutation(work: unit -> 'a) = lock mutation work
+    member _.IsMutationHeld = Monitor.IsEntered mutation
+
+    /// Held across asynchronous file operations, never under the registry lock.
+    member _.FileLease(cancellationToken: CancellationToken) = task {
+        do! files.WaitAsync(cancellationToken)
+        let mutable released = 0
+        return { new IDisposable with
+                    member _.Dispose() =
+                        if Interlocked.Exchange(&released, 1) = 0 then files.Release() |> ignore } }
 
 /// The durable phases needed to resume a confirmed library deletion.
 [<RequireQualifiedAccess>]

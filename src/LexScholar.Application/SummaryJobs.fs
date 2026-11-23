@@ -36,8 +36,10 @@ type private Job =
       mutable State: JobState
       mutable Run: Task }
 
-type SummaryJobs(capabilities: SummaryJobCapabilities) =
+type SummaryJobs(capabilities: SummaryJobCapabilities, ?coordination: LibraryCoordination) =
     let gate = obj ()
+    let coordination = defaultArg coordination (LibraryCoordination())
+    let locked work = coordination.Mutation(fun () -> lock gate work)
     let jobs = System.Collections.Generic.Dictionary<SummaryKey, Job>()
     // Only in-flight HTTP preparations live here. Cancellation fences them before they can register a job.
     let preparing = System.Collections.Generic.Dictionary<SummaryKey, System.Collections.Generic.Dictionary<Guid, CancellationTokenSource>>()
@@ -75,12 +77,12 @@ type SummaryJobs(capabilities: SummaryJobCapabilities) =
     member _.Capabilities = capabilities
 
     /// Runs `work` under the registry lock.
-    member _.Locked(work: unit -> 'a) : 'a = lock gate work
+    member _.Locked(work: unit -> 'a) : 'a = locked work
 
     /// Register before the first async preparation. Dispose at request end; Cancel/Stop/removal invalidate all
     /// preparations for the pair. Registration checks this token under the same lock as cancellation.
     member _.PrepareReplacement(key: SummaryKey) : CancellationToken * IDisposable =
-        lock gate (fun () ->
+        locked (fun () ->
             let id = Guid.NewGuid()
             let source = new CancellationTokenSource()
             let requests =
@@ -94,7 +96,7 @@ type SummaryJobs(capabilities: SummaryJobCapabilities) =
             source.Token,
             { new IDisposable with
                 member _.Dispose() =
-                    lock gate (fun () ->
+                    locked (fun () ->
                         requests.Remove id |> ignore
                         if requests.Count = 0 then preparing.Remove key |> ignore
                         source.Dispose()) })
@@ -106,7 +108,7 @@ type SummaryJobs(capabilities: SummaryJobCapabilities) =
     /// starts and owns `source`. Explicit regeneration instead requires a stored summary and leaves it untouched until
     /// successful completion; a running job still wins. For any other outcome the caller still owns the source.
     member _.StartWith(key: SummaryKey, source: CancellationTokenSource, effective: CancellationToken, run: JobHandle -> Task<unit>, ?regenerate: bool, ?admission: CancellationToken) : StartOutcome =
-        lock gate (fun () ->
+        locked (fun () ->
             if (defaultArg admission CancellationToken.None).IsCancellationRequested then Cancelled
             elif not (capabilities.AssociationExists key) then NotAssociated
             else
@@ -136,7 +138,7 @@ type SummaryJobs(capabilities: SummaryJobCapabilities) =
     /// Creates the job for `key` already failed (a plan outcome decided before anything was sent). The same refusals as
     /// `StartWith`, including explicit regeneration's durable-row requirement.
     member _.StartFailed(key: SummaryKey, code: string, detail: string, ?regenerate: bool, ?admission: CancellationToken) : StartOutcome =
-        lock gate (fun () ->
+        locked (fun () ->
             if (defaultArg admission CancellationToken.None).IsCancellationRequested then Cancelled
             elif not (capabilities.AssociationExists key) then NotAssociated
             else
@@ -156,7 +158,7 @@ type SummaryJobs(capabilities: SummaryJobCapabilities) =
     /// effective token is already cancelled (a plan job after sign-out): then the job ends `Failed signed_out` and
     /// nothing new is kept (an earlier durable version is untouched). No sign-in lock is taken: a sign-out landing after this check is allowed to lose.
     member _.Complete(key: SummaryKey, id: Guid, summary: StoredSummary) : bool =
-        lock gate (fun () ->
+        locked (fun () ->
             match current key id with
             | Some job when (match job.State with JobState.Running _ -> true | _ -> false) ->
                 if job.Effective.IsCancellationRequested then
@@ -173,7 +175,7 @@ type SummaryJobs(capabilities: SummaryJobCapabilities) =
 
     /// Ends the job `id` of `key` as failed; false when the registry no longer holds that job.
     member _.Fail(key: SummaryKey, id: Guid, code: string, detail: string, omitted: int option) : bool =
-        lock gate (fun () ->
+        locked (fun () ->
             match current key id with
             | Some job when (match job.State with JobState.Running _ -> true | _ -> false) ->
                 end' job (JobState.Failed (code, detail, omitted))
@@ -182,7 +184,7 @@ type SummaryJobs(capabilities: SummaryJobCapabilities) =
 
     /// Records the progress of the running job `id` of `key`; false when the registry no longer holds that job running.
     member _.Progress(key: SummaryKey, id: Guid, progress: Progress) : bool =
-        lock gate (fun () ->
+        locked (fun () ->
             match current key id with
             | Some job when (match job.State with JobState.Running _ -> true | _ -> false) ->
                 job.State <- JobState.Running (Some progress)
@@ -192,7 +194,7 @@ type SummaryJobs(capabilities: SummaryJobCapabilities) =
     /// The job's state, else the stored summary (a finished job is dropped once saved). Legacy callers set
     /// includeReplacement=false so replacement progress/failure cannot mask the durable version.
     member _.State(key: SummaryKey, ?includeReplacement: bool) : JobState option =
-        lock gate (fun () ->
+        locked (fun () ->
             match jobs.TryGetValue key with
             | true, job when not job.Regeneration || defaultArg includeReplacement true -> Some job.State
             | _ -> capabilities.Find key |> Option.map JobState.Finished)
@@ -201,7 +203,7 @@ type SummaryJobs(capabilities: SummaryJobCapabilities) =
     /// under the lock so a job that completes is seen once, as stored (`Complete` saves inside the lock, then drops the job).
     /// Legacy list markers see replacement jobs as finished, matching their durable version.
     member _.Snapshot(listStored: unit -> SummaryKey list) : (SummaryKey * SummaryStatus) list =
-        lock gate (fun () ->
+        locked (fun () ->
             let live = [ for pair in jobs -> pair.Key, (if pair.Value.Regeneration then SummaryStatus.Finished else Summaries.statusOf pair.Value.State) ]
             let stored = [ for key in listStored () do if not (jobs.ContainsKey key) then key, SummaryStatus.Finished ]
             live @ stored)
@@ -210,14 +212,14 @@ type SummaryJobs(capabilities: SummaryJobCapabilities) =
     /// removed first, so a late `Complete`, `Fail` or `Progress` of it finds nothing, then its token is cancelled (no new call
     /// starts, one in flight is aborted) and the stored row is deleted (finishing may have won the race: nothing stopped is shown).
     member _.Stop(key: SummaryKey) : unit =
-        lock gate (fun () ->
+        locked (fun () ->
             cancelPreparing key
             dropJob key
             capabilities.Delete key)
 
     /// Cancels/dismisses only the transient operation. Never deletes a saved summary, even if completion won.
     member _.Cancel(key: SummaryKey) : unit =
-        lock gate (fun () -> cancelPreparing key; dropJob key)
+        locked (fun () -> cancelPreparing key; dropJob key)
 
     /// Removes the pair from the project (research §3 "Removal"): under the lock, drops and cancels its job, then runs
     /// `delete` (the association delete) and returns its result. The stored summary is NOT deleted here: its row goes with
@@ -225,14 +227,14 @@ type SummaryJobs(capabilities: SummaryJobCapabilities) =
     /// a summary of a document that stays in the project. `Start` checks the association inside the same lock, so it cannot
     /// start a job for a pair removed here.
     member _.RemoveAssociation(key: SummaryKey, delete: unit -> 'a) : 'a =
-        lock gate (fun () ->
+        locked (fun () ->
             cancelPreparing key
             dropJob key
             delete ())
 
     /// Completes when the key's current job has ended (tests wait on this instead of polling).
     member _.Settled(key: SummaryKey) : Task =
-        lock gate (fun () ->
+        locked (fun () ->
             match jobs.TryGetValue key with
             | true, job -> job.Run
             | _ -> Task.CompletedTask)
