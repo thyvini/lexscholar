@@ -15,7 +15,7 @@ let private migrations directory =
     use db = WorkspaceDb.create directory
     db.Database.GetAppliedMigrations() |> Seq.toList
 
-let private currentMigrations = [ "20261108000000_Initial"; "20261110000000_Projects"; "20261111000000_Documents"; "20261112000000_DocumentSummaries" ]
+let private currentMigrations = [ "20261108000000_Initial"; "20261110000000_Projects"; "20261111000000_Documents"; "20261112000000_DocumentSummaries"; "20261123000000_LibraryDeletions" ]
 
 /// Records every log entry the host writes, with its level.
 type private CapturingLoggerProvider() =
