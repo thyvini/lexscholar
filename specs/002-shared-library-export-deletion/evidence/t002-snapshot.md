@@ -2,6 +2,6 @@
 
 - RED: `scripts/check.sh T002` — 73 tests, 1 failed: independent reads observed a role changed between reads.
 - GREEN / pre-PR: `scripts/check.sh T002` — 74 passed, zero skipped.
-- Full CI: pending PR run.
+- Full CI: [run 45273651607](https://github.com/thyvini/lexscholar/actions/runs/45273651607) passed on `4891d17` with zero skips.
 
 The test uses an isolated temporary workspace and confirms SQLite reports `wal` journal mode. A second connection synchronously commits document, association, role and stored-summary changes while the read transaction is held; completion before the snapshot callback returns is the handshake proving writer progress. A stopwatch measures the commit interval in the test; no latency limit is asserted. The held snapshot retains the old state, including an unassociated document and the old summary; a new capture sees the committed state. An unknown stored-summary version is rejected. This proves database snapshot behavior, not filesystem coordination or power-loss behavior.
