@@ -83,7 +83,7 @@ docs/agents/codebase.md       # update for new pattern/modules during implementa
 
 ## Size and owner decision
 
-The owner explicitly chose **one complete F002 feature and release**, including both export and deletion, and accepted exceeding the normal 10–15-task budget where justified (estimated 15–18). The earlier delivery split proposal is withdrawn. Implement export slices before destructive deletion slices, but do not represent the feature or Principle II obligation as complete until both are delivered and verified. Stop for owner review of the generated tasks before implementation.
+The owner explicitly chose **one complete F002 feature and release**, including both export and deletion, and accepted exceeding the normal 10–15-task budget where justified (estimated 15–18). The earlier delivery split proposal is withdrawn. Deliver export to users before enabling destructive deletion, but develop export and test-only deletion internals concurrently after the T002/T003 risk gates where ownership permits. The owner requested maximum safe parallelism: T001 first; parallel T002/T003; then two worktree lanes (export T004–T008 and deletion T009–T016), with explicit cross-lane prerequisites at T013–T015 and one integrator for common files. T017 activates public deletion only after both lanes are verified; T018 is final acceptance. Do not represent F002 or Principle II as complete until both capabilities are delivered and verified. Stop for owner review of the generated tasks before implementation.
 
 ## Proposed accepted risks (owner review required)
 
