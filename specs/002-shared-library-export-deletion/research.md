@@ -38,6 +38,6 @@
 
 ## R5 — Reporting and privacy
 
-**Decision:** Local unsafe endpoints retain antiforgery/Origin/Host guards. The server creates operation UUID before execution and the client retains it to reconcile lost responses; list recent/incomplete operations after reload. Each selected item has an explicit outcome and safe reason. Completed records are local metadata and may be cleared explicitly after acknowledgement; unresolved items are retained for recovery. Never use filenames as filesystem paths, include credentials/settings in ZIP, log document content or promise removal of downloads/backups/external-service copies.
+**Decision:** Local unsafe endpoints retain antiforgery/Origin/Host guards. The client creates and retains the operation UUID before submitting confirmation to reconcile lost responses; list recent/incomplete operations after reload. Each selected item has an explicit outcome and safe reason. Completed records are local metadata and may be cleared explicitly after acknowledgement; unresolved items are retained for recovery. Never use filenames as filesystem paths, include credentials/settings in ZIP, log document content or promise removal of downloads/backups/external-service copies.
 
 **Alternatives:** A synchronous response only loses results on disconnect; persist full PDF or summary content in the journal would retain material targeted for deletion and is unnecessary.
