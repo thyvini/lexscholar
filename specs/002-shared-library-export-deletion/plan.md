@@ -34,7 +34,7 @@ Pre- and post-design assessment: **pass**, subject to owner approval and validat
 | II — privacy/control | Local-only archive and deletion; private staging, existing host security, no secrets in export or errors. Preview names impact and external-copy limits. Durable recovery covers incomplete removals. |
 | III — oversight | Readable summaries say generated/unverified and identify PDFs/pages for human checking. |
 | IV — testability | Contract, concurrency, crash-boundary and both-browser validation described in quickstart; use fixture PDFs only. |
-| V — simplicity | One ZIP, one snapshot, existing registry and one purpose-specific journal; no restore, queue framework or general operation abstraction. Size risk below requires owner decision. |
+| V — simplicity | One ZIP, one snapshot, existing registry and one purpose-specific journal; no restore, queue framework or general operation abstraction. The owner accepted the size exception below. |
 | VI — decisions | [research.md](research.md) records choices and alternatives; approved product behavior stays in spec. |
 
 ## Design
@@ -81,9 +81,9 @@ docs/agents/codebase.md       # update for new pattern/modules during implementa
 | FR-006–010, SC-003–004 | Preview/cancel, stale impact, shared documents, mixed outcomes; controlled interruption at every durable boundary and restart; storage failure; summary first-generation and replacement admissions/completions racing deletion; reimport races; unrelated data unchanged. |
 | FR-011–014, SC-005 | Portuguese browser journeys in Chromium/Firefox; CSRF/Origin/Host tests, no external calls or credential leakage, export/delete independence from project removal. |
 
-## Size and owner review
+## Size and owner decision
 
-The two independently valuable stories plus cross-store recovery, multi-tab preview, export consistency and job-admission races are **likely to require more than 15 reviewable vertical slices** (roughly 15–18 including setup and end-to-end validation). Do not generate tasks or implement until the owner decides the split. Proposed split: ship **F002A whole-library export** first (including consistent state and summary/citation export), then **F002B deliberate permanent deletion** (including multi-project impact, summary fencing and restart recovery). Both retain the approved F002 behavior; the remaining Principle II obligation must remain tracked and disclosed between deliveries. This is a proposed delivery split, not a change to the approved spec or a claim of partial compliance. If the owner instead accepts a smaller independently verified decomposition within budget, record that decision before tasks.
+The owner explicitly chose **one complete F002 feature and release**, including both export and deletion, and accepted exceeding the normal 10–15-task budget where justified (estimated 15–18). The earlier delivery split proposal is withdrawn. Implement export slices before destructive deletion slices, but do not represent the feature or Principle II obligation as complete until both are delivered and verified. Stop for owner review of the generated tasks before implementation.
 
 ## Proposed accepted risks (owner review required)
 
