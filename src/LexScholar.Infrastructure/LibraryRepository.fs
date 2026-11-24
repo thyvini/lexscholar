@@ -19,11 +19,15 @@ let private domain (row: LibraryDocumentRow) : LibraryDocument =
 let findBySha256 (dataDirectory: string) : FindDocumentsBySha256 =
     fun sha256 cancellationToken -> task {
         use db = WorkspaceDb.create dataDirectory
-        let candidates = query { for row in db.Set<LibraryDocumentRow>().AsNoTracking() do
-                                 where (row.Sha256 = sha256)
-                                 select row }
+        let candidates = db.Set<LibraryDocumentRow>().AsNoTracking().Where(fun row -> row.Sha256 = sha256)
         let! rows = candidates.ToListAsync(cancellationToken)
-        return rows |> Seq.map domain |> Seq.toList }
+        let ids = rows |> Seq.map _.Id |> Seq.toArray
+        let! unfinished =
+            db.Set<DeletionItemRow>().AsNoTracking()
+                .Where(fun item -> ids.Contains(item.DocumentId) && item.Status <> "deleted")
+                .Select(fun item -> item.DocumentId).ToListAsync(cancellationToken)
+        let pending = Set.ofSeq unfinished
+        return rows |> Seq.filter (fun row -> not (pending.Contains row.Id)) |> Seq.map domain |> Seq.toList }
 
 let insert (dataDirectory: string) : InsertDocument =
     fun document cancellationToken -> task {
