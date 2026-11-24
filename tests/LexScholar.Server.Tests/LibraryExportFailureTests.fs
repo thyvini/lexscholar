@@ -76,6 +76,69 @@ let ``restart removes abandoned private exports without touching originals or li
     Assert.True(File.Exists(path))
     Assert.Equal(id, (LibraryRepository.list restarted.Root |> List.exactlyOne).Id)
 
+[<Theory; InlineData(false); InlineData(true); Trait("Task", "T006")>]
+let ``inaccessible abandoned exports do not block restart or relax permissions and cleanup retries later`` enumeration =
+    use workspace = TemporaryWorkspace.Create()
+    let id, original =
+        use host = TestHarness.Start(workspace = workspace)
+        seed host.Root
+    let staging = DocumentStore.exportDirectory workspace.Root
+    Directory.CreateDirectory(staging) |> ignore
+    let abandoned = Path.Combine(staging, "abandoned.zip")
+    File.WriteAllText(abandoned, "private interrupted archive")
+    File.SetUnixFileMode(abandoned, UnixFileMode.UserRead ||| UnixFileMode.UserWrite)
+    let restricted =
+        if enumeration then UnixFileMode.UserExecute
+        else UnixFileMode.UserRead ||| UnixFileMode.UserExecute
+    File.SetUnixFileMode(staging, restricted)
+    try
+        // Prove this environment actually exercises the failing filesystem
+        // operation (rather than passing under a privileged test account).
+        Assert.ThrowsAny<UnauthorizedAccessException>(fun () ->
+            if enumeration then Directory.GetFileSystemEntries(staging) |> ignore
+            else File.Delete(abandoned)) |> ignore
+        Assert.True((StorageCleanup.run workspace.Root).ExportCleanupIncomplete)
+        for _ in 1..2 do
+            let error = Record.Exception(fun () ->
+                use restarted = TestHarness.Start(workspace = workspace)
+                Assert.Equal(id, (LibraryRepository.list restarted.Root |> List.exactlyOne).Id)
+                Assert.True(File.Exists(original)))
+            Assert.Null(error)
+            Assert.True(File.Exists(abandoned))
+            Assert.Equal(restricted, File.GetUnixFileMode(staging))
+            Assert.Equal(UnixFileMode.UserRead ||| UnixFileMode.UserWrite, File.GetUnixFileMode(abandoned))
+    finally
+        File.SetUnixFileMode(staging, UnixFileMode.UserRead ||| UnixFileMode.UserWrite ||| UnixFileMode.UserExecute)
+    use retried = TestHarness.Start(workspace = workspace)
+    Assert.Empty(Directory.GetFileSystemEntries(staging))
+    Assert.True(File.Exists(original))
+    Assert.Equal(id, (LibraryRepository.list retried.Root |> List.exactlyOne).Id)
+    Assert.False((StorageCleanup.run workspace.Root).ExportCleanupIncomplete)
+
+[<Fact; Trait("Task", "T006")>]
+let ``one undeletable export entry does not prevent other abandoned export cleanup`` () =
+    use workspace = TemporaryWorkspace.Create()
+    do
+        use host = TestHarness.Start(workspace = workspace)
+        seed host.Root |> ignore
+    let staging = DocumentStore.exportDirectory workspace.Root
+    let blocked = Path.Combine(staging, "blocked")
+    Directory.CreateDirectory(blocked) |> ignore
+    let retained = Path.Combine(blocked, "private.zip")
+    let removable = Path.Combine(staging, "removable.zip")
+    File.WriteAllText(retained, "keep private until cleanup is possible")
+    File.WriteAllText(removable, "can be cleaned now")
+    File.SetUnixFileMode(blocked, UnixFileMode.UserRead ||| UnixFileMode.UserExecute)
+    try
+        Assert.ThrowsAny<UnauthorizedAccessException>(fun () -> File.Delete(retained)) |> ignore
+        let report = StorageCleanup.run workspace.Root
+        Assert.True(report.ExportCleanupIncomplete)
+        Assert.True(File.Exists(retained))
+        Assert.False(File.Exists(removable))
+        Assert.Equal(UnixFileMode.UserRead ||| UnixFileMode.UserExecute, File.GetUnixFileMode(blocked))
+    finally
+        File.SetUnixFileMode(blocked, UnixFileMode.UserRead ||| UnixFileMode.UserWrite ||| UnixFileMode.UserExecute)
+
 type private ReadStream(length: int64, read: byte[] -> int -> int -> int) =
     inherit Stream()
     override _.CanRead = true

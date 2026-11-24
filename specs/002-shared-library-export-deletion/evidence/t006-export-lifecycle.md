@@ -19,3 +19,10 @@ Environment: Linux x64, pinned .NET 10 SDK, isolated `TemporaryWorkspace` per te
 - Restart through `Program.create` removes abandoned archive staging while retaining original/library metadata. This simulates an interrupted leftover, not hardware power loss or forced process termination.
 - A failed export leaves an actual registered running regeneration token uncancelled, its stored version unchanged, and its project association/library row unchanged.
 - Disk full and unreadability use deterministic injected I/O faults, not actual disk exhaustion or user-dependent chmod behavior. Concurrent export/deletion/import barriers are T007; browser download feedback is T008. Same-length external changes remain the documented availability limitation.
+
+## PR #148 review follow-up — inaccessible leftovers
+
+- GPT P1 verdict: **must fix**. Export enumeration/deletion errors escaped startup, making an otherwise valid workspace unavailable on every restart.
+- RED: `scripts/check.sh T006` — 74 tests, 2 assertion failures, zero skips. Real Linux directory permissions denied enumeration (0100) or unlink (0500); tests first proved the permission failures, then asserted startup must not throw. Log `/tmp/lexscholar-check.DFRzjE`.
+- GREEN: `scripts/check.sh T006 T022` — 87 tests, zero failures, zero skips; warnings-as-errors build. Covers both repeated restarts, unchanged permissions/private leftovers/library/originals, successful cleanup on a later permitted restart, per-entry continuation, and existing F001 cleanup tests.
+- Cleanup now catches only filesystem I/O/access failures in export leftovers, leaves unsuccessful entries untouched, reports `ExportCleanupIncomplete`, and logs one fixed warning with no paths, filenames or exception text. No permission changes, new public endpoint, or change to import/original cleanup policy. Tests run as ordinary Linux UID 1000; no permission-sensitive tests were skipped.

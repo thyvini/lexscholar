@@ -53,6 +53,8 @@ let private createHost (builder: WebApplicationBuilder) (serveClient: bool) port
                     // Under the lock, after migrations and before serving: discard
                     // interrupted imports. Built first only so a logger exists.
                     let cleanup = StorageCleanup.run configuration.DataDirectory
+                    if cleanup.ExportCleanupIncomplete then
+                        app.Logger.LogWarning("Could not remove all abandoned export files; private leftovers will be retried at next startup.")
                     for storageKey in cleanup.Quarantined do
                         app.Logger.LogWarning("Moved unreferenced original {StorageKey} to quarantine.", storageKey)
                     for storageKey in cleanup.Conflicting do
