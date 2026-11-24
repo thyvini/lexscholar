@@ -54,11 +54,11 @@ let ``public export retains header antiforgery and Host Origin checks`` () = tas
         use! response = host.Client.SendAsync(request)
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode)
         Assert.NotEqual<string>("application/zip", response.Content.Headers.ContentType.MediaType)
-    // Export activation must not activate deletion admission.
+    // Malformed deletion requests still cannot admit destructive work.
     use deletion = new HttpRequestMessage(HttpMethod.Post, "/api/library/deletions")
     deletion.Headers.Add("X-CSRF-TOKEN", token)
     use! response = host.Client.SendAsync(deletion)
-    Assert.Equal(HttpStatusCode.NotFound, response.StatusCode)
+    Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode)
 }
 
 [<Fact; Trait("Task", "T004")>]

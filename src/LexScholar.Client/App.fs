@@ -16,6 +16,64 @@ open LexScholar.Domain
 open LexScholar.Client.Projects
 
 module Api =
+    let private deletionJson = JsonSerializerOptions(JsonSerializerDefaults.Web)
+    let private deletionRequest (http: HttpClient) (method: HttpMethod) (path: string) body parse = async {
+        try
+            use request = new HttpRequestMessage(method, path)
+            if method = HttpMethod.Post then
+                use! tokenResponse = http.GetAsync("api/antiforgery") |> Async.AwaitTask
+                tokenResponse.EnsureSuccessStatusCode() |> ignore
+                let! tokenBody = tokenResponse.Content.ReadAsStringAsync() |> Async.AwaitTask
+                use token = JsonDocument.Parse(tokenBody)
+                request.Headers.Add("X-CSRF-TOKEN", token.RootElement.GetProperty("requestToken").GetString())
+                request.Content <- new StringContent(body, Encoding.UTF8, "application/json")
+            use! response = http.SendAsync(request) |> Async.AwaitTask
+            let! text = response.Content.ReadAsStringAsync() |> Async.AwaitTask
+            if response.IsSuccessStatusCode then return Ok (parse text)
+            else
+                use json = JsonDocument.Parse(text)
+                if int response.StatusCode = 409 && json.RootElement.GetProperty("code").GetString() = "impact_changed" then
+                    return Error (Library.Deletion.ImpactChanged
+                        (JsonSerializer.Deserialize<Library.Deletion.Preview>(json.RootElement.GetProperty("preview").GetRawText(), deletionJson)))
+                else return Error Library.Deletion.Unavailable
+        with _ -> return Error Library.Deletion.Unavailable }
+
+    let deletionPreview http ids =
+        deletionRequest http HttpMethod.Post "api/library/deletions/preview"
+            (JsonSerializer.Serialize({| documentIds = ids |}, deletionJson))
+            (fun text -> JsonSerializer.Deserialize<Library.Deletion.Preview>(text, deletionJson))
+
+    let private pendingDeletionKey = "lexscholar.pending-deletion"
+    let confirmDeletion http (javascript: IJSRuntime) (pending: Library.Deletion.Confirmation) = async {
+        try
+            let body = JsonSerializer.Serialize(pending, deletionJson)
+            // Persist BEFORE the request. If this fails, no destructive request
+            // is sent; after a lost response/reload the exact UUID is retained.
+            do! javascript.InvokeVoidAsync("sessionStorage.setItem", pendingDeletionKey, body).AsTask() |> Async.AwaitTask
+            let! result = deletionRequest http HttpMethod.Post "api/library/deletions" body ignore
+            match result with
+            | Ok () | Error (Library.Deletion.ImpactChanged _) ->
+                do! javascript.InvokeVoidAsync("sessionStorage.removeItem", pendingDeletionKey).AsTask() |> Async.AwaitTask
+            | _ -> ()
+            return result
+        with _ -> return Error Library.Deletion.Unavailable }
+
+    let deletions http (javascript: IJSRuntime) = async {
+        let! restored = async {
+            try
+                let! body = javascript.InvokeAsync<string>("sessionStorage.getItem", pendingDeletionKey).AsTask() |> Async.AwaitTask
+                return Ok (if String.IsNullOrWhiteSpace body then None else Some (JsonSerializer.Deserialize<Library.Deletion.Confirmation>(body, deletionJson)))
+            with _ -> return Error Library.Deletion.Unavailable }
+        match restored with
+        | Error failure -> return Error failure, None
+        | Ok restored ->
+            let! result = deletionRequest http HttpMethod.Get "api/library/deletions" ""
+                              (fun text -> JsonSerializer.Deserialize<Library.Deletion.Outcome list>(text, deletionJson))
+            return result, restored }
+
+    let mutateDeletion http id action =
+        deletionRequest http HttpMethod.Post $"api/library/deletions/{id:D}/{action}" "{}" ignore
+
     let exportLibrary (javascript: IJSRuntime) = async {
         try
             let! result = javascript.InvokeAsync<string>("lexScholarLibraryExport.download").AsTask() |> Async.AwaitTask
@@ -325,6 +383,24 @@ module private Ui =
         let fetchProject projectId request =
             perform (fun () -> Api.projectDocuments http projectId) (fun result -> Library.ProjectLoaded (projectId, request, result))
         match effect with
+        | Library.DeleteEffect effect ->
+            let performDeletion work toMessage =
+                perform work (toMessage >> Library.DeletionMsg)
+            match effect with
+            | Library.Deletion.FetchPreview ids ->
+                performDeletion (fun () -> Api.deletionPreview http ids) Library.Deletion.Previewed
+            | Library.Deletion.Submit pending ->
+                performDeletion (fun () -> Api.confirmDeletion http javascript pending)
+                    (fun result -> Library.Deletion.Confirmed (pending.OperationId, result))
+            | Library.Deletion.Fetch (request, delayed) ->
+                performDeletion (fun () -> async {
+                    if delayed then do! Async.Sleep 1000
+                    return! Api.deletions http javascript })
+                    (fun (result, restored) -> Library.Deletion.Loaded (request, result, restored))
+            | Library.Deletion.RetryOperation id ->
+                performDeletion (fun () -> Api.mutateDeletion http id "retry") Library.Deletion.Mutated
+            | Library.Deletion.AcknowledgeOperation id ->
+                performDeletion (fun () -> Api.mutateDeletion http id "acknowledge") Library.Deletion.Mutated
         | Library.SendExport -> perform (fun () -> Api.exportLibrary javascript) Library.Exported
         | Library.FetchLibrary request -> fetchLibrary request
         | Library.FetchProject (projectId, request) -> fetchProject projectId request
@@ -343,9 +419,20 @@ module private Ui =
 
     let private updateLibrary http javascript message state =
         let library, effect = Library.update message state.Library
+        let changedResults =
+            match message with
+            | Library.DeletionMsg (Library.Deletion.Loaded (_, Ok _, _)) ->
+                library.Deletion.Outcomes <> state.Library.Deletion.Outcomes
+            | _ -> false
+        let library, refresh =
+            if changedResults then Library.update Library.Refresh library
+            else library, None
         let showLibrary = match message with Library.OpenDocument _ when library.Opened.IsSome -> false | _ -> state.ShowLibrary
         let pendingProjectOpen = match message with Library.OpenDocument _ when library.Opened.IsSome -> false | _ -> state.PendingProjectOpen
-        { state with Library = library; ShowLibrary = showLibrary; PendingProjectOpen = pendingProjectOpen }, effect |> Option.map (libraryCommand http javascript) |> Option.defaultValue Cmd.none
+        { state with Library = library; ShowLibrary = showLibrary; PendingProjectOpen = pendingProjectOpen },
+        Cmd.batch [
+            effect |> Option.map (libraryCommand http javascript) |> Option.defaultValue Cmd.none
+            refresh |> Option.map (libraryCommand http javascript) |> Option.defaultValue Cmd.none ]
 
     /// How often the open document's running summary is asked for (research §4).
     let private summaryPollMilliseconds = 2000
@@ -424,7 +511,8 @@ module private Ui =
         | FinishOnboarding -> state, Cmd.none
         | ShowLibrary ->
             let library, _ = Library.update Library.HideOptions state.Library
-            { state with ShowLibrary = true; Library = library; PendingProjectOpen = false }, Cmd.none
+            updateLibrary http javascript (Library.DeletionMsg Library.Deletion.Load)
+                { state with ShowLibrary = true; Library = library; PendingProjectOpen = false }
         | ChatGptMsg message ->
             let chatGpt, effect = ChatGpt.update message state.ChatGpt
             { state with ChatGpt = chatGpt }, chatGptCommand http navigation effect
@@ -494,7 +582,10 @@ module private Ui =
             match msg with
             // A removal from the project deletes the document's stored summary on the server; a POST whose answer failed may still have
             // started the job.
-            | SummaryMsg (Summary.Accepted _ | Summary.Responded _ | Summary.Dismissed _) | LibraryMsg (Library.Removed _) -> SummaryStatus.updateStatuses SummaryStatus.Refresh state.Statuses
+            | SummaryMsg (Summary.Accepted _ | Summary.Responded _ | Summary.Dismissed _)
+            | LibraryMsg (Library.Removed _)
+            | LibraryMsg (Library.DeletionMsg (Library.Deletion.Loaded (_, Ok _, _))) ->
+                SummaryStatus.updateStatuses SummaryStatus.Refresh state.Statuses
             | _ -> SummaryStatus.followView before (viewOf state) state.Statuses
         let state = { state with Statuses = statuses }
         let command = Cmd.batch [ command; statusCommand http statusEffect ]
@@ -518,6 +609,105 @@ module private Ui =
                 let word = match status with SummaryStatus.Status.Running -> Texts.summaryRunning | SummaryStatus.Status.Finished -> Texts.summaryReady | SummaryStatus.Status.Failed -> Texts.summaryFailed
                 small { attr.``class`` "summary-marker"; attr.title word; text word }
             | None -> empty ()
+
+    let private deletionView (model: Library.Deletion.Model) dispatch =
+        let send message = dispatch (Library.DeletionMsg message)
+        concat {
+            button {
+                attr.``type`` "button"
+                attr.disabled (not model.Restored || model.Busy || model.Pending.IsSome || model.Selected.IsEmpty || model.Preview.IsSome)
+                on.click (fun _ -> send Library.Deletion.Preview)
+                text Texts.deleteSelection
+            }
+            cond model.Error <| function
+                | true -> p { "role" => "alert"; text (FailureTexts.deletion ()) }
+                | false -> empty ()
+            cond model.Pending <| function
+                | Some _ -> concat {
+                    p { "role" => "status"; text Texts.deletionUnknown }
+                    button {
+                        attr.``type`` "button"; attr.disabled model.Busy
+                        on.click (fun _ -> send Library.Deletion.RepeatConfirmation)
+                        text Texts.deletionRepeat
+                    }
+                    }
+                | None -> empty ()
+            cond model.Preview <| function
+                | Some preview when model.Pending.IsNone ->
+                    section {
+                        "role" => "region"; "aria-label" => Texts.deletionImpact
+                        h3 { text Texts.deletionImpact }
+                        p { text Texts.deletionWarning }
+                        p { text Texts.deletionCopies }
+                        cond model.Changed <| function
+                            | true -> p { "role" => "alert"; text Texts.deletionChanged }
+                            | false -> empty ()
+                        ul {
+                            forEach preview.Documents <| fun document ->
+                                li {
+                                    strong { text document.Name }
+                                    cond document.Projects.IsEmpty <| function
+                                        | true -> p { text Texts.deletionNoProjects }
+                                        | false -> empty ()
+                                    ul {
+                                        forEach document.Projects <| fun project ->
+                                            li {
+                                                text project.Name; text " — "
+                                                text (if project.Role = "FocusedSource" then Texts.focusedSources else Texts.referenceSources)
+                                                text " — "
+                                                text (if project.HasSummary then Texts.deletionSummary else Texts.deletionNoSummary)
+                                            }
+                                    }
+                                }
+                        }
+                        button {
+                            attr.``type`` "button"; attr.disabled model.Busy
+                            on.click (fun _ -> send Library.Deletion.Cancel); text Texts.deletionCancel
+                        }
+                        button {
+                            attr.``type`` "button"; attr.disabled model.Busy
+                            on.click (fun _ -> send (Library.Deletion.Confirm (Guid.NewGuid()))); text Texts.deletionConfirm
+                        }
+                    }
+                | _ -> empty ()
+            h3 { text Texts.deletionResults }
+            button {
+                attr.``type`` "button"
+                on.click (fun _ -> send Library.Deletion.Load); text Texts.deletionRefresh
+            }
+            forEach model.Outcomes <| fun outcome ->
+                section {
+                    "aria-label" => (string outcome.OperationId)
+                    p {
+                        "role" => "status"
+                        text (match outcome.Status with
+                              | "complete" -> Texts.deletionComplete
+                              | "running" -> Texts.deletionRunning
+                              | _ -> Texts.deletionPartial)
+                    }
+                    ul {
+                        forEach outcome.Items <| fun item ->
+                            li {
+                                span { text item.Name; text " — "; text (if item.Outcome = "deleted" then Texts.deletionDeleted else Texts.deletionIncomplete) }
+                                cond (item.Outcome <> "deleted") <| function
+                                    | true -> small { text (if item.Reason = "storage_error" then Texts.deletionStorageError else Texts.deletionPending) }
+                                    | false -> empty ()
+                            }
+                    }
+                    cond (match outcome.Status with "partial" -> Some false | "complete" -> Some true | _ -> None) <| function
+                        | Some false ->
+                            button {
+                                attr.``type`` "button"; attr.disabled model.Busy
+                                on.click (fun _ -> send (Library.Deletion.Retry outcome.OperationId)); text Texts.deletionRetry
+                            }
+                        | Some true ->
+                            button {
+                                attr.``type`` "button"; attr.disabled model.Busy
+                                on.click (fun _ -> send (Library.Deletion.Acknowledge outcome.OperationId)); text Texts.deletionAcknowledge
+                            }
+                        | _ -> empty ()
+                }
+        }
 
     let libraryView (library: Library.Model) dispatch =
         let busy = library.Busy.IsSome
@@ -564,6 +754,15 @@ module private Ui =
                     attr.``class`` "documents"
                     forEach library.Documents <| fun document ->
                         li {
+                            label {
+                                input {
+                                    attr.``type`` "checkbox"
+                                    attr.``checked`` (library.Deletion.Selected.Contains document.Id)
+                                    attr.disabled (not library.Deletion.Restored || library.Deletion.Busy || library.Deletion.Preview.IsSome || library.Deletion.Pending.IsSome)
+                                    on.change (fun _ -> dispatch (Library.DeletionMsg (Library.Deletion.Select document.Id)))
+                                }
+                                text $"{Texts.deletionSelection}: {document.FileName}"
+                            }
                             span { text document.FileName; text Texts.space; small { text (Texts.parenthesizedPageCount document.PageCount) } }
                             // Bolero's cond needs a union or bool, so the checks are nested.
                             cond library.Project <| function
@@ -584,6 +783,7 @@ module private Ui =
                                             }
                         }
                 }
+                deletionView library.Deletion dispatch
             }
         }
 

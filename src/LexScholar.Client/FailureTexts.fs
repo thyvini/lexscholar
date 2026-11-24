@@ -1,5 +1,7 @@
 module LexScholar.Client.FailureTexts
 
+let deletion () = Texts.deletionFailure
+
 let export = function
     | Library.EmptyExport -> Texts.emptyExport
     | Library.ExportDocumentUnavailable name -> Texts.exportUnavailable name

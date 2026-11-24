@@ -43,17 +43,17 @@ let private item root operation document =
     use db = WorkspaceDb.create root
     db.Set<DeletionItemRow>().Find(operation, document)
 
-[<Fact; Trait("Task", "T014")>]
-let ``production restart does not recover intents or quarantine retained deletion originals`` () =
+[<Fact; Trait("Task", "T017")>]
+let ``production restart recovers intents before orphan cleanup`` () =
     use workspace = TemporaryWorkspace.Create()
     let coordination, operation, document, key = seed workspace.Root true
     Assert.Equal(Ok key, LibraryDeletionRepository.removeMetadata coordination workspace.Root operation document)
     let unrelated = Guid.NewGuid().ToString("N")
     File.WriteAllText(Path.Combine(DocumentStore.originalsDirectory workspace.Root, unrelated), "orphan")
     use host = TestHarness.Start(workspace = workspace)
-    Assert.True(File.Exists(Path.Combine(DocumentStore.originalsDirectory workspace.Root, key)), "Unfinished deletion must remain in originals, not quarantine.")
+    Assert.False(File.Exists(Path.Combine(DocumentStore.originalsDirectory workspace.Root, key)))
     Assert.False(File.Exists(Path.Combine(DocumentStore.quarantineDirectory workspace.Root, key)))
-    Assert.Equal("metadata_removed", (item workspace.Root operation document).Status)
+    Assert.Equal("deleted", (item workspace.Root operation document).Status)
     Assert.True(File.Exists(Path.Combine(DocumentStore.quarantineDirectory workspace.Root, unrelated)))
 
 let private recovery () =
@@ -199,16 +199,16 @@ let ``startup rereads uncertain commits and later restart retries failed transac
     use host = TestHarness.Start(workspace = workspace, deletionRecovery = recovery())
     Assert.Equal("deleted", (item workspace.Root operation document).Status)
 
-[<Fact; Trait("Task", "T014")>]
-let ``production environment ignores even explicitly injected recovery`` () =
+[<Fact; Trait("Task", "T017")>]
+let ``production recovery cannot be disabled through a test seam`` () =
     use workspace = TemporaryWorkspace.Create()
     let _, operation, document, key = seed workspace.Root true
     let mutable called = false
     let seam = LibraryDeletionRecovery.StartupForTests(fun _ -> called <- true)
     use host = TestHarness.Start(workspace = workspace, environment = "Production", deletionRecovery = seam)
     Assert.False called
-    Assert.Equal("pending", (item workspace.Root operation document).Status)
-    Assert.True(File.Exists(Path.Combine(DocumentStore.originalsDirectory workspace.Root, key)))
+    Assert.Equal("deleted", (item workspace.Root operation document).Status)
+    Assert.False(File.Exists(Path.Combine(DocumentStore.originalsDirectory workspace.Root, key)))
 
 let private renameJournal root name =
     use connection = new SqliteConnection(WorkspaceDb.connectionString root)

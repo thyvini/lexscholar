@@ -68,7 +68,7 @@ let ``retained outcomes survive restart and acknowledge refuses incomplete work`
             Assert.Equal("pending", item.GetProperty("reason").GetString())
         use refused = post h $"/api/library/deletions/{operation}/acknowledge" "{}"
         Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode)
-    use h = TestHarness.Start(workspace = workspace, configure = fun app ->
+    use h = TestHarness.Start(workspace = workspace, deletionRecovery = LibraryDeletionRecovery.StartupForTests(ignore), configure = fun app ->
         LibraryDeletionEndpoints.mapForTests app app.Configuration["LexScholar:DataDirectory"])
     use retained = lookup h operation
     use list = h.Client.GetAsync("/api/library/deletions").Result
@@ -80,19 +80,20 @@ let ``retained outcomes survive restart and acknowledge refuses incomplete work`
     Assert.Equal(HttpStatusCode.Accepted, repeated.StatusCode)
     Assert.All(ids, fun id -> Assert.True(File.Exists(Path.Combine(h.Root, "originals", $"{id:N}"))))
 
-[<Fact; Trait("Task", "T016")>]
-let ``production confirmation stays disabled`` () =
+[<Fact; Trait("Task", "T017")>]
+let ``production confirmation admits a durable operation`` () =
     use h = TestHarness.Start()
     let ids = seed h.Root
     let operation = Guid.NewGuid()
     use admission = post h "/api/library/deletions" (confirm h operation ids)
-    Assert.Equal(HttpStatusCode.NotFound, admission.StatusCode)
+    Assert.Equal(HttpStatusCode.Accepted, admission.StatusCode)
+    let runner = (h.App :> IApplicationBuilder).Properties["LexScholar.LibraryDeletions"] :?> LibraryDeletion.Operations
+    (runner.Settled operation).GetAwaiter().GetResult()
     use db = WorkspaceDb.create h.Root
-    Assert.Empty(db.Set<DeletionOperationRow>())
-    Assert.Equal(2, db.Set<LibraryDocumentRow>() |> Seq.length)
+    Assert.Single(db.Set<DeletionOperationRow>()) |> ignore
 
-[<Fact; Trait("Task", "T016")>]
-let ``production retry cannot process an already retained intent`` () =
+[<Fact; Trait("Task", "T017")>]
+let ``production retry accepts an already retained intent`` () =
     use h = TestHarness.Start()
     let ids = seed h.Root
     let operation = Guid.NewGuid()
@@ -100,10 +101,28 @@ let ``production retry cannot process an already retained intent`` () =
     let preview = LibraryDeletion.preview (LibraryDeletionRepository.capture h.Root) ids |> Result.toOption |> Option.get
     Assert.Equal(Ok operation, LibraryDeletionRepository.admit coordination h.Root operation ids preview.Revision)
     use retry = post h $"/api/library/deletions/{operation}/retry" "{}"
-    Assert.Equal(HttpStatusCode.NotFound, retry.StatusCode)
+    Assert.Equal(HttpStatusCode.Accepted, retry.StatusCode)
+    let runner = (h.App :> IApplicationBuilder).Properties["LexScholar.LibraryDeletions"] :?> LibraryDeletion.Operations
+    (runner.Settled operation).GetAwaiter().GetResult()
+
+[<Fact; Trait("Task", "T017")>]
+let ``production deletion POST routes retain Host Origin and CSRF protections`` () =
+    use h = TestHarness.Start()
+    use tokenResponse = h.Client.GetAsync("/api/antiforgery").Result
+    use token = JsonDocument.Parse(tokenResponse.Content.ReadAsStringAsync().Result)
+    let operation = Guid.NewGuid()
+    for path in ["/api/library/deletions"; "/api/library/deletions/preview"
+                 $"/api/library/deletions/{operation}/retry"; $"/api/library/deletions/{operation}/acknowledge"] do
+        for invalid in ["csrf"; "origin"; "host"] do
+            use request = new HttpRequestMessage(HttpMethod.Post, path)
+            if invalid <> "csrf" then request.Headers.Add("X-CSRF-TOKEN", token.RootElement.GetProperty("requestToken").GetString())
+            request.Headers.Add("Origin", if invalid = "origin" then "https://example.invalid" else h.Client.BaseAddress.GetLeftPart(UriPartial.Authority))
+            if invalid = "host" then request.Headers.Host <- "example.invalid"
+            request.Content <- new StringContent("{}", Encoding.UTF8, "application/json")
+            use response = h.Client.Send(request)
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode)
     use db = WorkspaceDb.create h.Root
-    Assert.Equal(2, db.Set<LibraryDocumentRow>() |> Seq.length)
-    Assert.All(db.Set<DeletionItemRow>(), fun item -> Assert.Equal("pending", item.Status))
+    Assert.Empty(db.Set<DeletionOperationRow>())
 
 [<Fact; Trait("Task", "T016")>]
 let ``detached processing reports running then partial and restart retry completes before acknowledgement`` () = task {
@@ -162,7 +181,7 @@ let ``detached processing reports running then partial and restart retry complet
         Assert.DoesNotContain("sensitive", partial.RootElement.GetRawText())
         Assert.DoesNotContain("storageKey", partial.RootElement.GetRawText())
         Assert.True(File.Exists(Path.Combine(h.Root, "originals", $"{failedDocument:N}"))) }
-    use h = TestHarness.Start(workspace = workspace, configure = fun app ->
+    use h = TestHarness.Start(workspace = workspace, deletionRecovery = LibraryDeletionRecovery.StartupForTests(ignore), configure = fun app ->
         let root = app.Configuration["LexScholar:DataDirectory"]
         let coordination = app.Services.GetRequiredService<LibraryCoordination>()
         let jobs = (app :> IApplicationBuilder).Properties["LexScholar.SummaryJobs"] :?> SummaryJobs

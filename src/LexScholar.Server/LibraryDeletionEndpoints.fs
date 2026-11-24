@@ -1,4 +1,4 @@
-/// Deletion preview and admission; never composed into the production host yet.
+/// Complete local deletion lifecycle, with explicit overrides for isolated tests.
 module LexScholar.Server.LibraryDeletionEndpoints
 
 open System
@@ -50,7 +50,7 @@ let private confirmation (request: HttpRequest) = task {
             | _ -> return None
     with :? JsonException -> return None }
 
-let private map (app: WebApplication) (directory: string) (autoStart: bool) (runItem: Guid -> Guid -> Task<Result<unit, LibraryDeletion.MetadataError>>) =
+let private map order (app: WebApplication) (directory: string) (autoStart: bool) (runItem: Guid -> Guid -> Task<Result<unit, LibraryDeletion.MetadataError>>) =
     let coordination = app.Services.GetRequiredService<LibraryCoordination>()
     let operations =
         LibraryDeletion.Operations(coordination, (fun () -> LibraryDeletionRepository.results directory),
@@ -58,19 +58,19 @@ let private map (app: WebApplication) (directory: string) (autoStart: bool) (run
                                    LibraryDeletionRepository.recordFailure directory, runItem)
     let missing () = LibraryEndpoints.problem 404 "operation_not_found" "Operação não encontrada."
     app.MapGet("/api/library/deletions", Func<IResult>(fun () ->
-        Results.Ok(operations.List()))) |> ignore
+        Results.Ok(operations.List()))).WithOrder(order) |> ignore
     app.MapGet("/api/library/deletions/{operation:guid}", Func<Guid, IResult>(fun operation ->
         match operations.Find operation with
         | Some result -> Results.Ok result
-        | None -> missing ())) |> ignore
+        | None -> missing ())).WithOrder(order) |> ignore
     app.MapPost("/api/library/deletions/{operation:guid}/retry", Func<Guid, IResult>(fun operation ->
         if operations.Start operation then Results.Accepted(value = {| operationId = operation |})
-        else missing ())) |> ignore
+        else missing ())).WithOrder(order) |> ignore
     app.MapPost("/api/library/deletions/{operation:guid}/acknowledge", Func<Guid, IResult>(fun operation ->
         match operations.Acknowledge operation with
         | Ok () -> Results.NoContent()
         | Error "operation_not_found" -> missing ()
-        | Error code -> LibraryEndpoints.problem 409 code "A exclusão ainda não foi concluída.")) |> ignore
+        | Error code -> LibraryEndpoints.problem 409 code "A exclusão ainda não foi concluída.")).WithOrder(order) |> ignore
     let admit confirmed : IResult =
         match confirmed with
         | None -> invalid ()
@@ -92,7 +92,7 @@ let private map (app: WebApplication) (directory: string) (autoStart: bool) (run
                                 extensions = dict [ "code", box "impact_changed"; "preview", box preview ])
     app.MapPost("/api/library/deletions", Func<HttpRequest, Task<IResult>>(fun request -> task {
         let! confirmed = confirmation request
-        return admit confirmed })) |> ignore
+        return admit confirmed })).WithOrder(order) |> ignore
     app.MapPost("/api/library/deletions/preview", Func<HttpRequest, Task<IResult>>(fun request -> task {
         let! ids = selection request
         match ids with
@@ -102,16 +102,16 @@ let private map (app: WebApplication) (directory: string) (autoStart: bool) (run
             | Error LibraryDeletion.PreviewError.InvalidSelection -> return invalid ()
             | Error LibraryDeletion.PreviewError.DocumentNotFound ->
                 return LibraryEndpoints.problem 404 "document_not_found" "Documento não encontrado."
-            | Ok preview -> return Results.Ok(preview) })) |> ignore
+            | Ok preview -> return Results.Ok(preview) })).WithOrder(order) |> ignore
     operations
 
 /// Explicit isolated-host seam. Tests may wrap the real item processor in
 /// handshakes/fault injection; neither request data nor configuration enables it.
 let mapWithProcessingForTests app directory runItem =
-    map app directory true runItem
+    map -1 app directory true runItem
 
 /// Preserve admission-only tests; retry still uses the real fenced lifecycle.
-/// Nothing in this module is mapped by production until T017.
+/// This override deliberately leaves admission pending for deterministic tests.
 let mapForTests (app: WebApplication) directory =
     let coordination = app.Services.GetRequiredService<LibraryCoordination>()
     let jobs = (app :> IApplicationBuilder).Properties["LexScholar.SummaryJobs"] :?> SummaryJobs
@@ -121,4 +121,17 @@ let mapForTests (app: WebApplication) directory =
                      (LibraryDeletionRepository.removeMetadata coordination directory)
                      (LibraryDeletionRepository.finishOriginal coordination directory)
                       operation document app.Lifetime.ApplicationStopping }
-    map app directory false runItem |> ignore
+    map -1 app directory false runItem |> ignore
+
+/// Complete production lifecycle; admission, retry and lookup share one runner.
+let mapProduction (app: WebApplication) directory =
+    let coordination = app.Services.GetRequiredService<LibraryCoordination>()
+    let jobs = (app :> IApplicationBuilder).Properties["LexScholar.SummaryJobs"] :?> SummaryJobs
+    let runItem operation document =
+        LibraryDeletion.processItem coordination jobs
+            (LibraryDeletionRepository.hasItem directory)
+            (LibraryDeletionRepository.removeMetadata coordination directory)
+            (LibraryDeletionRepository.finishOriginal coordination directory)
+            operation document app.Lifetime.ApplicationStopping
+    let operations = map 0 app directory true runItem
+    (app :> IApplicationBuilder).Properties["LexScholar.LibraryDeletions"] <- operations

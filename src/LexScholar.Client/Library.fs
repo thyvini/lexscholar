@@ -9,6 +9,92 @@ open LexScholar.Domain
 type Document = { Id: Guid; FileName: string; PageCount: int; ContentUrl: string }
 type Association = { Document: Document; Role: DocumentRole }
 
+/// Purpose-specific deletion state. A lost admission answer retains the exact
+/// confirmed request; neither a failed lookup nor a 404 authorizes a new UUID.
+module Deletion =
+    type Project = { Id: Guid; Name: string; Role: string; HasSummary: bool }
+    type Document = { Id: Guid; Name: string; Projects: Project list }
+    type Preview = { Documents: Document list; Revision: string }
+    type Confirmation = { OperationId: Guid; DocumentIds: Guid list; Revision: string }
+    type Item = { DocumentId: Guid; Name: string; Outcome: string; Reason: string }
+    type Outcome = { OperationId: Guid; Status: string; Items: Item list }
+    type Failure = Unavailable | ImpactChanged of Preview
+    type Model =
+        { Selected: Set<Guid>; Preview: Preview option; Pending: Confirmation option
+          Busy: bool; Uncertain: bool; Changed: bool; Error: bool
+          Outcomes: Outcome list; Request: int; Restored: bool }
+    type Message =
+        | Select of Guid
+        | Preview
+        | Previewed of Result<Preview, Failure>
+        | Cancel
+        | Confirm of Guid
+        | Confirmed of Guid * Result<unit, Failure>
+        | RepeatConfirmation
+        | Load
+        | Loaded of int * Result<Outcome list, Failure> * Confirmation option
+        | Retry of Guid
+        | Acknowledge of Guid
+        | Mutated of Result<unit, Failure>
+    type Effect =
+        | FetchPreview of Guid list
+        | Submit of Confirmation
+        | Fetch of int * delayed: bool
+        | RetryOperation of Guid
+        | AcknowledgeOperation of Guid
+    let initial =
+        { Selected = Set.empty; Preview = None; Pending = None; Busy = false
+          Uncertain = false; Changed = false; Error = false; Outcomes = []; Request = 0; Restored = false }
+    let private fetch delayed model =
+        let request = model.Request + 1
+        { model with Request = request }, Some (Fetch (request, delayed))
+    let update message model =
+        match message with
+        | Select id when model.Restored && not model.Busy && model.Preview.IsNone && model.Pending.IsNone ->
+            { model with Selected = if model.Selected.Contains id then model.Selected.Remove id else model.Selected.Add id }, None
+        | Preview when model.Restored && not model.Busy && model.Pending.IsNone && not model.Selected.IsEmpty ->
+            { model with Busy = true; Error = false; Changed = false }, Some (FetchPreview (Set.toList model.Selected))
+        | Previewed result when model.Busy && model.Pending.IsNone ->
+            match result with
+            | Ok preview -> { model with Busy = false; Preview = Some preview }, None
+            | Error _ -> { model with Busy = false; Error = true }, None
+        | Cancel when not model.Busy && model.Pending.IsNone ->
+            { model with Preview = None; Changed = false; Error = false }, None
+        | Confirm id when model.Restored && not model.Busy && model.Preview.IsSome && model.Pending.IsNone ->
+            let preview = model.Preview.Value
+            let pending = { OperationId = id; DocumentIds = preview.Documents |> List.map _.Id; Revision = preview.Revision }
+            { model with Busy = true; Pending = Some pending; Error = false }, Some (Submit pending)
+        | RepeatConfirmation when not model.Busy && model.Pending.IsSome ->
+            { model with Busy = true; Error = false }, Some (Submit model.Pending.Value)
+        | Confirmed (id, result) when model.Pending |> Option.exists (fun p -> p.OperationId = id) ->
+            match result with
+            | Ok () ->
+                fetch false { model with Busy = false; Pending = None; Preview = None; Uncertain = false; Selected = Set.empty }
+            | Error (ImpactChanged preview) ->
+                { model with Busy = false; Pending = None; Preview = Some preview; Uncertain = false; Changed = true }, None
+            | Error _ -> { model with Busy = false; Uncertain = true; Error = true }, None
+        | Load -> fetch false model
+        | Loaded (request, result, restored) when request = model.Request ->
+            let model =
+                if model.Restored then model
+                else
+                    { model with Restored = Result.isOk result
+                                 Pending = model.Pending |> Option.orElse restored
+                                 Uncertain = model.Uncertain || restored.IsSome }
+            match result with
+            | Error _ -> { model with Error = true }, None
+            | Ok outcomes ->
+                let model = { model with Outcomes = outcomes; Error = model.Error && model.Pending.IsSome }
+                if outcomes |> List.exists (fun o -> o.Status = "running") then fetch true model
+                else model, None
+        | Retry id when not model.Busy && (model.Outcomes |> List.exists (fun o -> o.OperationId = id && o.Status = "partial")) ->
+            { model with Busy = true; Error = false }, Some (RetryOperation id)
+        | Acknowledge id when not model.Busy && (model.Outcomes |> List.exists (fun o -> o.OperationId = id && o.Status = "complete")) ->
+            { model with Busy = true; Error = false }, Some (AcknowledgeOperation id)
+        | Mutated result ->
+            fetch false { model with Busy = false; Error = Result.isError result }
+        | _ -> model, None
+
 type ExportFailure =
     | EmptyExport
     | ExportDocumentUnavailable of string
@@ -46,6 +132,7 @@ type Operation =
 type Model =
     { Documents: Document list
       ExportState: ExportState
+      Deletion: Deletion.Model
       HasLoadedLibrary: bool
       LoadingLibrary: bool
       /// The active project whose associations are shown.
@@ -68,6 +155,7 @@ type Model =
       ProjectRequest: int }
 
 type Message =
+    | DeletionMsg of Deletion.Message
     | Export
     | Exported of Result<unit, ExportFailure>
     | LoadLibrary
@@ -91,6 +179,7 @@ type Message =
     | Removed of projectId: Guid * documentId: Guid * Result<unit, Failure>
 
 type Effect =
+    | DeleteEffect of Deletion.Effect
     | SendExport
     | FetchLibrary of request: int
     | FetchProject of projectId: Guid * request: int
@@ -104,6 +193,7 @@ type Effect =
 let initial =
     { Documents = []
       ExportState = ExportIdle
+      Deletion = Deletion.initial
       HasLoadedLibrary = false
       LoadingLibrary = false
       Project = None
@@ -179,6 +269,19 @@ let private mutated (projectId: Guid) (result: Result<unit, Failure>) model =
 
 let update (message: Message) (model: Model) : Model * Effect option =
     match message with
+    | DeletionMsg message ->
+        let deletion, effect = Deletion.update message model.Deletion
+        // Drop only documents whose durable result says deleted; incomplete
+        // items may already lack metadata, but must never be called deleted.
+        let deleted =
+            deletion.Outcomes |> List.collect _.Items
+            |> List.filter (fun i -> i.Outcome = "deleted") |> List.map _.DocumentId |> Set.ofList
+        { model with Deletion = deletion
+                     Documents = model.Documents |> List.filter (fun d -> not (deleted.Contains d.Id))
+                     Associations = model.Associations |> List.filter (fun a -> not (deleted.Contains a.Document.Id))
+                     Opened = model.Opened |> Option.filter (deleted.Contains >> not)
+                     Options = model.Options |> Option.filter (deleted.Contains >> not) },
+        effect |> Option.map DeleteEffect
     | Export when model.ExportState <> Exporting ->
         { model with ExportState = Exporting }, Some SendExport
     | Exported result when model.ExportState = Exporting ->
