@@ -1,4 +1,4 @@
-/// Startup cleanup of import leftovers; the caller holds the data-directory lock
+/// Startup cleanup of import/export leftovers; the caller holds the data-directory lock
 /// and runs it after migrations and before serving requests.
 module LexScholar.Infrastructure.StorageCleanup
 
@@ -16,7 +16,7 @@ let private sameContent (left: string) (right: string) =
     use rightStream = File.OpenRead(right)
     (ImportDocument.contentEquals leftStream rightStream CancellationToken.None).GetAwaiter().GetResult()
 
-/// Deletes all staging contents (no import is in progress at startup) and moves
+/// Deletes all import/export staging contents (no operation is active at startup) and moves
 /// stored originals that no document row references to quarantine/, without
 /// overwriting: when quarantine already holds different bytes under the same
 /// key, both files are left in place and the key is reported as Conflicting.
@@ -29,6 +29,11 @@ let run (dataDirectory: string) : CleanupReport =
     let leftovers = Directory.GetFileSystemEntries(staging)
     for entry in leftovers do
         if Directory.Exists(entry) then Directory.Delete(entry, true) else File.Delete(entry)
+    // No transfer can be active while startup holds the workspace lock.
+    let exports = DocumentStore.exportDirectory dataDirectory
+    if Directory.Exists(exports) then
+        for entry in Directory.GetFileSystemEntries(exports) do
+            if Directory.Exists(entry) then Directory.Delete(entry, true) else File.Delete(entry)
     let referenced = LibraryRepository.storageKeys dataDirectory
     let moves =
         [ for path in Directory.GetFiles(originals) |> Array.sort do
