@@ -58,6 +58,8 @@ let private createHost (builder: WebApplicationBuilder) (serveClient: bool) port
                         let recovery = app.Services.GetService<LibraryDeletionRecovery.StartupForTests>()
                         if not (isNull recovery) then recovery.Invoke(configuration.DataDirectory)
                     let cleanup = StorageCleanup.run configuration.DataDirectory
+                    if cleanup.DeletionJournalReadFailed then
+                        app.Logger.LogWarning("Could not read the deletion journal; original-file cleanup was skipped and will be retried at next startup.")
                     if cleanup.ExportCleanupIncomplete then
                         app.Logger.LogWarning("Could not remove all abandoned export files; private leftovers will be retried at next startup.")
                     for storageKey in cleanup.Quarantined do

@@ -3,6 +3,14 @@ module LexScholar.Server.Tests.LibraryDeletionRecoveryTests
 open System
 open System.IO
 open System.Diagnostics
+open System.Net
+open System.Net.Http
+open Microsoft.AspNetCore.Hosting.Server
+open Microsoft.AspNetCore.Hosting.Server.Features
+open Microsoft.Data.Sqlite
+open Microsoft.Extensions.DependencyInjection
+open Microsoft.Extensions.Logging
+open LexScholar.Server
 open LexScholar.Application
 open LexScholar.Application.LibraryDeletion
 open LexScholar.Infrastructure
@@ -201,3 +209,97 @@ let ``production environment ignores even explicitly injected recovery`` () =
     Assert.False called
     Assert.Equal("pending", (item workspace.Root operation document).Status)
     Assert.True(File.Exists(Path.Combine(DocumentStore.originalsDirectory workspace.Root, key)))
+
+let private renameJournal root name =
+    use connection = new SqliteConnection(WorkspaceDb.connectionString root)
+    connection.Open()
+    use command = connection.CreateCommand()
+    command.CommandText <- name
+    command.ExecuteNonQuery() |> ignore
+
+let private hideJournal root =
+    // Migrations remain applied; only the cleanup journal read fails. Rename
+    // rather than delete so retained intents can be restored for the next run.
+    renameJournal root "ALTER TABLE DeletionItems RENAME TO RetainedDeletionItems"
+
+let private restoreJournal root =
+    renameJournal root "ALTER TABLE RetainedDeletionItems RENAME TO DeletionItems"
+
+type private StartupLogs() =
+    let entries = System.Collections.Concurrent.ConcurrentQueue<LogLevel * string * exn>()
+    member _.Entries = entries |> Seq.toList
+    interface ILoggerProvider with
+        member _.CreateLogger(_category) =
+            { new ILogger with
+                member _.BeginScope(_state) = null
+                member _.IsEnabled(_level) = true
+                member _.Log(level, _eventId, state, error, formatter) =
+                    entries.Enqueue(level, formatter.Invoke(state, error), error) }
+        member _.Dispose() = ()
+
+[<Fact; Trait("Task", "T014")>]
+let ``unreadable journal skips all orphan cleanup without losing originals or intent`` () =
+    use workspace = TemporaryWorkspace.Create()
+    let coordination, operation, document, key = seed workspace.Root true
+    Assert.Equal(Ok key, LibraryDeletionRepository.removeMetadata coordination workspace.Root operation document)
+    let orphan = Guid.NewGuid().ToString("N")
+    let original name = Path.Combine(DocumentStore.originalsDirectory workspace.Root, name)
+    File.WriteAllText(original orphan, "unrelated orphan")
+    hideJournal workspace.Root
+    let mutable failed = false
+    let error = Record.Exception(fun () ->
+        let report = StorageCleanup.run workspace.Root
+        failed <- report.DeletionJournalReadFailed
+        Assert.Empty report.Quarantined
+        Assert.Empty report.Conflicting)
+    Assert.Null error
+    Assert.True failed
+    for name in [key; orphan] do
+        Assert.True(File.Exists(original name))
+        Assert.False(File.Exists(Path.Combine(DocumentStore.quarantineDirectory workspace.Root, name)))
+    restoreJournal workspace.Root
+    Assert.Equal("metadata_removed", (item workspace.Root operation document).Status)
+    let report = StorageCleanup.run workspace.Root
+    Assert.False report.DeletionJournalReadFailed
+    Assert.Equal<string list>([orphan], report.Quarantined)
+    Assert.True(File.Exists(original key))
+
+[<Fact; Trait("Task", "T014")>]
+let ``production serves workspace with sanitized warning when deletion journal cannot be read`` () = task {
+    use workspace = TemporaryWorkspace.Create()
+    let _, operation, document, key = seed workspace.Root true
+    hideJournal workspace.Root
+    let logs = new StartupLogs()
+    let builder = HostSetup.builder workspace.Root []
+    builder.Environment.EnvironmentName <- "Production"
+    builder.Logging.AddProvider(logs) |> ignore
+    let mutable host = None
+    let error = Record.Exception(fun () ->
+        match Program.create builder false with
+        | Ok app -> host <- Some app
+        | Error rejected -> failwithf "Unexpected rejection: %A" rejected)
+    Assert.Null error
+    use app = host |> Option.get
+    do! app.StartAsync()
+    try
+        let server = app.Services.GetRequiredService<IServer>()
+        let address = server.Features.Get<IServerAddressesFeature>().Addresses |> Seq.exactlyOne
+        use client = new HttpClient(BaseAddress = Uri(address))
+        use! response = client.GetAsync("/api/projects")
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode)
+        let warning =
+            logs.Entries |> List.filter (fun (level, text, _) ->
+                level = LogLevel.Warning && text.Contains("deletion journal"))
+            |> Assert.Single
+        let _, text, exception' = warning
+        Assert.Equal("Could not read the deletion journal; original-file cleanup was skipped and will be retried at next startup.", text)
+        Assert.Null exception'
+        Assert.DoesNotContain(workspace.Root, text)
+        Assert.DoesNotContain(key, text)
+        Assert.DoesNotContain("Sqlite", text)
+        Assert.True(File.Exists(Path.Combine(DocumentStore.originalsDirectory workspace.Root, key)))
+    finally
+        app.StopAsync().GetAwaiter().GetResult()
+    restoreJournal workspace.Root
+    Assert.Equal("pending", (item workspace.Root operation document).Status)
+}
