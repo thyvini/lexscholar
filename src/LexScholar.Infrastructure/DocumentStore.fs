@@ -12,6 +12,7 @@ let private privateDirectory = UnixFileMode.UserRead ||| UnixFileMode.UserWrite 
 let stagingDirectory dataDirectory = Path.Combine(dataDirectory, "staging")
 let originalsDirectory dataDirectory = Path.Combine(dataDirectory, "originals")
 let quarantineDirectory dataDirectory = Path.Combine(dataDirectory, "quarantine")
+let exportDirectory dataDirectory = Path.Combine(dataDirectory, "exports")
 
 /// Creates the storage directories, private to the current user, if missing.
 let ensureDirectories dataDirectory =

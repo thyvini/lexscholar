@@ -48,7 +48,7 @@ let ``internal ZIP preserves shared and unassociated originals with exact v1 met
     let bytes = File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "Fixtures", "valid.pdf"))
     Directory.CreateDirectory(DocumentStore.originalsDirectory host.Root) |> ignore
     for id in [ shared; alone ] do
-        File.WriteAllBytes(Path.Combine(DocumentStore.originalsDirectory host.Root, $"{id:N}.pdf"), bytes)
+        File.WriteAllBytes(Path.Combine(DocumentStore.originalsDirectory host.Root, $"{id:N}"), bytes)
     do
         use db = WorkspaceDb.create host.Root
         db.Add(WorkspaceRow(Id = workspace, CreatedUtc = imported)) |> ignore
@@ -56,7 +56,7 @@ let ``internal ZIP preserves shared and unassociated originals with exact v1 met
         for id, name in [first, "First"; second, "Second"; unused, "Unused"] do
             db.Add(ResearchProjectRow(Id = id, WorkspaceId = workspace, Name = name, NormalizedName = name.ToUpperInvariant(), CreatedUtc = imported)) |> ignore
         for id, name in [shared, "../../outside\\unsafe.pdf"; alone, "/absolute.pdf"] do
-            db.Add(LibraryDocumentRow(Id = id, Sha256 = $"hash-{id}", StorageKey = $"{id:N}.pdf", OriginalFileName = name, ByteLength = int64 bytes.Length, PageCount = 1, ImportedUtc = imported)) |> ignore
+            db.Add(LibraryDocumentRow(Id = id, Sha256 = $"hash-{id}", StorageKey = $"{id:N}", OriginalFileName = name, ByteLength = int64 bytes.Length, PageCount = 1, ImportedUtc = imported)) |> ignore
         db.SaveChanges() |> ignore
         for project, role in [first, "FocusedSource"; second, "ReferenceSource"] do
             db.Add(ProjectDocumentRow(ProjectId = project, DocumentId = shared, Role = role, AddedUtc = imported)) |> ignore

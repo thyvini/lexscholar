@@ -86,24 +86,33 @@ let private manifest (snapshot: LibraryExportSnapshot.Snapshot) =
                 |> Option.map (summaryManifest { Project = row.ProjectId; Document = row.DocumentId } >> box)
                 |> Option.defaultValue null |}) |}
 
-let build directory : Build = fun cancellationToken ->
-    let mutable output: FileStream = null
-    let mutable failure = ExportFailure.ExportFailed
+/// Narrow filesystem seams for deterministic read/write failure tests.
+type ExportFiles =
+    { OpenOriginal: string -> Stream
+      CreateArchive: string -> Stream }
+
+exception private DocumentReadFailure of Guid * string
+
+let private createArchive path : Stream =
+    let options = FileStreamOptions()
+    options.Mode <- FileMode.CreateNew
+    options.Access <- FileAccess.ReadWrite
+    options.Share <- FileShare.None
+    options.Options <- FileOptions.DeleteOnClose
+    options.UnixCreateMode <- Nullable(UnixFileMode.UserRead ||| UnixFileMode.UserWrite)
+    new FileStream(path, options)
+
+let buildWith (files: ExportFiles) directory : Build = fun cancellationToken ->
+    let mutable output: Stream = null
     try
         cancellationToken.ThrowIfCancellationRequested()
         let snapshot = LibraryExportSnapshot.capture directory
         if snapshot.Documents.IsEmpty then
             Error ExportFailure.EmptyLibrary
         else
-            let staging = Path.Combine(directory, "exports")
+            let staging = DocumentStore.exportDirectory directory
             Directory.CreateDirectory(staging, UnixFileMode.UserRead ||| UnixFileMode.UserWrite ||| UnixFileMode.UserExecute) |> ignore
-            let options = FileStreamOptions()
-            options.Mode <- FileMode.CreateNew
-            options.Access <- FileAccess.ReadWrite
-            options.Share <- FileShare.None
-            options.Options <- FileOptions.DeleteOnClose
-            options.UnixCreateMode <- Nullable(UnixFileMode.UserRead ||| UnixFileMode.UserWrite)
-            output <- new FileStream(Path.Combine(staging, $"{Guid.NewGuid():N}.zip"), options)
+            output <- files.CreateArchive(Path.Combine(staging, $"{Guid.NewGuid():N}.zip"))
             do
                 use archive = new ZipArchive(output, ZipArchiveMode.Create, true, Encoding.UTF8)
                 writeText archive "README.txt"
@@ -114,20 +123,46 @@ let build directory : Build = fun cancellationToken ->
                     writeText archive (textPath key) (summaryText snapshot key summary)
                 for document in snapshot.Documents do
                     cancellationToken.ThrowIfCancellationRequested()
-                    failure <- ExportFailure.DocumentUnavailable(document.Id, document.OriginalFileName)
-                    use source = new FileStream(Path.Combine(DocumentStore.originalsDirectory directory, document.StorageKey), FileMode.Open, FileAccess.Read, FileShare.Read)
-                    if source.Length <> document.ByteLength then
-                        raise (InvalidDataException("Original length differs."))
+                    let unavailable () = raise (DocumentReadFailure(document.Id, document.OriginalFileName))
+                    let read action =
+                        try action () with
+                        | :? OperationCanceledException -> reraise()
+                        | _ -> unavailable ()
+                    use source = read (fun () -> files.OpenOriginal document.StorageKey)
+                    if read (fun () -> source.Length) <> document.ByteLength then unavailable ()
                     use target = archive.CreateEntry(pdfPath document.Id).Open()
-                    source.CopyTo(target)
-                    failure <- ExportFailure.ExportFailed
+                    // Never buffer a PDF or the archive in memory. Check every
+                    // read, including EOF, so a file changed during copying
+                    // cannot silently produce a short or overlong original.
+                    let buffer = Array.zeroCreate<byte> 81_920
+                    let mutable total = 0L
+                    let mutable finished = false
+                    while not finished do
+                        cancellationToken.ThrowIfCancellationRequested()
+                        let count = read (fun () -> source.Read(buffer, 0, buffer.Length))
+                        total <- total + int64 count
+                        if total > document.ByteLength then unavailable ()
+                        if count = 0 then finished <- true
+                        else target.Write(buffer, 0, count)
+                    if total <> document.ByteLength then unavailable ()
             output.Flush()
             output.Position <- 0L
-            Ok (output :> Stream)
+            Ok output
     with
     | :? OperationCanceledException ->
         if not (isNull output) then output.Dispose()
         reraise()
+    | DocumentReadFailure (id, name) ->
+        if not (isNull output) then output.Dispose()
+        Error (ExportFailure.DocumentUnavailable(id, name))
     | _ ->
         if not (isNull output) then output.Dispose()
-        Error failure
+        Error ExportFailure.ExportFailed
+
+let build directory =
+    buildWith
+        { OpenOriginal = fun key ->
+              DocumentStore.openOriginal directory key CancellationToken.None
+              |> fun pending -> pending.GetAwaiter().GetResult()
+          CreateArchive = createArchive }
+        directory

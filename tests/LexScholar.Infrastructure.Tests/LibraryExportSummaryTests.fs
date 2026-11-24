@@ -23,8 +23,8 @@ let private setup directory =
     addProject c first workspace "Projeto Um"
     addProject c second workspace "Projeto Dois"
     Directory.CreateDirectory(DocumentStore.originalsDirectory directory) |> ignore
-    File.WriteAllBytes(Path.Combine(DocumentStore.originalsDirectory directory, "original"), [| 1uy; 2uy |])
-    execute c $"INSERT INTO LibraryDocuments VALUES ('{document:D}', 'sha', 'original', 'fonte ação.pdf', 2, 8, '2026-11-12T12:34:56.0000000Z')"
+    File.WriteAllBytes(Path.Combine(DocumentStore.originalsDirectory directory, $"{document:N}"), [| 1uy; 2uy |])
+    execute c $"INSERT INTO LibraryDocuments VALUES ('{document:D}', 'sha', '{document:N}', 'fonte ação.pdf', 2, 8, '2026-11-12T12:34:56.0000000Z')"
     for project in [first; second] do
         execute c $"INSERT INTO ProjectDocuments VALUES ('{project:D}', '{document:D}', 'FocusedSource', '2026-11-12T12:34:56.0000000Z')"
     let summary text =
