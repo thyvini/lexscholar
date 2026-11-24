@@ -13,6 +13,7 @@
 - Pending-write RED: `scripts/check.sh T010` — pending-item role mutation unexpectedly succeeded; 1 assertion failure, 73 selected tests, zero skips. Log: `/tmp/lexscholar-check.ZtFgLq`.
 - Guard sensitivity: temporarily bypassed `unlessPending`, uncommitted; `scripts/check.sh T010` — ordinary summary DELETE unexpectedly succeeded; 1 assertion failure, 76 selected tests, zero skips. Log: `/tmp/lexscholar-check.ruJsSX`. Bypass restored.
 - Final GREEN: `scripts/check.sh T010 T009 T003` — build with `-warnaserror` passed; **242 tests passed, 0 failed, 0 skipped**. No full suite run locally.
+- T005 integration GREEN: after merging latest `origin/release/0.5.0`, `scripts/check.sh T010 T009 T005` — warning-free build; **219 tests passed, 0 failed, 0 skipped**. An initial invocation hit the tool's 120-second timeout during server tests; the longer-timeout rerun passed.
 
 ## Verified
 

@@ -116,13 +116,12 @@ let ``internal ZIP preserves shared and unassociated originals with exact v1 met
         Assert.Equal(JsonValueKind.Null, item.GetProperty("summary").ValueKind)
     Assert.Equal(2, (LibraryRepository.list host.Root).Length)
     Assert.Empty(Directory.GetFiles(Path.Combine(host.Root, "exports")))
-    // Until T005 supplies the structured/readable summary implementation,
-    // stored material must fail closed instead of being silently omitted.
+    // T005 now includes stored summaries; public success remains gated at T008.
     SummaryRepository.save host.Root { Project = first; Document = shared }
         { DocumentId = shared; Points = []; PagesCovered = [1]; UnreadablePages = []
           OmittedPoints = 0; GeneratedAt = imported; ServiceHost = "local"; Model = "fixture" }
     use! withSummary = export host
-    Assert.Equal(HttpStatusCode.InternalServerError, withSummary.StatusCode)
-    Assert.Equal("application/problem+json", withSummary.Content.Headers.ContentType.MediaType)
+    Assert.Equal(HttpStatusCode.OK, withSummary.StatusCode)
+    Assert.Equal("application/zip", withSummary.Content.Headers.ContentType.MediaType)
     Assert.Empty(Directory.GetFiles(Path.Combine(host.Root, "exports")))
 }
