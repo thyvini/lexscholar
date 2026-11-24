@@ -1,7 +1,6 @@
-# T018 — Automated security/privacy; owner validation pending
+# T018 — Security, privacy and owner validation
 
-**Status: automated portion complete; owner manual validation PENDING. T018 remains
-unchecked. No owner acceptance is asserted.**
+**Status: automated checks complete; owner manual validation accepted in Firefox and Chromium.**
 
 Base: `origin/release/0.5.0` at `1848a3b` (T017 merged). Developer B, GPT-6.1 Sol.
 Linux 7.3.5-2-cachyos x86_64, .NET SDK 10.0.114; installed Playwright Chromium
@@ -78,7 +77,7 @@ including the 2 new Chromium/Firefox cases; 7 new server cases). Build passed wi
 - Full suite not run locally. CI URL: **pending PR/full-suite run** (no push or PR
   authorized for this implementation handoff).
 
-## Owner manual validation — PENDING
+## Owner manual validation — accepted
 
 Follow [quickstart](../quickstart.md) separately in Firefox and Chromium with
 fresh isolated fixture workspaces. The permission-based partial-result check
@@ -86,15 +85,26 @@ requires a non-root user. Automated headless journeys do not replace these check
 
 | Required record | Firefox | Chromium |
 |---|---|---|
-| Owner/date, browser version, OS/runtime, commit | Pending | Pending |
-| ZIP originals, summaries/context, page citations checked manually | Pending | Pending |
-| Preview/cancel, changed impact, association-removal distinction | Pending | Pending |
-| Partial result, unchanged-permission restart, retry/recovery | Pending | Pending |
-| Privacy/network, interrupted download, external ZIP remains | Pending | Pending |
-| Observed limitations/failures and acceptance decision | Pending | Pending |
+| Owner/date, browser version, OS/runtime, commit | Owner, 2026-11-24; Firefox (installed 160.0.1) | Owner, 2026-11-24; Chromium (installed 158.0.8127.36) |
+| ZIP originals, summaries/context, page citations checked manually | Passed | Passed |
+| Preview/cancel, changed impact, association-removal distinction | Passed | Passed |
+| Partial result, unchanged-permission restart, retry/recovery | Passed | Passed |
+| Privacy/network, interrupted download, external ZIP remains | Passed | Passed |
+| Observed limitations/failures and acceptance decision | Accepted; fixture timestamp workaround below | Accepted; fixture timestamp workaround below |
 
-Owner manual acceptance: **not performed / not recorded**.
-Full-suite CI link: **pending**.
+Environment: Linux 7.3.5-2-cachyos x86_64, .NET SDK 10.0.114,
+commit `8152bea`; synthetic `valid.pdf` and `distinct.pdf`, isolated workspaces.
+Browser versions are installed versions observed on this machine, not separately
+confirmed by the owner.
+
+The original seed script used shell heredocs unsupported by fish and wrote Python
+timestamps that the application's strict UTC timestamp reader rejected. Export
+consequently returned `export_failed`; the fixture timestamps were repaired and
+the owner completed validation. The quickstart now uses fish-compatible commands
+and the required seven-digit UTC timestamp format.
+
+Full-suite CI on merged PR #158:
+[build-and-test passed](https://github.com/thyvini/lexscholar/actions/runs/45390055026/job/138431223201).
 
 ## PR #158 review follow-up
 
@@ -115,5 +125,4 @@ Both GPT P2 findings: **must fix**.
   **GREEN, 21 passed, 0 failed, 0 skipped**; solution build with `-warnaserror`
   and `git diff --check` passed.
 
-Owner manual validation remains **pending**; T018 is still unchecked. These fixes
-do not assert owner acceptance or a new full-suite CI result.
+This review follow-up preceded the owner validation recorded above.
