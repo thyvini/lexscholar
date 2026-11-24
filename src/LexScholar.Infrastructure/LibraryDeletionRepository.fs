@@ -91,7 +91,7 @@ let removeMetadataWith (checkpoint: MetadataStep -> unit) (coordination: Library
             use transaction = db.Database.BeginTransaction()
             let item = db.Set<DeletionItemRow>().Find(operation, document)
             if isNull (box item) then Error MetadataError.ItemNotFound
-            elif item.Phase = "metadata_removed" then
+            elif item.Phase = "metadata_removed" || item.Status = "deleted" then
                 if metadataAbsent db document then Ok item.StorageKey
                 else invalidOp "Inconsistent deletion metadata."
             else
@@ -133,3 +133,55 @@ let removeMetadataWith (checkpoint: MetadataStep -> unit) (coordination: Library
 
 let removeMetadata coordination directory operation document =
     removeMetadataWith ignore coordination directory operation document
+
+[<RequireQualifiedAccess>]
+type CompletionStep = BeforeCommit | AfterCommit
+
+/// Internal only. Caller must own the host file lease for the whole lifecycle.
+/// No file work occurs under the summary registry lock. The completion marker is
+/// committed only after metadata absence, unlink (or proven ENOENT), and fsync.
+let finishOriginalWith (checkpoint: CompletionStep -> unit) (remove: string -> unit) (coordination: LibraryCoordination) directory operation document : Result<unit, MetadataError> =
+    coordination.Mutation(fun () ->
+        let attempt () =
+            use db = WorkspaceDb.create directory
+            use transaction = db.Database.BeginTransaction()
+            let item = db.Set<DeletionItemRow>().Find(operation, document)
+            if isNull (box item) then Error MetadataError.ItemNotFound
+            // The durable completion already proves the required unlink/sync.
+            // A retry has no authority to touch a subsequently reused name.
+            elif item.Status = "deleted" then Ok ()
+            elif item.Phase <> "metadata_removed" || not (metadataAbsent db document) then
+                Error MetadataError.StorageError
+            elif db.Set<LibraryDocumentRow>().Any(fun row -> row.StorageKey = item.StorageKey) then
+                Error MetadataError.StorageError
+            else
+                remove item.StorageKey
+                item.Status <- "deleted"
+                item.Reason <- null
+                db.SaveChanges() |> ignore
+                checkpoint CompletionStep.BeforeCommit
+                transaction.Commit()
+                checkpoint CompletionStep.AfterCommit
+                Ok ()
+        try attempt ()
+        with _ ->
+            try
+                use db = WorkspaceDb.create directory
+                use transaction = db.Database.BeginTransaction()
+                let item = db.Set<DeletionItemRow>().Find(operation, document)
+                let result =
+                    if isNull (box item) then Error MetadataError.ItemNotFound
+                    // This fresh transaction also protects against regressing a
+                    // completion committed by another processor after our error.
+                    elif item.Status = "deleted" then Ok ()
+                    else
+                        item.Status <- "incomplete"
+                        item.Reason <- "storage_error"
+                        db.SaveChanges() |> ignore
+                        Error MetadataError.StorageError
+                transaction.Commit()
+                result
+            with _ -> Error MetadataError.StorageError)
+
+let finishOriginal coordination directory operation document =
+    finishOriginalWith ignore (DocumentStore.removeOriginal directory) coordination directory operation document
