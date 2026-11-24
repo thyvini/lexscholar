@@ -29,6 +29,7 @@
     <Compile Include="LibraryExportContractTests.fs" />
     <Compile Include="LibraryExportFailureTests.fs" />
     <Compile Include="LibraryExportRaceTests.fs" />
+    <Compile Include="LibraryDeletionImportRaceTests.fs" />
     <Compile Include="ReaderContractTests.fs" />
     <Compile Include="SummaryContractTests.fs" />
     <Compile Include="BackgroundSummaryContractTests.fs" />

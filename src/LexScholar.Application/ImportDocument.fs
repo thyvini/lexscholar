@@ -107,7 +107,16 @@ let createCoordinated (coordination: LibraryCoordination) (dependencies: ImportD
         | [] -> return None
         | candidate :: rest ->
             let! same = matches key candidate
-            if same then return Some candidate else return! firstMatch key rest }
+            // File comparison may await while deletion intent commits. Re-read
+            // eligible identities under the mutation boundary before reuse;
+            // repository lookup excludes unfinished deletion items. Only the
+            // database read is inside this monitor, never PDF I/O.
+            let reusable =
+                same && coordination.Mutation(fun () ->
+                    dependencies.FindBySha256 candidate.Sha256 CancellationToken.None
+                    |> fun work -> work.GetAwaiter().GetResult()
+                    |> List.exists (fun current -> current.Id = candidate.Id))
+            if reusable then return Some candidate else return! firstMatch key rest }
 
     // Runs inside the commit section without a cancellation token, so a commit
     // is never abandoned between promotion and the row insert.
