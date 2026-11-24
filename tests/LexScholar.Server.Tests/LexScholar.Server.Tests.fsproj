@@ -24,6 +24,7 @@
     <Compile Include="LibraryContractTests.fs" />
     <Compile Include="LibraryDeletionPreviewTests.fs" />
     <Compile Include="LibraryDeletionAdmissionTests.fs" />
+    <Compile Include="LibraryDeletionOutcomeTests.fs" />
     <Compile Include="LibraryDeletionRecoveryTests.fs" />
     <Compile Include="LibraryCoordinationContractTests.fs" />
     <Compile Include="LibraryExportContractTests.fs" />

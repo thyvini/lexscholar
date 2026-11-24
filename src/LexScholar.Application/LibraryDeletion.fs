@@ -4,6 +4,8 @@ module LexScholar.Application.LibraryDeletion
 open System
 open System.Security.Cryptography
 open System.Text.Json
+open System.Threading.Tasks
+open System.Collections.Generic
 
 type ProjectSource =
     { Id: Guid
@@ -140,3 +142,67 @@ let processItem (coordination: LibraryCoordination) (jobs: SummaryJobs) hasInten
     match removeMetadata jobs hasIntent remove operation document with
     | Error error -> return Error error
     | Ok _ -> return finish operation document }
+
+type ItemResult =
+    { DocumentId: Guid
+      Name: string
+      Outcome: string
+      Reason: string }
+
+type OperationResult =
+    { OperationId: Guid
+      Status: string
+      Items: ItemResult list }
+
+/// One processor per host, never tied to a request's cancellation. The journal is
+/// authoritative; only currently executing work is process-local. All reads,
+/// starts and acknowledgement share the workspace boundary.
+type Operations(coordination: LibraryCoordination,
+                read: unit -> OperationResult list,
+                acknowledge: Guid -> Result<unit, string>,
+                runItem: Guid -> Guid -> Task<unit>) =
+    let active = Dictionary<Guid, TaskCompletionSource>()
+    let snapshot () =
+        read () |> List.map (fun result ->
+            let status =
+                if not result.Items.IsEmpty && result.Items |> List.forall (fun item -> item.Outcome = "deleted") then "complete"
+                elif active.ContainsKey result.OperationId then "running"
+                else "partial"
+            { result with Status = status })
+
+    member _.List() = coordination.Mutation snapshot
+    member _.Find operation =
+        coordination.Mutation(fun () -> snapshot () |> List.tryFind (fun result -> result.OperationId = operation))
+
+    member _.Start operation =
+        coordination.Mutation(fun () ->
+            match snapshot () |> List.tryFind (fun result -> result.OperationId = operation) with
+            | None -> false
+            | Some result ->
+                if result.Status <> "complete" && not (active.ContainsKey operation) then
+                    let completion = TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)
+                    active.Add(operation, completion)
+                    Task.Run(Func<Task>(fun () -> task {
+                        try
+                            for item in result.Items do
+                                if item.Outcome <> "deleted" then
+                                    // Failure of one item must not skip the others. Durable
+                                    // adapters record sanitized failures where storage allows.
+                                    try do! runItem operation item.DocumentId
+                                    with _ -> ()
+                        finally
+                            coordination.Mutation(fun () ->
+                                active.Remove operation |> ignore
+                                completion.SetResult()) })) |> ignore
+                true)
+
+    member _.Settled operation =
+        coordination.Mutation(fun () ->
+            match active.TryGetValue operation with
+            | true, completion -> completion.Task
+            | _ -> Task.CompletedTask)
+
+    member _.Acknowledge operation =
+        coordination.Mutation(fun () ->
+            if active.ContainsKey operation then Error "deletion_in_progress"
+            else acknowledge operation)
