@@ -152,11 +152,11 @@ let ``export and deletion keep secrets local and do not log document contents or
     let! outcome = host.Client.GetStringAsync($"/api/library/deletions/{operation}")
     use result = JsonDocument.Parse(outcome)
     Assert.Equal("complete", result.RootElement.GetProperty("status").GetString())
+    use acknowledged = post host $"/api/library/deletions/{operation}/acknowledge" "{}"
+    Assert.Equal(HttpStatusCode.NoContent, acknowledged.StatusCode)
     for secret in secrets @ ["PRIVATE-SUMMARY-T018"; "PRIVATE-PROJECT-T018"] do
         Assert.DoesNotContain(secret, outcome)
         Assert.DoesNotContain(secret, lines.All)
-    use acknowledged = post host $"/api/library/deletions/{operation}/acknowledge" "{}"
-    Assert.Equal(HttpStatusCode.NoContent, acknowledged.StatusCode)
     Assert.False(File.Exists(Path.Combine(DocumentStore.originalsDirectory host.Root, $"{document:N}")))
     Assert.Empty(outgoing.Calls)
 }

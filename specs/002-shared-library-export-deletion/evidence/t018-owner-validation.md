@@ -95,3 +95,25 @@ requires a non-root user. Automated headless journeys do not replace these check
 
 Owner manual acceptance: **not performed / not recorded**.
 Full-suite CI link: **pending**.
+
+## PR #158 review follow-up
+
+Both GPT P2 findings: **must fix**.
+
+- Quickstart now explicitly exports the copied `F002_DATA` path in the second
+  shell before Python reads it; the placeholder must be replaced with the setup
+  shell's printed fixture path.
+- Log canary assertions now execute after the acknowledgement POST, covering that
+  final operation as well as export, preview, confirmation and retry.
+- Sensitivity: temporarily added an acknowledgement-only `PRIVATE-SUMMARY-T018`
+  warning in `LibraryDeletionEndpoints.fs`. Command
+  `TMPDIR=/tmp/opencode LOG=/tmp/opencode/t018-ack-log-red.log scripts/check.sh T018`:
+  **RED, 21 total, 1 failed, 0 skipped**; the lifecycle test detected the sensitive
+  acknowledgement log. Mutation removed, with no production diff retained.
+- Restored command
+  `TMPDIR=/tmp/opencode LOG=/tmp/opencode/t018-review-green.log scripts/check.sh T018`:
+  **GREEN, 21 passed, 0 failed, 0 skipped**; solution build with `-warnaserror`
+  and `git diff --check` passed.
+
+Owner manual validation remains **pending**; T018 is still unchecked. These fixes
+do not assert owner acceptance or a new full-suite CI result.

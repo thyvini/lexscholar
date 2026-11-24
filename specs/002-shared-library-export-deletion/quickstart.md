@@ -85,6 +85,8 @@ dotnet run --project src/LexScholar.Server
    setup shell (`printf '%s\n' "$F002_DATA"`), then:
 
    ```sh
+   # In this second shell, replace the example with the setup shell's printed path.
+   export F002_DATA='/tmp/opencode/f002-owner.REPLACE_WITH_ACTUAL_SUFFIX'
    # Fixture workspace only. The guard rejects any other data directory.
    python3 - <<'PY'
    import os, pathlib, sqlite3
