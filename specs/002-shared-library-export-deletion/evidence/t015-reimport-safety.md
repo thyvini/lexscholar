@@ -17,3 +17,10 @@ Only SQLite candidate rereading runs inside the mutation monitor; file compariso
 ## Limitations / CI
 
 This verifies process-local coordination under the existing single-host workspace lock, not external filesystem modification or physical erasure. New destructive processing is exercised only through internal capabilities with temporary workspaces. Full suite not run locally; CI run pending a future PR (this assignment creates no push or PR).
+
+## PR #155 review follow-up — production visibility assertion
+
+- GPT P2 verdict: **must fix**. The original `{}` POST without antiforgery could be rejected before endpoint admission, so its non-202 assertion did not prove the production route was disabled.
+- Replaced it with a separate production-host test using an existing fixture document, a fresh valid impact revision, a new operation UUID, JSON selection, same-origin header and the host's antiforgery cookie/token. The response must be exactly `404`; neither journal table may gain rows, and document identity and original bytes remain unchanged.
+- Sensitivity RED: temporarily mapped `LibraryDeletionEndpoints.mapForTests` in this test's isolated host. `scripts/check.sh T015` — 16 tests, one assertion failure, zero skips: expected `NotFound`, actual `Accepted` (log `/tmp/lexscholar-check.odYg68`). This proves the request passes security/body/revision validation and would admit if the route were enabled.
+- Restored ordinary production composition before GREEN: `scripts/check.sh T015` — 16 passed, zero failed/skipped; Release build with `-warnaserror`. No full suite locally; PR CI supplies full-suite verification. Production admission/retry/recovery remain disabled.

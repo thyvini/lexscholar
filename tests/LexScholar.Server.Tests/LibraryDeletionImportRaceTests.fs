@@ -3,6 +3,9 @@ module LexScholar.Server.Tests.LibraryDeletionImportRaceTests
 open System
 open System.IO
 open System.Net
+open System.Net.Http
+open System.Text
+open System.Text.Json
 open System.Threading
 open System.Threading.Tasks
 open Microsoft.AspNetCore.Builder
@@ -177,12 +180,35 @@ let ``unlink excludes reimport then new association works and old admission stay
     let! imported = importing.Value.WaitAsync(timeout)
     assertNew host original.Document imported
     Assert.True(associate imported.Document.Id |> Result.isOk)
-    // F001 removal remains association-only, and production deletion is unmapped.
+    // F001 removal remains association-only.
     Assert.Equal(Ok (), (jobs host).RemoveAssociation({ key with Document = imported.Document.Id },
         fun () -> LibraryRepository.removeAssociation host.Root project imported.Document.Id))
     Assert.True(File.Exists(Path.Combine(DocumentStore.originalsDirectory host.Root, imported.Document.StorageKey)))
-    use! response = host.Client.PostAsync("/api/library/deletions", new System.Net.Http.StringContent("{}"))
-    Assert.NotEqual(HttpStatusCode.Accepted, response.StatusCode)
+}
+
+[<Fact; Trait("Task", "T015")>]
+let ``production rejects valid antiforgery protected deletion confirmation without intent`` () = task {
+    use host = TestHarness.Start()
+    let! imported = import host (dependencies host)
+    let ids = [imported.Document.Id]
+    let preview = LibraryDeletion.preview (LibraryDeletionRepository.capture host.Root) ids |> Result.toOption |> Option.get
+    use! csrfResponse = host.Client.GetAsync("/api/antiforgery")
+    Assert.Equal(HttpStatusCode.OK, csrfResponse.StatusCode)
+    let! csrfText = csrfResponse.Content.ReadAsStringAsync()
+    use csrf = JsonDocument.Parse(csrfText)
+    use request = new HttpRequestMessage(HttpMethod.Post, "/api/library/deletions")
+    request.Headers.Add("Origin", host.Client.BaseAddress.GetLeftPart(UriPartial.Authority))
+    request.Headers.Add("X-CSRF-TOKEN", csrf.RootElement.GetProperty("requestToken").GetString())
+    request.Content <- new StringContent(
+        JsonSerializer.Serialize({| operationId = Guid.NewGuid(); documentIds = ids; revision = preview.Revision |}),
+        Encoding.UTF8, "application/json")
+    use! response = host.Client.SendAsync(request)
+    Assert.Equal(HttpStatusCode.NotFound, response.StatusCode)
+    use db = WorkspaceDb.create host.Root
+    Assert.Empty(db.Set<DeletionOperationRow>())
+    Assert.Empty(db.Set<DeletionItemRow>())
+    Assert.Equal(imported.Document.Id, (LibraryRepository.list host.Root |> List.exactlyOne).Id)
+    Assert.Equal<byte>(bytes (), File.ReadAllBytes(Path.Combine(DocumentStore.originalsDirectory host.Root, imported.Document.StorageKey)))
 }
 
 [<Fact; Trait("Task", "T015")>]
