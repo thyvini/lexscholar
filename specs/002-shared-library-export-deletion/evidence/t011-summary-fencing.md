@@ -21,3 +21,7 @@ Only the existing isolated test endpoint composes `admitFenced`. Production conf
 ## Limitations
 
 Cancellation cannot recall content already sent to a provider. A noncooperative extraction adapter can finish its local read, but cannot admit a job afterward. This slice does not execute durable metadata/file deletion, crash recovery or retries (T012–T016); it retains originals and saved rows until those steps. No new technology or package.
+
+## T006 release integration
+
+Integrated `origin/release/0.5.0` at `a5e1595` (T006), preserving both guide sections. `LOG=/tmp/opencode/t011-t006-integration-final.log scripts/check.sh T011 T010 T006` passed: warning-as-error build, 197 tests, zero failures/skips. The first attempt hit the shell's 120-second timeout without reported failures; the complete rerun used a 300-second limit. No production deletion enablement or PR merge.
