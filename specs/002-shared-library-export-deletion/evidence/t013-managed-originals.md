@@ -28,3 +28,8 @@ Fault injection is deterministic exception injection, not physical power loss or
 - GREEN: `scripts/check.sh T013 T012 T006` — warning-as-error build passed; 151 tests passed, zero failed/skipped.
 - Regression asserts zero filesystem and completion-checkpoint calls, unchanged durable completion/reason, preservation of a later file at the same name, and successful retry with the originals directory unavailable. Existing pre/post commit fault tests remain green. Only unfinished missing-file retries repeat directory sync.
 - Full CI/review on the new PR head remains pending; production deletion remains disabled.
+
+## T008 release integration
+
+- Integrated `origin/release/0.5.0` at `2fab144` into the T013 branch after T008 merged. Resolved the codebase-guide conflict preserving public export, metadata deletion and original-deletion sections; retained both research decisions and checked task/evidence entries.
+- `scripts/check.sh T013 T012 T008` — warning-as-error build passed; 119 tests passed, zero failed/skipped, including targeted browser journeys. Production export is enabled by T008; production deletion remains disabled.

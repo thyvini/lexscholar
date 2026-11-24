@@ -43,3 +43,11 @@
 **Decision:** Local unsafe endpoints retain antiforgery/Origin/Host guards. The client creates and retains the operation UUID before submitting confirmation to reconcile lost responses; list recent/incomplete operations after reload. Each selected item has an explicit outcome and safe reason. Completed records are local metadata and may be cleared explicitly after acknowledgement; unresolved items are retained for recovery. Never use filenames as filesystem paths, include credentials/settings in ZIP, log document content or promise removal of downloads/backups/external-service copies.
 
 **Alternatives:** A synchronous response only loses results on disconnect; persist full PDF or summary content in the journal would retain material targeted for deletion and is unnecessary.
+
+## R6 — Browser export delivery (T008)
+
+**Decision:** A small local JavaScript adapter uses same-origin `fetch` with the existing antiforgery header, checks the ZIP response type/declared length, awaits the complete response as a browser-owned Blob, then offers an object-URL download. No archive bytes cross the JS/.NET WebAssembly interop boundary. The UI reports receipt and asks the researcher to check the browser download, never claiming successful disk saving. One object URL is retained until the next export or page exit so Firefox can consume it without a timing guess.
+
+**Rationale:** Native form downloads cannot send the required header and cannot reliably report a failed response. Fetch detects a failed/truncated transfer before offering a download. Browser Blob storage is browser-managed and may require memory/disk proportional to the ZIP; the server remains bounded-memory and file-backed. Insufficient browser resources fail the export without a success notice.
+
+**Alternatives:** Buffering bytes in WebAssembly adds another full archive copy; a download-token GET or service worker would introduce a second endpoint/lifecycle solely for streaming. File System Access streaming is not supported by both required browsers. Do not weaken antiforgery for native forms.

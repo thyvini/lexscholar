@@ -10,6 +10,7 @@ module Endpoints =
         ProjectEndpoints.map app configuration.DataDirectory
         let directory = configuration.DataDirectory
         let coordination = app.Services.GetRequiredService<LibraryCoordination>()
+        LibraryControlEndpoints.map app directory coordination
         // One registry for the process, over the stored summaries.
         let jobs =
             SummaryJobs(
