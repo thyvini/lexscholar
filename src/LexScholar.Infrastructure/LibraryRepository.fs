@@ -62,6 +62,13 @@ let isPending dataDirectory documentId =
     use db = WorkspaceDb.create dataDirectory
     pending db documentId
 
+/// Internal deletion primitive: caller must validate durable intent, fence jobs,
+/// and own the transaction. Association deletion cascades stored summaries.
+let removeMetadata (db: WorkspaceDb) documentId afterAssociations =
+    db.Set<ProjectDocumentRow>().Where(fun row -> row.DocumentId = documentId).ExecuteDelete() |> ignore
+    afterAssociations ()
+    db.Set<LibraryDocumentRow>().Where(fun row -> row.Id = documentId).ExecuteDelete() |> ignore
+
 /// Every library document, oldest import first, with or without associations.
 let list (dataDirectory: string) : LibraryDocument list =
     use db = WorkspaceDb.create dataDirectory

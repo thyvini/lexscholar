@@ -1,4 +1,4 @@
-/// Snapshot impact and atomic journal admission. No destructive processing.
+/// Snapshot impact, journal admission and internal transactional metadata removal.
 module LexScholar.Infrastructure.LibraryDeletionRepository
 
 open System
@@ -65,3 +65,71 @@ let admit (coordination: LibraryCoordination) directory operation ids revision =
         let result = LibraryDeletion.admit store operation ids revision
         transaction.Commit()
         result)
+
+/// Fault boundaries for deterministic transaction/uncertain-commit tests.
+[<RequireQualifiedAccess>]
+type MetadataStep =
+    | AssociationsRemoved
+    | BeforeCommit
+    | AfterCommit
+
+let hasItem directory operation document =
+    use db = WorkspaceDb.create directory
+    db.Set<DeletionItemRow>().Any(fun row -> row.OperationId = operation && row.DocumentId = document)
+
+let private metadataAbsent (db: WorkspaceDb) document =
+    not (db.Set<LibraryDocumentRow>().Any(fun row -> row.Id = document))
+    && not (db.Set<ProjectDocumentRow>().Any(fun row -> row.DocumentId = document))
+    && not (db.Set<DocumentSummaryRow>().Any(fun row -> row.DocumentId = document))
+
+/// Internal only: never removes files or marks an item deleted. The caller uses
+/// LibraryDeletion.removeMetadata to fence jobs before entering this transaction.
+let removeMetadataWith (checkpoint: MetadataStep -> unit) (coordination: LibraryCoordination) directory operation document : Result<string, MetadataError> =
+    coordination.Mutation(fun () ->
+        let attempt () =
+            use db = WorkspaceDb.create directory
+            use transaction = db.Database.BeginTransaction()
+            let item = db.Set<DeletionItemRow>().Find(operation, document)
+            if isNull (box item) then Error MetadataError.ItemNotFound
+            elif item.Phase = "metadata_removed" then
+                if metadataAbsent db document then Ok item.StorageKey
+                else invalidOp "Inconsistent deletion metadata."
+            else
+                let row = db.Set<LibraryDocumentRow>().Find(document)
+                if isNull (box row) || row.StorageKey <> item.StorageKey then
+                    invalidOp "Inconsistent deletion intent."
+                LibraryRepository.removeMetadata db document (fun () -> checkpoint MetadataStep.AssociationsRemoved)
+                item.Phase <- "metadata_removed"
+                item.Status <- "metadata_removed"
+                item.Reason <- null
+                db.SaveChanges() |> ignore
+                checkpoint MetadataStep.BeforeCommit
+                transaction.Commit()
+                checkpoint MetadataStep.AfterCommit
+                Ok item.StorageKey
+        try attempt ()
+        with _ ->
+            // The transaction/context above have been disposed. Never infer
+            // rollback from an exception: commit acknowledgement may be lost.
+            try
+                use db = WorkspaceDb.create directory
+                use transaction = db.Database.BeginTransaction()
+                let item = db.Set<DeletionItemRow>().Find(operation, document)
+                let result =
+                    if isNull (box item) then Error MetadataError.ItemNotFound
+                    elif item.Phase = "metadata_removed" && metadataAbsent db document then Ok item.StorageKey
+                    else
+                        if item.Status <> "deleted" then
+                            item.Status <- "incomplete"
+                            item.Reason <- "storage_error"
+                            db.SaveChanges() |> ignore
+                        Error MetadataError.StorageError
+                transaction.Commit()
+                result
+            with _ ->
+                // An inaccessible/full database may also prevent the failure
+                // marker. The durable intent is still retained for recovery.
+                Error MetadataError.StorageError)
+
+let removeMetadata coordination directory operation document =
+    removeMetadataWith ignore coordination directory operation document
