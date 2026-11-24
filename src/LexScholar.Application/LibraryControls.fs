@@ -7,13 +7,17 @@ open System.Threading
 type LibraryCoordination() =
     let mutation = obj ()
     let files = new SemaphoreSlim(1, 1)
+    let fileWait = Event<unit>()
 
     member _.Mutation(work: unit -> 'a) = lock mutation work
     member _.IsMutationHeld = Monitor.IsEntered mutation
+    member _.FileWait = fileWait.Publish
 
     /// Held across asynchronous file operations, never under the registry lock.
     member _.FileLease(cancellationToken: CancellationToken) = task {
-        do! files.WaitAsync(cancellationToken)
+        let waiting = files.WaitAsync(cancellationToken)
+        if not waiting.IsCompleted then fileWait.Trigger()
+        do! waiting
         let mutable released = 0
         return { new IDisposable with
                     member _.Dispose() =
