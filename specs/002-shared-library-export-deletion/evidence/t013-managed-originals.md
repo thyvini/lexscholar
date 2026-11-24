@@ -1,0 +1,21 @@
+# T013 — Managed-original removal
+
+- Base: `origin/release/0.5.0` at `3760dc3` (T012/T006 merged).
+- Environment: Linux 7.3.5-2-cachyos, .NET SDK 10.0.114, isolated temporary SQLite/filesystem workspaces only.
+- RED: `scripts/check.sh T013` — build succeeded; 44 tests, 8 assertion/runtime failures, zero skips. File/finalization stubs could not complete or preserve incomplete outcomes (log `/tmp/lexscholar-check.WkXFaM`). Initial compile-only issues were corrected before capturing this RED.
+- GREEN: `scripts/check.sh T013 T012 T006` — warning-as-error build passed; 150 tests passed, zero failed/skipped (final code run).
+- CI full suite: pending; no push or PR requested. CI must run on the eventual PR head.
+
+## Safety verified
+
+- Metadata still present or intent absent cannot authorize unlink. Shared associations and stored summaries are absent before completion; unassociated originals also complete.
+- Read-only managed original unlinked, directory fsynced, then completion committed. Checkpoints observe `deleted` is not visible during unlink/sync.
+- Injected failure before/after unlink and before/after directory sync leaves `incomplete` with retained `metadata_removed` phase; missing-file retries repeat directory sync and succeed idempotently.
+- Injected pre/post completion commit errors: fresh durable read distinguishes rollback from lost acknowledgement. Already-deleted retries work.
+- Permission capability failure is sanitized, never treated as missing. Native nonfile unlink failure and missing-directory open failure also fail closed.
+- Invalid/traversal/corrupt retained keys cannot remove outside files. Unrelated original stays unchanged; symlink target stays unchanged; a symlinked originals directory is rejected.
+- Actual file-lease queue handshake holds processing before metadata or unlink, while mutation/registry work can progress; no sleep or readiness polling.
+
+## Limits and visibility
+
+Fault injection is deterministic exception injection, not physical power loss or real disk exhaustion. Successful Linux fsync is the supported durability boundary; hardware/storage failures beyond it are not claimed. Permission failure is capability-injected so the test works even with elevated privileges. Process termination/restart across these boundaries belongs to T014. External hostile mutation of the private workspace is outside app-managed immutability guarantees. Production endpoints, confirmation/retry and startup recovery remain unchanged and disabled; only isolated tests compose `processItem`.

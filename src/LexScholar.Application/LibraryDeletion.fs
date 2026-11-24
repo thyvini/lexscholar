@@ -132,3 +132,11 @@ let removeMetadata (jobs: SummaryJobs) hasIntent remove operation document =
         | Ok true ->
             jobs.FenceDocuments [ document ]
             remove operation document)
+
+/// Internal per-document lifecycle. Acquire files BEFORE mutation/registry, and
+/// release the registry before unlink/fsync. Not wired into production until T017.
+let processItem (coordination: LibraryCoordination) (jobs: SummaryJobs) hasIntent remove finish operation document cancellation = task {
+    use! _files = coordination.FileLease cancellation
+    match removeMetadata jobs hasIntent remove operation document with
+    | Error error -> return Error error
+    | Ok _ -> return finish operation document }
