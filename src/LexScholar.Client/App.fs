@@ -35,6 +35,8 @@ module Api =
                 if int response.StatusCode = 409 && json.RootElement.GetProperty("code").GetString() = "impact_changed" then
                     return Error (Library.Deletion.ImpactChanged
                         (JsonSerializer.Deserialize<Library.Deletion.Preview>(json.RootElement.GetProperty("preview").GetRawText(), deletionJson)))
+                elif method = HttpMethod.Post && path = "api/library/deletions" then
+                    return Error (Library.Deletion.admissionFailure (int response.StatusCode) text)
                 else return Error Library.Deletion.Unavailable
         with _ -> return Error Library.Deletion.Unavailable }
 
@@ -44,6 +46,12 @@ module Api =
             (fun text -> JsonSerializer.Deserialize<Library.Deletion.Preview>(text, deletionJson))
 
     let private pendingDeletionKey = "lexscholar.pending-deletion"
+    let forgetDeletion (javascript: IJSRuntime) (pending: Library.Deletion.Confirmation) = async {
+        try
+            return! javascript.InvokeAsync<bool>("lexScholarLibraryDeletion.clearIfMatching",
+                        JsonSerializer.Serialize(pending, deletionJson)).AsTask() |> Async.AwaitTask
+        with _ -> return false }
+
     let confirmDeletion http (javascript: IJSRuntime) (pending: Library.Deletion.Confirmation) = async {
         try
             let body = JsonSerializer.Serialize(pending, deletionJson)
@@ -52,10 +60,10 @@ module Api =
             do! javascript.InvokeVoidAsync("sessionStorage.setItem", pendingDeletionKey, body).AsTask() |> Async.AwaitTask
             let! result = deletionRequest http HttpMethod.Post "api/library/deletions" body ignore
             match result with
-            | Ok () | Error (Library.Deletion.ImpactChanged _) ->
-                do! javascript.InvokeVoidAsync("sessionStorage.removeItem", pendingDeletionKey).AsTask() |> Async.AwaitTask
-            | _ -> ()
-            return result
+            | Ok () | Error Library.Deletion.NoIntent | Error (Library.Deletion.ImpactChanged _) ->
+                let! cleared = forgetDeletion javascript pending
+                return if cleared then result else Error Library.Deletion.Unavailable
+            | _ -> return result
         with _ -> return Error Library.Deletion.Unavailable }
 
     let deletions http (javascript: IJSRuntime) = async {
@@ -401,6 +409,9 @@ module private Ui =
                 performDeletion (fun () -> Api.mutateDeletion http id "retry") Library.Deletion.Mutated
             | Library.Deletion.AcknowledgeOperation id ->
                 performDeletion (fun () -> Api.mutateDeletion http id "acknowledge") Library.Deletion.Mutated
+            | Library.Deletion.ForgetConfirmation pending ->
+                performDeletion (fun () -> Api.forgetDeletion javascript pending)
+                    (fun cleared -> Library.Deletion.Reconciled (pending.OperationId, cleared))
         | Library.SendExport -> perform (fun () -> Api.exportLibrary javascript) Library.Exported
         | Library.FetchLibrary request -> fetchLibrary request
         | Library.FetchProject (projectId, request) -> fetchProject projectId request
@@ -423,6 +434,8 @@ module private Ui =
             match message with
             | Library.DeletionMsg (Library.Deletion.Loaded (_, Ok _, _)) ->
                 library.Deletion.Outcomes <> state.Library.Deletion.Outcomes
+            | Library.DeletionMsg (Library.Deletion.Confirmed (_, Error Library.Deletion.NoIntent)) ->
+                library.Deletion.Rejected
             | _ -> false
         let library, refresh =
             if changedResults then Library.update Library.Refresh library
@@ -622,6 +635,9 @@ module private Ui =
             cond model.Error <| function
                 | true -> p { "role" => "alert"; text (FailureTexts.deletion ()) }
                 | false -> empty ()
+            cond model.Rejected <| function
+                | true -> p { "role" => "alert"; text Texts.deletionRejected }
+                | false -> empty ()
             cond model.Pending <| function
                 | Some _ -> concat {
                     p { "role" => "status"; text Texts.deletionUnknown }
@@ -702,7 +718,7 @@ module private Ui =
                             }
                         | Some true ->
                             button {
-                                attr.``type`` "button"; attr.disabled model.Busy
+                                attr.``type`` "button"; attr.disabled (model.Busy || model.Pending.IsSome)
                                 on.click (fun _ -> send (Library.Deletion.Acknowledge outcome.OperationId)); text Texts.deletionAcknowledge
                             }
                         | _ -> empty ()

@@ -77,3 +77,83 @@ let ``new selections wait for reload reconciliation and failed lookup cannot byp
     let ignored, _ = Deletion.update (Deletion.Select document) failed
     Assert.True(ignored.Selected.IsEmpty)
     Assert.False(ignored.Restored)
+
+[<Fact; Trait("Task", "T017")>]
+let ``definitive admission rejection releases the frozen request without claiming deletion`` () =
+    let id = Guid.NewGuid()
+    let submitted, _ = Deletion.update (Deletion.Confirm id) ready
+    let rejected, _ = Deletion.update (Deletion.Confirmed (id, Error Deletion.NoIntent)) submitted
+    Assert.True(rejected.Pending.IsNone)
+    Assert.True(rejected.Preview.IsNone)
+    Assert.True(rejected.Selected.IsEmpty)
+    Assert.False(rejected.Uncertain)
+    Assert.Empty(rejected.Outcomes)
+
+[<Fact; Trait("Task", "T017")>]
+let ``restored matching outcome cannot be acknowledged before pending request is reconciled`` () =
+    let id = Guid.NewGuid()
+    let pending : Deletion.Confirmation = { OperationId = id; DocumentIds = [document]; Revision = "first" }
+    let complete : Deletion.Outcome =
+        { OperationId = id; Status = "complete"
+          Items = [{ DocumentId = document; Name = "fixture.pdf"; Outcome = "deleted"; Reason = null }] }
+    let restored, _ = Deletion.update (Deletion.Loaded (0, Ok [complete], Some pending)) Deletion.initial
+    let _, effect = Deletion.update (Deletion.Acknowledge id) restored
+    Assert.True(effect.IsNone)
+
+[<Fact; Trait("Task", "T017")>]
+let ``library refresh prunes vanished unconfirmed selections but preserves frozen confirmation`` () =
+    let model = { initial with Deletion = { ready with Preview = None }; LibraryRequest = 1 }
+    let loaded, _ = update (LibraryLoaded (1, Ok [])) model
+    Assert.True(loaded.Deletion.Selected.IsEmpty)
+    let frozen, _ = update (LibraryLoaded (1, Ok [])) { model with Deletion = ready }
+    Assert.Equal(ready.Preview, frozen.Deletion.Preview)
+
+[<Fact; Trait("Task", "T017")>]
+let ``results fetch cannot erase a failed mutation error`` () =
+    let failed, _ = Deletion.update (Deletion.Mutated (Error Deletion.Unavailable)) Deletion.initial
+    let loaded, _ = Deletion.update (Deletion.Loaded (failed.Request, Ok [], None)) failed
+    Assert.True(loaded.Error)
+
+[<Fact; Trait("Task", "T017")>]
+let ``only exact admission rejection codes prove no intent not lookup 404 or transport failures`` () =
+    for status, body in
+        [ 400, """{"code":"invalid_selection"}"""; 404, """{"code":"document_not_found"}"""
+          409, """{"code":"operation_conflict"}"""; 409, """{"code":"deletion_in_progress"}""" ] do
+        Assert.Equal(Deletion.NoIntent, Deletion.admissionFailure status body)
+    for status, body in
+        [ 404, """{"code":"operation_not_found"}"""; 404, "{}"; 404, "not JSON"
+          403, """{"code":"document_not_found"}"""; 500, """{"code":"document_not_found"}"""
+          409, """{"code":"unknown"}""" ] do
+        Assert.Equal(Deletion.Unavailable, Deletion.admissionFailure status body)
+
+[<Fact; Trait("Task", "T017")>]
+let ``matching partial or running operation clears pending only after storage acknowledgement`` () =
+    let id = Guid.NewGuid()
+    let pending : Deletion.Confirmation = { OperationId = id; DocumentIds = [document]; Revision = "first" }
+    for status in ["partial"; "running"; "complete"] do
+        let outcome : Deletion.Outcome =
+            { OperationId = id; Status = status
+              Items = [{ DocumentId = document; Name = "fixture.pdf"; Outcome = "not_completed"; Reason = "pending" }] }
+        let restored, effect = Deletion.update (Deletion.Loaded (0, Ok [outcome], Some pending)) Deletion.initial
+        Assert.Equal(Some (Deletion.ForgetConfirmation pending), effect)
+        Assert.True(restored.Busy)
+        let failed, _ = Deletion.update (Deletion.Reconciled (id, false)) restored
+        Assert.Equal(Some pending, failed.Pending)
+        Assert.True(failed.Error)
+        let cleared, _ = Deletion.update (Deletion.Reconciled (id, true)) restored
+        Assert.True(cleared.Pending.IsNone)
+        Assert.False(cleared.Busy)
+        Assert.False(cleared.Uncertain)
+        let stale, _ = Deletion.update (Deletion.Reconciled (id, true)) { restored with Pending = Some { pending with OperationId = Guid.NewGuid() } }
+        Assert.True(stale.Pending.IsSome)
+
+[<Fact; Trait("Task", "T017")>]
+let ``same UUID with different items cannot reconcile a frozen request`` () =
+    let id = Guid.NewGuid()
+    let pending : Deletion.Confirmation = { OperationId = id; DocumentIds = [document]; Revision = "first" }
+    let outcome : Deletion.Outcome =
+        { OperationId = id; Status = "complete"
+          Items = [{ DocumentId = Guid.NewGuid(); Name = "other.pdf"; Outcome = "deleted"; Reason = null }] }
+    let loaded, effect = Deletion.update (Deletion.Loaded (0, Ok [outcome], Some pending)) Deletion.initial
+    Assert.Equal(Some pending, loaded.Pending)
+    Assert.True(effect.IsNone)

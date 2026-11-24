@@ -47,6 +47,31 @@ let private button (page: IPage) text = page.GetByRole(AriaRole.Button, PageGetB
 let private select (page: IPage) name =
     page.GetByRole(AriaRole.Checkbox, PageGetByRoleOptions(Name = $"{Texts.deletionSelection}: {name}", Exact = true)).CheckAsync()
 
+let private competingDeletion (host: TestHarness) document = task {
+    let coordination = host.App.Services.GetRequiredService<LibraryCoordination>()
+    let preview = LibraryDeletion.preview (LibraryDeletionRepository.capture host.Root) [document] |> Result.toOption |> Option.get
+    let operation = Guid.NewGuid()
+    Assert.Equal(Ok operation, LibraryDeletionRepository.admit coordination host.Root operation [document] preview.Revision)
+    let operations = (host.App :> IApplicationBuilder).Properties["LexScholar.LibraryDeletions"] :?> LibraryDeletion.Operations
+    Assert.True(operations.Start operation)
+    do! (operations.Settled operation).WaitAsync(TimeSpan.FromSeconds 10.0)
+}
+
+let private assertFailedMutation (page: IPage) action label marker = task {
+    use! _ = page.RouteAsync($"**/api/library/deletions/*/{action}",
+        Func<IRoute, Task>(fun route ->
+            route.FulfillAsync(RouteFulfillOptions(Status = 500, ContentType = "application/problem+json", Body = """{"code":"storage_error"}"""))))
+    use! _ = page.RouteAsync("**/api/library/deletions", Func<IRoute, Task>(fun route -> task {
+        let! response = route.FetchAsync()
+        let! body = response.TextAsync()
+        // A changed display name is an observable handshake that this *later*
+        // result snapshot has been applied, not a transient assertion before it.
+        do! route.FulfillAsync(RouteFulfillOptions(Response = response, Body = body.Replace("sem-projeto.pdf", marker))) }))
+    do! Ui.click (button page label)
+    do! Assertions.Expect(page.GetByText(marker, PageGetByTextOptions(Exact = false))).ToBeVisibleAsync()
+    do! Assertions.Expect(page.GetByText(Texts.deletionFailure)).ToBeVisibleAsync()
+}
+
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T017"); Trait("Category", "Browser")>]
 let ``cancel and changed shared impact require confirmation then delete shared and unassociated only`` browserName =
     Ui.withBrowser browserName (fun browser -> task {
@@ -105,7 +130,7 @@ let ``cancel and changed shared impact require confirmation then delete shared a
 [<Theory; InlineData("chromium", true); InlineData("firefox", true);
   InlineData("chromium", false); InlineData("firefox", false);
   Trait("Task", "T017"); Trait("Category", "Browser")>]
-let ``lost confirmation answer survives reload and retries the identical UUID`` browserName admitted =
+let ``lost confirmation answer reconciles known results or retries the identical UUID`` browserName admitted =
     Ui.withBrowser browserName (fun browser -> task {
         use host = TestHarness.Start(serveClient = true)
         seed host.Root |> ignore
@@ -133,15 +158,81 @@ let ``lost confirmation answer survives reload and retries the identical UUID`` 
         do! page.UnrouteAsync("**/api/library/deletions")
         do! page.ReloadAsync() :> Task
         do! Ui.click (Ui.button (page.Locator("body")) Texts.library)
-        do! Assertions.Expect(page.GetByText(Texts.deletionUnknown)).ToBeVisibleAsync()
-        let sent = page.WaitForRequestAsync(fun request -> request.Method = "POST" && request.Url.EndsWith("/api/library/deletions"))
-        do! Ui.click (button page Texts.deletionRepeat)
-        let! repeated = sent
-        Assert.Equal(Assert.Single(requests), repeated.PostData)
+        if admitted then
+            do! Assertions.Expect(button page Texts.deletionAcknowledge).ToBeEnabledAsync()
+            do! Ui.click (button page Texts.deletionAcknowledge)
+            do! Assertions.Expect(page.GetByText(Texts.deletionComplete, PageGetByTextOptions(Exact = true))).ToHaveCountAsync(0)
+            let! stored = page.EvaluateAsync<string>("sessionStorage.getItem('lexscholar.pending-deletion')")
+            Assert.Null(stored)
+            do! select page "preservado.pdf"
+            do! Ui.click (button page Texts.deleteSelection)
+            do! Ui.click (button page Texts.deletionConfirm)
+        else
+            do! Assertions.Expect(page.GetByText(Texts.deletionUnknown)).ToBeVisibleAsync()
+            let sent = page.WaitForRequestAsync(fun request -> request.Method = "POST" && request.Url.EndsWith("/api/library/deletions"))
+            do! Ui.click (button page Texts.deletionRepeat)
+            let! repeated = sent
+            Assert.Equal(Assert.Single(requests), repeated.PostData)
         do! Assertions.Expect(page.GetByText(Texts.deletionComplete, PageGetByTextOptions(Exact = true))).ToBeVisibleAsync()
         do! Assertions.Expect(button page Texts.deleteSelection).ToBeDisabledAsync() // no selection remains
         use db = WorkspaceDb.create host.Root
         Assert.Single(db.Set<DeletionOperationRow>()) |> ignore
+    })
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T017"); Trait("Category", "Browser")>]
+let ``document removed after preview is definitively rejected and another selection remains possible`` browserName =
+    Ui.withBrowser browserName (fun browser -> task {
+        use host = TestHarness.Start(serveClient = true)
+        let _, document, _, _ = seed host.Root
+        let! page = openLibrary browser host
+        do! select page "sem-projeto.pdf"
+        do! Ui.click (button page Texts.deleteSelection)
+        do! Assertions.Expect(button page Texts.deletionConfirm).ToBeVisibleAsync()
+        do! competingDeletion host document
+        do! Ui.click (button page Texts.deletionConfirm)
+        do! Assertions.Expect(page.GetByText(Texts.deletionRejected)).ToBeVisibleAsync()
+        do! Assertions.Expect(button page Texts.deletionConfirm).ToHaveCountAsync(0)
+        let! stored = page.EvaluateAsync<string>("sessionStorage.getItem('lexscholar.pending-deletion')")
+        Assert.Null(stored)
+        do! select page "preservado.pdf"
+        do! Ui.click (button page Texts.deleteSelection)
+        do! Ui.click (button page Texts.deletionConfirm)
+        do! Assertions.Expect(page.GetByText("preservado.pdf — Excluído", PageGetByTextOptions(Exact = true))).ToBeVisibleAsync()
+    })
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T017"); Trait("Category", "Browser")>]
+let ``refresh drops vanished selected IDs before a fresh preview`` browserName =
+    Ui.withBrowser browserName (fun browser -> task {
+        use host = TestHarness.Start(serveClient = true)
+        let _, document, _, _ = seed host.Root
+        let! page = openLibrary browser host
+        do! select page "sem-projeto.pdf"
+        do! competingDeletion host document
+        do! Ui.click (button page Texts.refresh)
+        do! Assertions.Expect(page.GetByRole(AriaRole.Checkbox, PageGetByRoleOptions(Name = $"{Texts.deletionSelection}: sem-projeto.pdf", Exact = true))).ToHaveCountAsync(0)
+        do! select page "preservado.pdf"
+        do! Ui.click (button page Texts.deleteSelection)
+        do! Assertions.Expect(button page Texts.deletionConfirm).ToBeVisibleAsync()
+        let impact = page.GetByRole(AriaRole.Region, PageGetByRoleOptions(Name = Texts.deletionImpact))
+        do! Assertions.Expect(impact.GetByText("preservado.pdf", LocatorGetByTextOptions(Exact = true))).ToBeVisibleAsync()
+        do! Ui.click (button page Texts.deletionCancel)
+    })
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T017"); Trait("Category", "Browser")>]
+let ``late browser cleanup cannot erase a newer pending confirmation`` browserName =
+    Ui.withBrowser browserName (fun browser -> task {
+        use host = TestHarness.Start(serveClient = true)
+        seed host.Root |> ignore
+        let! page = Ui.openApp browser host
+        let! preserved = page.EvaluateAsync<bool>("""() => {
+            const key = 'lexscholar.pending-deletion';
+            sessionStorage.setItem(key, 'newer-confirmation');
+            const refused = !lexScholarLibraryDeletion.clearIfMatching('older-confirmation');
+            const retained = sessionStorage.getItem(key) === 'newer-confirmation';
+            const removed = lexScholarLibraryDeletion.clearIfMatching('newer-confirmation');
+            return refused && retained && removed && sessionStorage.getItem(key) === null;
+        }""")
+        Assert.True(preserved)
     })
 
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T017"); Trait("Category", "Browser")>]
@@ -175,9 +266,12 @@ let ``partial results remain visible across navigation and retry never claims ea
         do! page.ReloadAsync() :> Task
         do! Ui.click (Ui.button (page.Locator("body")) Texts.library)
         do! Assertions.Expect(button page Texts.deletionRetry).ToBeVisibleAsync()
+        do! assertFailedMutation page "retry" Texts.deletionRetry "resultado após retry.pdf"
         fail <- false
         do! Ui.click (button page Texts.deletionRetry)
         do! Assertions.Expect(page.GetByText(Texts.deletionComplete, PageGetByTextOptions(Exact = true))).ToBeVisibleAsync()
+        do! Assertions.Expect(page.GetByText(Texts.deletionFailure)).ToHaveCountAsync(0)
+        do! assertFailedMutation page "acknowledge" Texts.deletionAcknowledge "resultado após acknowledge.pdf"
         do! Ui.click (button page Texts.deletionAcknowledge)
         do! Assertions.Expect(page.GetByText(Texts.deletionComplete, PageGetByTextOptions(Exact = true))).ToHaveCountAsync(0)
     })

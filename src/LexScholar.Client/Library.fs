@@ -18,10 +18,23 @@ module Deletion =
     type Confirmation = { OperationId: Guid; DocumentIds: Guid list; Revision: string }
     type Item = { DocumentId: Guid; Name: string; Outcome: string; Reason: string }
     type Outcome = { OperationId: Guid; Status: string; Items: Item list }
-    type Failure = Unavailable | ImpactChanged of Preview
+    type Failure = Unavailable | ImpactChanged of Preview | NoIntent
+    /// Only contract-defined admission failures prove this frozen selection
+    /// could not create an intent. A lookup 404, 403, 5xx or malformed response
+    /// says nothing about an earlier request still in flight.
+    let admissionFailure status (body: string) =
+        try
+            use json = System.Text.Json.JsonDocument.Parse(body)
+            match status, json.RootElement.GetProperty("code").GetString() with
+            | 400, "invalid_selection"
+            | 404, "document_not_found"
+            | 409, ("operation_conflict" | "deletion_in_progress") -> NoIntent
+            | _ -> Unavailable
+        with _ -> Unavailable
+
     type Model =
         { Selected: Set<Guid>; Preview: Preview option; Pending: Confirmation option
-          Busy: bool; Uncertain: bool; Changed: bool; Error: bool
+          Busy: bool; Uncertain: bool; Changed: bool; Error: bool; Rejected: bool
           Outcomes: Outcome list; Request: int; Restored: bool }
     type Message =
         | Select of Guid
@@ -36,22 +49,25 @@ module Deletion =
         | Retry of Guid
         | Acknowledge of Guid
         | Mutated of Result<unit, Failure>
+        | Reconciled of Guid * bool
     type Effect =
         | FetchPreview of Guid list
         | Submit of Confirmation
         | Fetch of int * delayed: bool
         | RetryOperation of Guid
         | AcknowledgeOperation of Guid
+        | ForgetConfirmation of Confirmation
     let initial =
         { Selected = Set.empty; Preview = None; Pending = None; Busy = false
-          Uncertain = false; Changed = false; Error = false; Outcomes = []; Request = 0; Restored = false }
+          Uncertain = false; Changed = false; Error = false; Rejected = false; Outcomes = []; Request = 0; Restored = false }
     let private fetch delayed model =
         let request = model.Request + 1
         { model with Request = request }, Some (Fetch (request, delayed))
     let update message model =
         match message with
         | Select id when model.Restored && not model.Busy && model.Preview.IsNone && model.Pending.IsNone ->
-            { model with Selected = if model.Selected.Contains id then model.Selected.Remove id else model.Selected.Add id }, None
+            { model with Selected = if model.Selected.Contains id then model.Selected.Remove id else model.Selected.Add id
+                         Rejected = false; Error = false }, None
         | Preview when model.Restored && not model.Busy && model.Pending.IsNone && not model.Selected.IsEmpty ->
             { model with Busy = true; Error = false; Changed = false }, Some (FetchPreview (Set.toList model.Selected))
         | Previewed result when model.Busy && model.Pending.IsNone ->
@@ -70,10 +86,13 @@ module Deletion =
             match result with
             | Ok () ->
                 fetch false { model with Busy = false; Pending = None; Preview = None; Uncertain = false; Selected = Set.empty }
+            | Error NoIntent ->
+                fetch false { model with Busy = false; Pending = None; Preview = None; Uncertain = false
+                                         Selected = Set.empty; Error = false; Rejected = true }
             | Error (ImpactChanged preview) ->
                 { model with Busy = false; Pending = None; Preview = Some preview; Uncertain = false; Changed = true }, None
             | Error _ -> { model with Busy = false; Uncertain = true; Error = true }, None
-        | Load -> fetch false model
+        | Load -> fetch false { model with Error = false }
         | Loaded (request, result, restored) when request = model.Request ->
             let model =
                 if model.Restored then model
@@ -84,12 +103,27 @@ module Deletion =
             match result with
             | Error _ -> { model with Error = true }, None
             | Ok outcomes ->
-                let model = { model with Outcomes = outcomes; Error = model.Error && model.Pending.IsSome }
-                if outcomes |> List.exists (fun o -> o.Status = "running") then fetch true model
-                else model, None
+                let model = { model with Outcomes = outcomes }
+                let matching =
+                    model.Pending |> Option.filter (fun pending ->
+                        outcomes |> List.exists (fun outcome ->
+                            outcome.OperationId = pending.OperationId
+                            && (outcome.Items |> List.map _.DocumentId |> List.sort) = List.sort pending.DocumentIds))
+                match matching with
+                | Some pending when not model.Busy ->
+                    // Keep pending and block acknowledgement until its durable
+                    // browser marker has been removed, not merely until GET.
+                    { model with Busy = true }, Some (ForgetConfirmation pending)
+                | _ when outcomes |> List.exists (fun o -> o.Status = "running") -> fetch true model
+                | _ -> model, None
+        | Reconciled (id, cleared) when model.Pending |> Option.exists (fun p -> p.OperationId = id) ->
+            if cleared then
+                let model = { model with Pending = None; Preview = None; Selected = Set.empty; Busy = false; Uncertain = false; Error = false }
+                if model.Outcomes |> List.exists (fun o -> o.Status = "running") then fetch true model else model, None
+            else { model with Busy = false; Error = true }, None
         | Retry id when not model.Busy && (model.Outcomes |> List.exists (fun o -> o.OperationId = id && o.Status = "partial")) ->
             { model with Busy = true; Error = false }, Some (RetryOperation id)
-        | Acknowledge id when not model.Busy && (model.Outcomes |> List.exists (fun o -> o.OperationId = id && o.Status = "complete")) ->
+        | Acknowledge id when not model.Busy && model.Pending.IsNone && (model.Outcomes |> List.exists (fun o -> o.OperationId = id && o.Status = "complete")) ->
             { model with Busy = true; Error = false }, Some (AcknowledgeOperation id)
         | Mutated result ->
             fetch false { model with Busy = false; Error = Result.isError result }
@@ -267,6 +301,12 @@ let private mutated (projectId: Guid) (result: Result<unit, Failure>) model =
         model, Some (FetchProject (projectId, request))
     | Error error -> { model with Error = Some error }, None
 
+let private pruneSelection documents (deletion: Deletion.Model) =
+    if deletion.Preview.IsSome || deletion.Pending.IsSome then deletion
+    else
+        let available = documents |> List.map (fun (d: Document) -> d.Id) |> Set.ofList
+        { deletion with Selected = Set.intersect deletion.Selected available }
+
 let update (message: Message) (model: Model) : Model * Effect option =
     match message with
     | DeletionMsg message ->
@@ -276,8 +316,9 @@ let update (message: Message) (model: Model) : Model * Effect option =
         let deleted =
             deletion.Outcomes |> List.collect _.Items
             |> List.filter (fun i -> i.Outcome = "deleted") |> List.map _.DocumentId |> Set.ofList
-        { model with Deletion = deletion
-                     Documents = model.Documents |> List.filter (fun d -> not (deleted.Contains d.Id))
+        let documents = model.Documents |> List.filter (fun d -> not (deleted.Contains d.Id))
+        { model with Deletion = pruneSelection documents deletion
+                     Documents = documents
                      Associations = model.Associations |> List.filter (fun a -> not (deleted.Contains a.Document.Id))
                      Opened = model.Opened |> Option.filter (deleted.Contains >> not)
                      Options = model.Options |> Option.filter (deleted.Contains >> not) },
@@ -291,7 +332,7 @@ let update (message: Message) (model: Model) : Model * Effect option =
         model, Some (FetchLibrary request)
     | LibraryLoaded (request, result) when request = model.LibraryRequest ->
         match result with
-        | Ok documents -> { model with Documents = documents; HasLoadedLibrary = true; LoadingLibrary = false }, None
+        | Ok documents -> { model with Documents = documents; Deletion = pruneSelection documents model.Deletion; HasLoadedLibrary = true; LoadingLibrary = false }, None
         | Error error -> { model with LoadingLibrary = false; Error = Some error }, None
     | ActiveProjectChanged project when project <> model.Project ->
         // Clear at once so one project's documents never appear under another.

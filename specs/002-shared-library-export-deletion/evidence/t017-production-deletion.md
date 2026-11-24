@@ -36,3 +36,29 @@ Initial RED log: `/tmp/lexscholar-check.NOrV68`; sensitivity log: `/tmp/lexschol
 - T018 owner/manual acceptance in both browsers remains unchecked. Headless journeys verify behavior and accessible native controls, not owner visual acceptance or physical secure erasure.
 - Storage, hardware/power-loss and external-copy limits remain those in the approved plan; no secure erase or retraction from external services is claimed.
 - An in-flight/uncertain confirmation is retained in same-tab session storage before its POST; retained server operations supply cross-tab/restart results. New selection is blocked until initial reconciliation succeeds. Standard application result polling is not used as a test readiness mechanism; tests await HTTP/Playwright assertions and existing processor handshakes.
+
+## PR #157 review follow-up — four P1 findings
+
+Read the full GPT review of `f550911` and the independent review. All four findings are **must fix**:
+
+1. A matching retained result left the session marker pending while allowing acknowledgement.
+2. Definitive admission rejections were incorrectly retained as uncertainty.
+3. Vanished documents remained in the editable selection after refresh.
+4. An automatic result fetch hid a failed retry/acknowledgement error.
+
+### RED and GREEN
+
+- **RED:** `scripts/check.sh T017` — 33 tests, **12 assertion/journey failures**, zero skips; log `/tmp/lexscholar-check.rAETVq`. Four pure-state regressions each failed on the original behavior. Both browsers reproduced the acknowledgement-with-stale-marker lockout, definitive rejection lockout, vanished-selection preview failure and hidden failed-retry feedback. Only the new failure-case union scaffold existed at RED; no fix was active.
+- **GREEN:** `scripts/check.sh T017` — **38 passed**, zero skips/warnings.
+- **Final prerequisite regression GREEN:** `scripts/check.sh T017 T008 T009 T010 T011 T012 T013 T014 T015 T016` — **425 passed**, zero failures/skips/warnings.
+- These baseline failures are the regression sensitivity evidence for all four findings; no manufactured compiler-error RED.
+
+### Safety and race checks
+
+- Matching requires the operation UUID and exact full item-ID list, not merely a complete-looking status. Matching running/partial/complete results reconcile; acknowledgement waits for successful session-marker removal. Failed cleanup retains pending state; stale cleanup callbacks cannot alter another operation.
+- Browser cleanup is an atomic compare-and-remove against the frozen serialized confirmation. Both browsers verify a late cleanup cannot erase a newer marker. API rejection/acceptance uses the same helper before releasing pending state.
+- Only specified confirmation-POST status/code pairs prove rejection. Classifier tests keep generic/lookup 404, malformed responses, 403, unknown codes and 5xx uncertain. Existing lost-response-before-admission journeys still preserve and resend the byte-identical UUID/IDs/revision after an empty retained list.
+- Both browsers now recover a known completed operation after response loss/reload, acknowledge it with no persisted pending marker left behind, and successfully delete a second document. A competing real processor removes a document after preview; the original admission gets definitive `document_not_found`, releases its marker and permits another confirmed deletion.
+- Refresh intersects editable selections with current document IDs, including documents removed from local results. Frozen previews/pending requests retain their approved IDs; cancelling returns to a pruned selection.
+- Both browsers inject failed retry **and** failed acknowledgement, then observe a later result snapshot with a changed display-name sentinel before checking that failure feedback remains. This prevents a transient pre-fetch assertion from passing. The next successful explicit action clears the error.
+- Server admission/storage/coordination/security are unchanged. All testing remains in isolated fixture workspaces. CI/review must rerun on the pushed fix; no merge performed.
