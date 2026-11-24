@@ -23,6 +23,7 @@
     <Compile Include="ProjectContractTests.fs" />
     <Compile Include="LibraryContractTests.fs" />
     <Compile Include="LibraryDeletionPreviewTests.fs" />
+    <Compile Include="LibraryDeletionAdmissionTests.fs" />
     <Compile Include="LibraryCoordinationContractTests.fs" />
     <Compile Include="LibraryExportContractTests.fs" />
     <Compile Include="LibraryExportFailureTests.fs" />

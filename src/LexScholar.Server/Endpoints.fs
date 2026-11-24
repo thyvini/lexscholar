@@ -14,13 +14,16 @@ module Endpoints =
         let jobs =
             SummaryJobs(
                 { Find = SummaryRepository.find directory
-                  Save = SummaryRepository.save directory
-                  Delete = SummaryRepository.delete directory
+                  Save = fun key summary ->
+                      LibraryDeletionRepository.unlessPending directory key.Document (fun () -> SummaryRepository.save directory key summary)
+                  Delete = fun key ->
+                      LibraryDeletionRepository.unlessPending directory key.Document (fun () -> SummaryRepository.delete directory key)
                   AssociationExists =
                     fun key ->
-                        match LibraryRepository.listForProject directory key.Project with
-                        | Ok associations -> associations |> List.exists (fun (item, _) -> item.DocumentId = key.Document)
-                        | Error _ -> false }, coordination = coordination)
+                        not (LibraryDeletionRepository.isPending directory key.Document)
+                        && (match LibraryRepository.listForProject directory key.Project with
+                            | Ok associations -> associations |> List.exists (fun (item, _) -> item.DocumentId = key.Document)
+                            | Error _ -> false) }, coordination = coordination)
         LibraryEndpoints.map app configuration jobs coordination
         DocumentEndpoints.map app configuration coordination
         let vault = ChatGptEndpoints.map app configuration

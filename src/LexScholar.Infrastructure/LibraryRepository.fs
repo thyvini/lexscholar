@@ -55,6 +55,13 @@ let private association (row: ProjectDocumentRow) : ProjectDocument =
 
 let private exists (row: 'row) = not (obj.ReferenceEquals(row, null))
 
+let private pending (db: WorkspaceDb) documentId =
+    db.Set<DeletionItemRow>().AsNoTracking().Any(fun row -> row.DocumentId = documentId && row.Status <> "deleted")
+
+let isPending dataDirectory documentId =
+    use db = WorkspaceDb.create dataDirectory
+    pending db documentId
+
 /// Every library document, oldest import first, with or without associations.
 let list (dataDirectory: string) : LibraryDocument list =
     use db = WorkspaceDb.create dataDirectory
@@ -89,7 +96,7 @@ let associate (dataDirectory: string) (item: ProjectDocument) : Result<LibraryDo
     use db = WorkspaceDb.create dataDirectory
     let document = db.Set<LibraryDocumentRow>().Find(item.DocumentId)
     if not (exists (db.Set<ResearchProjectRow>().Find(item.ProjectId))) then Error Library.AssociationError.ProjectNotFound
-    elif not (exists document) then Error Library.AssociationError.DocumentNotFound
+    elif not (exists document) || pending db item.DocumentId then Error Library.AssociationError.DocumentNotFound
     else
         db.Add(ProjectDocumentRow(ProjectId = item.ProjectId, DocumentId = item.DocumentId,
                                   Role = roleText item.Role, AddedUtc = item.AddedUtc)) |> ignore
@@ -105,12 +112,14 @@ let associate (dataDirectory: string) (item: ProjectDocument) : Result<LibraryDo
 /// Deletes only this association; the document row and its original remain.
 let removeAssociation (dataDirectory: string) (projectId: Guid) (documentId: Guid) : Result<unit, Library.RemovalError> =
     use db = WorkspaceDb.create dataDirectory
-    let deleted =
-        query { for row in db.Set<ProjectDocumentRow>() do
-                where (row.ProjectId = projectId && row.DocumentId = documentId)
-                select row }
-        |> fun rows -> rows.ExecuteDelete()
-    if deleted = 0 then Error Library.RemovalError.AssociationNotFound else Ok ()
+    if pending db documentId then Error Library.RemovalError.AssociationNotFound
+    else
+        let deleted =
+            query { for row in db.Set<ProjectDocumentRow>() do
+                    where (row.ProjectId = projectId && row.DocumentId = documentId)
+                    select row }
+            |> fun rows -> rows.ExecuteDelete()
+        if deleted = 0 then Error Library.RemovalError.AssociationNotFound else Ok ()
 
 /// Sets the role of only this project's association with the document; other
 /// projects' associations and the document row are never changed.
@@ -118,7 +127,7 @@ let changeRole (dataDirectory: string) : DocumentRoles.UpdateRole =
     fun projectId documentId newRole ->
         use db = WorkspaceDb.create dataDirectory
         let row = db.Set<ProjectDocumentRow>().Find(projectId, documentId)
-        if not (exists row) then Error DocumentRoles.RoleChangeError.AssociationNotFound
+        if not (exists row) || pending db documentId then Error DocumentRoles.RoleChangeError.AssociationNotFound
         else
             row.Role <- roleText newRole
             let saved =
