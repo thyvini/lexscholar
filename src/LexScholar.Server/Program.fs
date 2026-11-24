@@ -7,6 +7,7 @@ open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Logging
 open LexScholar.Server
 open LexScholar.Infrastructure
+open LexScholar.Application
 
 type StartupError = ConfigurationFailure of ConfigurationError | LockFailure of LockError | InvalidPort of string
 
@@ -38,6 +39,7 @@ let private createHost (builder: WebApplicationBuilder) (serveClient: bool) port
                 // it is built but never started. ApplicationStopped also releases it
                 // after a normal stop; SafeFileHandle disposal is idempotent.
                 builder.Services.AddSingleton<DataDirectoryLease>(fun _ -> lease) |> ignore
+                builder.Services.AddSingleton<LibraryCoordination>() |> ignore
                 // The request-start line carries the query string, which on /auth/callback holds
                 // the authorization code and state (F005). Warnings and errors still log.
                 builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.Warning) |> ignore

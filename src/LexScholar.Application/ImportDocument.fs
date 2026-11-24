@@ -78,7 +78,7 @@ let private copyAtMost (source: Stream) (target: Stream) (limit: int64) (cancell
 /// once per host: streaming and validation run concurrently, but only one
 /// import at a time finds duplicates, promotes and inserts. The data-directory
 /// lock guarantees a single process, so no contention retries are needed.
-let create (dependencies: ImportDependencies) : Import =
+let createCoordinated (coordination: LibraryCoordination) (dependencies: ImportDependencies) : Import =
     let commitSection = new SemaphoreSlim(1, 1)
     // Reading one byte past the limit is enough to prove an upload is too large.
     let stagingLimit =
@@ -143,6 +143,7 @@ let create (dependencies: ImportDependencies) : Import =
         | Ok validated ->
             do! commitSection.WaitAsync(cancellationToken)
             try
+                use! lease = coordination.FileLease(cancellationToken)
                 let! outcome = commit key validated fileName
                 return Ok outcome
             finally
@@ -164,3 +165,5 @@ let create (dependencies: ImportDependencies) : Import =
         | Error captured ->
             captured.Throw()
             return Unchecked.defaultof<_> }
+
+let create dependencies = createCoordinated (LibraryCoordination()) dependencies

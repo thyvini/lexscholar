@@ -38,7 +38,7 @@ let private read (stream: IO.Stream) (cancellationToken: CancellationToken) : Re
             { Number = number; Text = normalise (ContentOrderTextExtractor.GetText(document.GetPage(number))) } ]
         |> Ok
 
-let extractPages (dataDirectory: string) (documentId: Guid) (cancellationToken: CancellationToken)
+let extractPagesWith (beforeRead: IO.Stream -> Task) (dataDirectory: string) (documentId: Guid) (cancellationToken: CancellationToken)
     : Task<Result<PageText list, Summarize.ExtractionError>> = task {
     match! VerifiedDocumentContent.openRead dataDirectory documentId cancellationToken with
     | Error DocumentNotFound -> return Error Summarize.ExtractionError.DocumentNotFound
@@ -46,6 +46,10 @@ let extractPages (dataDirectory: string) (documentId: Guid) (cancellationToken: 
     | Ok content ->
         use stream = content.Stream
         try
+            do! beforeRead stream
             return! Task.Run((fun () -> read stream cancellationToken), cancellationToken)
         with ex when not (ex :? OperationCanceledException) ->
             return Error Summarize.ExtractionError.DocumentUnavailable }
+
+let extractPages dataDirectory documentId cancellationToken =
+    extractPagesWith (fun _ -> Task.CompletedTask) dataDirectory documentId cancellationToken
