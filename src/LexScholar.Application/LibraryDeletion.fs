@@ -160,13 +160,22 @@ type OperationResult =
 type Operations(coordination: LibraryCoordination,
                 read: unit -> OperationResult list,
                 acknowledge: Guid -> Result<unit, string>,
-                runItem: Guid -> Guid -> Task<unit>) =
+                recordFailure: Guid -> Guid -> unit,
+                runItem: Guid -> Guid -> Task<Result<unit, MetadataError>>) =
     let active = Dictionary<Guid, TaskCompletionSource>()
+    let unrecordedFailures = HashSet<Guid * Guid>()
+    let persistFailures () =
+        // A failed failure-marker write must not turn into a misleading pending
+        // result once reads recover. Retry the write, or let HTTP report failure.
+        for operation, document in unrecordedFailures |> Seq.toList do
+            recordFailure operation document
+            unrecordedFailures.Remove((operation, document)) |> ignore
     let snapshot () =
+        persistFailures ()
         read () |> List.map (fun result ->
             let status =
-                if not result.Items.IsEmpty && result.Items |> List.forall (fun item -> item.Outcome = "deleted") then "complete"
-                elif active.ContainsKey result.OperationId then "running"
+                if active.ContainsKey result.OperationId then "running"
+                elif not result.Items.IsEmpty && result.Items |> List.forall (fun item -> item.Outcome = "deleted") then "complete"
                 else "partial"
             { result with Status = status })
 
@@ -186,10 +195,18 @@ type Operations(coordination: LibraryCoordination,
                         try
                             for item in result.Items do
                                 if item.Outcome <> "deleted" then
-                                    // Failure of one item must not skip the others. Durable
-                                    // adapters record sanitized failures where storage allows.
-                                    try do! runItem operation item.DocumentId
-                                    with _ -> ()
+                                    let! outcome = task {
+                                        try return! runItem operation item.DocumentId
+                                        with _ -> return Error MetadataError.StorageError }
+                                    match outcome with
+                                    | Ok () -> ()
+                                    | Error _ ->
+                                        coordination.Mutation(fun () ->
+                                            unrecordedFailures.Add((operation, item.DocumentId)) |> ignore
+                                            try
+                                                recordFailure operation item.DocumentId
+                                                unrecordedFailures.Remove((operation, item.DocumentId)) |> ignore
+                                            with _ -> ())
                         finally
                             coordination.Mutation(fun () ->
                                 active.Remove operation |> ignore
@@ -205,4 +222,6 @@ type Operations(coordination: LibraryCoordination,
     member _.Acknowledge operation =
         coordination.Mutation(fun () ->
             if active.ContainsKey operation then Error "deletion_in_progress"
-            else acknowledge operation)
+            else
+                persistFailures ()
+                acknowledge operation)

@@ -50,11 +50,12 @@ let private confirmation (request: HttpRequest) = task {
             | _ -> return None
     with :? JsonException -> return None }
 
-let private map (app: WebApplication) (directory: string) (autoStart: bool) (runItem: Guid -> Guid -> Task<unit>) =
+let private map (app: WebApplication) (directory: string) (autoStart: bool) (runItem: Guid -> Guid -> Task<Result<unit, LibraryDeletion.MetadataError>>) =
     let coordination = app.Services.GetRequiredService<LibraryCoordination>()
     let operations =
         LibraryDeletion.Operations(coordination, (fun () -> LibraryDeletionRepository.results directory),
-                                   LibraryDeletionRepository.acknowledge directory, runItem)
+                                   LibraryDeletionRepository.acknowledge directory,
+                                   LibraryDeletionRepository.recordFailure directory, runItem)
     let missing () = LibraryEndpoints.problem 404 "operation_not_found" "Operação não encontrada."
     app.MapGet("/api/library/deletions", Func<IResult>(fun () ->
         Results.Ok(operations.List()))) |> ignore
@@ -115,10 +116,9 @@ let mapForTests (app: WebApplication) directory =
     let coordination = app.Services.GetRequiredService<LibraryCoordination>()
     let jobs = (app :> IApplicationBuilder).Properties["LexScholar.SummaryJobs"] :?> SummaryJobs
     let runItem operation document = task {
-        let! _ = LibraryDeletion.processItem coordination jobs
+        return! LibraryDeletion.processItem coordination jobs
                      (LibraryDeletionRepository.hasItem directory)
                      (LibraryDeletionRepository.removeMetadata coordination directory)
                      (LibraryDeletionRepository.finishOriginal coordination directory)
-                     operation document app.Lifetime.ApplicationStopping
-        return () }
+                      operation document app.Lifetime.ApplicationStopping }
     map app directory false runItem |> ignore

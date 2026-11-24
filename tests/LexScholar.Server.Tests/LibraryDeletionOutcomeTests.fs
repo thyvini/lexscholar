@@ -130,11 +130,10 @@ let ``detached processing reports running then partial and restart retry complet
                 let finish = LibraryDeletionRepository.finishOriginalWith ignore (fun key ->
                     if document = failedDocument then raise (IOException("sensitive storage path"))
                     DocumentStore.removeOriginal root key) coordination root
-                let! _ = LibraryDeletion.processItem coordination jobs
+                return! LibraryDeletion.processItem coordination jobs
                              (LibraryDeletionRepository.hasItem root)
                              (LibraryDeletionRepository.removeMetadata coordination root)
-                             finish op document app.Lifetime.ApplicationStopping
-                return () }
+                             finish op document app.Lifetime.ApplicationStopping }
             runner <- LibraryDeletionEndpoints.mapWithProcessingForTests app root runItem)
         ids <- seed h.Root
         body <- confirm h operation ids
@@ -168,12 +167,11 @@ let ``detached processing reports running then partial and restart retry complet
         let coordination = app.Services.GetRequiredService<LibraryCoordination>()
         let jobs = (app :> IApplicationBuilder).Properties["LexScholar.SummaryJobs"] :?> SummaryJobs
         let runItem op document = task {
-            let! _ = LibraryDeletion.processItem coordination jobs
+            return! LibraryDeletion.processItem coordination jobs
                          (LibraryDeletionRepository.hasItem root)
                          (LibraryDeletionRepository.removeMetadata coordination root)
                          (LibraryDeletionRepository.finishOriginal coordination root)
-                         op document app.Lifetime.ApplicationStopping
-            return () }
+                         op document app.Lifetime.ApplicationStopping }
         runner <- LibraryDeletionEndpoints.mapWithProcessingForTests app root runItem)
     use partial = lookup h operation
     Assert.Equal("partial", partial.RootElement.GetProperty("status").GetString())
@@ -204,4 +202,106 @@ let ``detached processing reports running then partial and restart retry complet
     use db = WorkspaceDb.create h.Root
     Assert.Empty(db.Set<DeletionOperationRow>())
     Assert.Empty(db.Set<DeletionItemRow>())
+}
+
+[<Fact; Trait("Task", "T016")>]
+let ``intent lookup failure is reported as storage error rather than pending`` () = task {
+    let mutable runner = Unchecked.defaultof<LibraryDeletion.Operations>
+    use h = TestHarness.Start(configure = fun app ->
+        let root = app.Configuration["LexScholar:DataDirectory"]
+        let coordination = app.Services.GetRequiredService<LibraryCoordination>()
+        let jobs = (app :> IApplicationBuilder).Properties["LexScholar.SummaryJobs"] :?> SummaryJobs
+        let runItem op document = task {
+            return! LibraryDeletion.processItem coordination jobs
+                         (fun _ _ -> raise (IOException("private intent lookup failure")))
+                         (LibraryDeletionRepository.removeMetadata coordination root)
+                         (LibraryDeletionRepository.finishOriginal coordination root)
+                         op document app.Lifetime.ApplicationStopping }
+        runner <- LibraryDeletionEndpoints.mapWithProcessingForTests app root runItem)
+    let ids = seed h.Root
+    let operation = Guid.NewGuid()
+    use admitted = post h "/api/library/deletions" (confirm h operation ids)
+    Assert.Equal(HttpStatusCode.Accepted, admitted.StatusCode)
+    do! (runner.Settled operation).WaitAsync(TimeSpan.FromSeconds 10.0)
+    use outcome = lookup h operation
+    Assert.Equal("partial", outcome.RootElement.GetProperty("status").GetString())
+    for item in outcome.RootElement.GetProperty("items").EnumerateArray() do
+        Assert.Equal("not_completed", item.GetProperty("outcome").GetString())
+        Assert.Equal("storage_error", item.GetProperty("reason").GetString())
+    use db = WorkspaceDb.create h.Root
+    Assert.All(db.Set<DeletionItemRow>(), fun item ->
+        Assert.Equal("incomplete", item.Status)
+        Assert.Equal("pending", item.Phase)
+        Assert.Equal("storage_error", item.Reason))
+}
+
+[<Fact; Trait("Task", "T016")>]
+let ``completed markers remain running until processor exits and acknowledgement is allowed`` () = task {
+    let arrived = TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)
+    let release = TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)
+    let mutable runner = Unchecked.defaultof<LibraryDeletion.Operations>
+    use h = TestHarness.Start(configure = fun app ->
+        let root = app.Configuration["LexScholar:DataDirectory"]
+        let coordination = app.Services.GetRequiredService<LibraryCoordination>()
+        let jobs = (app :> IApplicationBuilder).Properties["LexScholar.SummaryJobs"] :?> SummaryJobs
+        let runItem op document = task {
+            let! result = LibraryDeletion.processItem coordination jobs
+                              (LibraryDeletionRepository.hasItem root)
+                              (LibraryDeletionRepository.removeMetadata coordination root)
+                              (LibraryDeletionRepository.finishOriginal coordination root)
+                              op document app.Lifetime.ApplicationStopping
+            Assert.Equal(Ok (), result)
+            if LibraryDeletionRepository.results root |> List.forall (fun operation -> operation.Status = "complete") then
+                arrived.SetResult()
+                do! release.Task
+            return result }
+        runner <- LibraryDeletionEndpoints.mapWithProcessingForTests app root runItem)
+    let ids = seed h.Root
+    let operation = Guid.NewGuid()
+    use admitted = post h "/api/library/deletions" (confirm h operation ids)
+    Assert.Equal(HttpStatusCode.Accepted, admitted.StatusCode)
+    do! arrived.Task.WaitAsync(TimeSpan.FromSeconds 10.0)
+    try
+        use outcome = lookup h operation
+        Assert.Equal("running", outcome.RootElement.GetProperty("status").GetString())
+        use refused = post h $"/api/library/deletions/{operation}/acknowledge" "{}"
+        Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode)
+    finally release.TrySetResult() |> ignore
+    do! (runner.Settled operation).WaitAsync(TimeSpan.FromSeconds 10.0)
+    use outcome = lookup h operation
+    Assert.Equal("complete", outcome.RootElement.GetProperty("status").GetString())
+    LibraryDeletionRepository.recordFailure h.Root operation ids.Head
+    Assert.Equal("complete", (LibraryDeletionRepository.results h.Root |> List.exactlyOne).Status)
+    use accepted = post h $"/api/library/deletions/{operation}/acknowledge" "{}"
+    Assert.Equal(HttpStatusCode.NoContent, accepted.StatusCode)
+}
+
+[<Fact; Trait("Task", "T016")>]
+let ``unwritable failure marker cannot yield a successful pending snapshot`` () = task {
+    use h = TestHarness.Start()
+    let ids = seed h.Root
+    let operation = Guid.NewGuid()
+    let coordination = h.App.Services.GetRequiredService<LibraryCoordination>()
+    let preview = LibraryDeletion.preview (LibraryDeletionRepository.capture h.Root) ids |> Result.toOption |> Option.get
+    Assert.Equal(Ok operation, LibraryDeletionRepository.admit coordination h.Root operation ids preview.Revision)
+    let mutable unavailable = true
+    let recordFailure op document =
+        if unavailable then raise (IOException("failure marker unavailable"))
+        LibraryDeletionRepository.recordFailure h.Root op document
+    let runner = LibraryDeletion.Operations(
+        coordination, (fun () -> LibraryDeletionRepository.results h.Root),
+        LibraryDeletionRepository.acknowledge h.Root, recordFailure,
+        (fun _ _ -> Task.FromResult(Error LibraryDeletion.MetadataError.StorageError)))
+    Assert.True(runner.Start operation)
+    do! (runner.Settled operation).WaitAsync(TimeSpan.FromSeconds 10.0)
+    Assert.Throws<IOException>(fun () -> runner.Find operation |> ignore) |> ignore
+    Assert.Throws<IOException>(fun () -> runner.List() |> ignore) |> ignore
+    Assert.Throws<IOException>(fun () -> runner.Acknowledge operation |> ignore) |> ignore
+    unavailable <- false
+    let result = runner.Find operation |> Option.get
+    Assert.Equal("partial", result.Status)
+    Assert.All(result.Items, fun item -> Assert.Equal("storage_error", item.Reason))
+    // The safe reason is durable, not merely a transient response overlay.
+    let persisted = LibraryDeletionRepository.results h.Root |> List.exactlyOne
+    Assert.All(persisted.Items, fun item -> Assert.Equal("storage_error", item.Reason))
 }

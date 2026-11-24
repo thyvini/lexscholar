@@ -186,6 +186,20 @@ let finishOriginalWith (checkpoint: CompletionStep -> unit) (remove: string -> u
 let finishOriginal coordination directory operation document =
     finishOriginalWith ignore (DocumentStore.removeOriginal directory) coordination directory operation document
 
+/// Persist processor failures including failures before a repository step (e.g.
+/// intent lookup). Preserve phase for retry and never regress durable completion.
+/// Failure to write propagates: callers cannot present a successful pending view.
+let recordFailure directory (operation: Guid) (document: Guid) =
+    use db = WorkspaceDb.create directory
+    use transaction = db.Database.BeginTransaction()
+    let item = db.Set<DeletionItemRow>().Find(operation, document)
+    if isNull (box item) then invalidOp "Deletion item unavailable."
+    if item.Status <> "deleted" then
+        item.Status <- "incomplete"
+        item.Reason <- "storage_error"
+        db.SaveChanges() |> ignore
+    transaction.Commit()
+
 /// One SQLite snapshot for operation/item projection; storage keys and internal
 /// phases never cross this boundary. A read failure is an error, never an empty list.
 let results directory =
