@@ -46,7 +46,7 @@ For each automated slice, write task-tagged xUnit v3 tests (`Trait("Task", "Txxx
 ## Phase 5 — Cross-cutting owner validation
 
 - [x] T018 Verify security, privacy and owner acceptance in `tests/LexScholar.Server.Tests/LibraryControlsSecurityTests.fs`, `tests/LexScholar.Browser.Tests/LibraryControlsJourneyTests.fs`, `specs/002-shared-library-export-deletion/quickstart.md` and [evidence](evidence/t018-owner-validation.md): task-tagged sensitivity checks and regressions for Host/Origin/CSRF on every new POST, no external calls for export/deletion, no sensitive data/paths in errors/logs or secrets/settings in ZIP; owner manually follows quickstart in Firefox and Chromium using only fixture PDFs and isolated temporary workspaces, checks citations, partial failure/recovery and cancellation, records environment/results and CI link. No real research material (FR-011–014, SC-001–005).
-  - Automated portions and sensitivity checks: [evidence](evidence/t018-owner-validation.md). **Owner manual validation pending; leave unchecked.**
+  - Automated checks, sensitivity checks and owner acceptance are recorded in the linked evidence.
 
 ## Dependencies, parallel lanes and merge discipline
 
