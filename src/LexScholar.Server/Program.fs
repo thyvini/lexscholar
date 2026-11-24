@@ -52,6 +52,11 @@ let private createHost (builder: WebApplicationBuilder) (serveClient: bool) port
                     app.Logger.LogInformation("Using data directory {DataDirectory}.", configuration.DataDirectory)
                     // Under the lock, after migrations and before serving: discard
                     // interrupted imports. Built first only so a logger exists.
+                    // Fail closed until T017: only explicit test DI can resume
+                    // deletion, never a setting or ordinary production startup.
+                    if app.Environment.EnvironmentName = "Testing" then
+                        let recovery = app.Services.GetService<LibraryDeletionRecovery.StartupForTests>()
+                        if not (isNull recovery) then recovery.Invoke(configuration.DataDirectory)
                     let cleanup = StorageCleanup.run configuration.DataDirectory
                     if cleanup.ExportCleanupIncomplete then
                         app.Logger.LogWarning("Could not remove all abandoned export files; private leftovers will be retried at next startup.")

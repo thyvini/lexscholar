@@ -6,6 +6,8 @@ module LexScholar.Server.Tests.TestProgram
 let main args =
     if Array.tryHead args = Some "--foundation-host" then
         ProcessHarness.runChild args.[1..]
+    elif Array.tryHead args = Some "--deletion-crash" then
+        LibraryDeletionRecoveryTests.runCrashChild args.[1..]
     elif Array.exists (fun arg -> arg = "--server" || arg = "--internal-msbuild-node") args then
         Xunit.MicrosoftTestingPlatform.TestPlatformTestFramework.RunAsync(
             args,

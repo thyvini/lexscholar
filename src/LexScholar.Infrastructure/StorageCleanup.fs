@@ -40,7 +40,7 @@ let private cleanupExports directory =
 /// stored originals that no document row references to quarantine/, without
 /// overwriting: when quarantine already holds different bytes under the same
 /// key, both files are left in place and the key is reported as Conflicting.
-/// Referenced originals and rows are never touched.
+/// Referenced originals, unfinished deletion keys and rows are never touched.
 let run (dataDirectory: string) : CleanupReport =
     DocumentStore.ensureDirectories dataDirectory
     let staging = DocumentStore.stagingDirectory dataDirectory
@@ -52,10 +52,19 @@ let run (dataDirectory: string) : CleanupReport =
     // No transfer can be active while startup holds the workspace lock.
     let exportCleanupIncomplete = cleanupExports (DocumentStore.exportDirectory dataDirectory)
     let referenced = LibraryRepository.storageKeys dataDirectory
+    // The retained journal is authority even after the library row is gone.
+    // Query failure aborts cleanup rather than guessing which files are orphans.
+    // This protection applies even while production recovery is gated off.
+    let deleting =
+        use db = WorkspaceDb.create dataDirectory
+        db.Set<DeletionItemRow>()
+        |> Seq.filter (fun item -> item.Status <> "deleted")
+        |> Seq.map _.StorageKey
+        |> Set.ofSeq
     let moves =
         [ for path in Directory.GetFiles(originals) |> Array.sort do
             let key = Path.GetFileName(path)
-            if not (referenced.Contains key) then
+            if not (referenced.Contains key || deleting.Contains key) then
                 let destination = Path.Combine(quarantine, key)
                 if not (File.Exists(destination)) then
                     File.Move(path, destination, false)

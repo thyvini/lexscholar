@@ -51,12 +51,13 @@ type TestHarness private (workspace: TemporaryWorkspace, ownsWorkspace: bool, ap
     member _.App = app
     member _.Client = client
 
-    static member Start(?settings: (string * string) list, ?serveClient: bool, ?configure: WebApplication -> unit, ?environment: string, ?workspace: TemporaryWorkspace, ?summaryHandler: HttpMessageHandler, ?summaryExtraction: SummaryEndpoints.PageExtraction, ?pdfValidation: ValidatePdf) =
+    static member Start(?settings: (string * string) list, ?serveClient: bool, ?configure: WebApplication -> unit, ?environment: string, ?workspace: TemporaryWorkspace, ?summaryHandler: HttpMessageHandler, ?summaryExtraction: SummaryEndpoints.PageExtraction, ?pdfValidation: ValidatePdf, ?deletionRecovery: LexScholar.Infrastructure.LibraryDeletionRecovery.StartupForTests) =
         let ownsWorkspace = Option.isNone workspace
         let workspace = match workspace with Some shared -> shared | None -> TemporaryWorkspace.Create()
         let mutable app: WebApplication option = None
         try
             let builder = HostSetup.builder workspace.Root (defaultArg settings [])
+            deletionRecovery |> Option.iter (fun recovery -> builder.Services.AddSingleton<LexScholar.Infrastructure.LibraryDeletionRecovery.StartupForTests>(recovery) |> ignore)
             // The host takes the outgoing summary handler from DI when one is registered (research §7).
             summaryHandler |> Option.iter (fun handler -> builder.Services.AddSingleton<HttpMessageHandler>(handler) |> ignore)
             summaryExtraction |> Option.iter (fun extraction -> builder.Services.AddSingleton<SummaryEndpoints.PageExtraction>(extraction) |> ignore)
