@@ -1,4 +1,4 @@
-/// Deletion impact and durable confirmation admission; no destructive processing.
+/// Deletion impact, durable confirmation and internal per-item processing.
 module LexScholar.Application.LibraryDeletion
 
 open System
@@ -110,3 +110,25 @@ let admitFenced (jobs: SummaryJobs) persist operation ids revision =
         | Ok _ -> jobs.FenceDocuments ids
         | Error _ -> ()
         result)
+
+[<RequireQualifiedAccess>]
+type MetadataError =
+    | ItemNotFound
+    | StorageError
+
+/// Reuse the admission lock order and fence again before processing an item.
+/// Not composed by the production host before T017.
+let removeMetadata (jobs: SummaryJobs) hasIntent remove operation document =
+    jobs.Locked(fun () ->
+        // Intent lookup opens storage too: a failed read is neither missing
+        // authority nor permission to fence/delete. Leave the journal intact
+        // and return a per-item failure so processing can continue elsewhere.
+        let intent =
+            try Ok (hasIntent operation document)
+            with _ -> Error MetadataError.StorageError
+        match intent with
+        | Error error -> Error error
+        | Ok false -> Error MetadataError.ItemNotFound
+        | Ok true ->
+            jobs.FenceDocuments [ document ]
+            remove operation document)

@@ -15,6 +15,7 @@
     <Compile Include="DocumentSchemaTests.fs" />
     <Compile Include="SummarySchemaTests.fs" />
     <Compile Include="LibraryDeletionSchemaTests.fs" />
+    <Compile Include="LibraryDeletionTransactionTests.fs" />
     <Compile Include="LibraryExportSnapshotTests.fs" />
     <Compile Include="LibraryExportSummaryTests.fs" />
     <Compile Include="PdfValidationTests.fs" />
