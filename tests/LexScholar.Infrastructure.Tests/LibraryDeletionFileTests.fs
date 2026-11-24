@@ -112,6 +112,35 @@ let ``invalid keys and nonfiles fail closed while symlink targets stay untouched
     Assert.ThrowsAny<IOException>(fun () -> DocumentStore.removeOriginal dir.Path key) |> ignore
 
 [<Fact; Trait("Task", "T013")>]
+let ``completed deletion retry is terminal without filesystem access or a new commit`` () =
+    use dir = new TemporaryDirectory()
+    let coordination, operation, document, path = seed dir.Path
+    LibraryDeletionRepository.removeMetadata coordination dir.Path operation document |> ignore
+    Assert.Equal(Ok (), LibraryDeletionRepository.finishOriginal coordination dir.Path operation document)
+    let mutable fileCalls = 0
+    let mutable commitCalls = 0
+    let remove _ =
+        fileCalls <- fileCalls + 1
+        raise (UnauthorizedAccessException("unavailable filesystem"))
+    let checkpoint _ =
+        commitCalls <- commitCalls + 1
+        raise (IOException("retry must not commit"))
+    Assert.Equal(Ok (), LibraryDeletionRepository.finishOriginalWith checkpoint remove coordination dir.Path operation document)
+    Assert.Equal(0, fileCalls)
+    Assert.Equal(0, commitCalls)
+    Assert.Equal("deleted", (item dir.Path operation document).Status)
+    Assert.Null((item dir.Path operation document).Reason)
+    // A reused name is not authority to unlink again, nor is an unavailable
+    // originals directory grounds to regress an already durable outcome.
+    File.WriteAllText(path, "later file")
+    Assert.Equal(Ok (), LibraryDeletionRepository.finishOriginal coordination dir.Path operation document)
+    Assert.Equal("later file", File.ReadAllText path)
+    File.Delete path
+    Directory.Delete(DocumentStore.originalsDirectory dir.Path)
+    Assert.Equal(Ok (), LibraryDeletionRepository.finishOriginal coordination dir.Path operation document)
+    Assert.Equal("deleted", (item dir.Path operation document).Status)
+
+[<Fact; Trait("Task", "T013")>]
 let ``permission failure cannot be interpreted as missing and another item remains untouched`` () =
     use dir = new TemporaryDirectory()
     let coordination, operation, document, path = seed dir.Path

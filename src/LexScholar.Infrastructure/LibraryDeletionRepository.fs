@@ -142,21 +142,20 @@ type CompletionStep = BeforeCommit | AfterCommit
 /// committed only after metadata absence, unlink (or proven ENOENT), and fsync.
 let finishOriginalWith (checkpoint: CompletionStep -> unit) (remove: string -> unit) (coordination: LibraryCoordination) directory operation document : Result<unit, MetadataError> =
     coordination.Mutation(fun () ->
-        let mutable removalSynced = false
         let attempt () =
             use db = WorkspaceDb.create directory
             use transaction = db.Database.BeginTransaction()
             let item = db.Set<DeletionItemRow>().Find(operation, document)
             if isNull (box item) then Error MetadataError.ItemNotFound
+            // The durable completion already proves the required unlink/sync.
+            // A retry has no authority to touch a subsequently reused name.
+            elif item.Status = "deleted" then Ok ()
             elif item.Phase <> "metadata_removed" || not (metadataAbsent db document) then
                 Error MetadataError.StorageError
             elif db.Set<LibraryDocumentRow>().Any(fun row -> row.StorageKey = item.StorageKey) then
                 Error MetadataError.StorageError
             else
-                // Also validate/re-sync on identical retry; a completed marker
-                // alone must not authorize a false outcome if storage changed.
                 remove item.StorageKey
-                removalSynced <- true
                 item.Status <- "deleted"
                 item.Reason <- null
                 db.SaveChanges() |> ignore
@@ -172,7 +171,9 @@ let finishOriginalWith (checkpoint: CompletionStep -> unit) (remove: string -> u
                 let item = db.Set<DeletionItemRow>().Find(operation, document)
                 let result =
                     if isNull (box item) then Error MetadataError.ItemNotFound
-                    elif removalSynced && item.Status = "deleted" && metadataAbsent db document then Ok ()
+                    // This fresh transaction also protects against regressing a
+                    // completion committed by another processor after our error.
+                    elif item.Status = "deleted" then Ok ()
                     else
                         item.Status <- "incomplete"
                         item.Reason <- "storage_error"

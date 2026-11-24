@@ -19,3 +19,12 @@
 ## Limits and visibility
 
 Fault injection is deterministic exception injection, not physical power loss or real disk exhaustion. Successful Linux fsync is the supported durability boundary; hardware/storage failures beyond it are not claimed. Permission failure is capability-injected so the test works even with elevated privileges. Process termination/restart across these boundaries belongs to T014. External hostile mutation of the private workspace is outside app-managed immutability guarantees. Production endpoints, confirmation/retry and startup recovery remain unchanged and disabled; only isolated tests compose `processItem`.
+
+## PR #153 GPT P1 — terminal completed retry
+
+- Verdict: **must fix**. Re-running unlink/sync for a durable `deleted` item could touch a reused name or regress completion when storage became unavailable.
+- RED: `scripts/check.sh T013` — 50 tests, 1 failed, zero skipped; the new completed-retry test received storage failure instead of success when its filesystem capability threw (`/tmp/lexscholar-check.f3WQyD`).
+- Fix: read terminal `deleted` before filesystem work in the existing SQLite transaction. The fresh error-recovery transaction also returns success for durable `deleted`, never overwriting it with `incomplete`; this preserves completion after uncertain commit or another processor's committed completion.
+- GREEN: `scripts/check.sh T013 T012 T006` — warning-as-error build passed; 151 tests passed, zero failed/skipped.
+- Regression asserts zero filesystem and completion-checkpoint calls, unchanged durable completion/reason, preservation of a later file at the same name, and successful retry with the originals directory unavailable. Existing pre/post commit fault tests remain green. Only unfinished missing-file retries repeat directory sync.
+- Full CI/review on the new PR head remains pending; production deletion remains disabled.
