@@ -25,6 +25,7 @@
     <Compile Include="SummaryRepository.fs" />
     <Compile Include="LibraryExportSnapshot.fs" />
     <Compile Include="LibraryExport.fs" />
+    <Compile Include="LibraryDeletionRepository.fs" />
     <ProjectReference Include="../LexScholar.Domain/LexScholar.Domain.fsproj" />
     <ProjectReference Include="../LexScholar.Application/LexScholar.Application.fsproj" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
