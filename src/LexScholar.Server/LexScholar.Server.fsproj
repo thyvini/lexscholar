@@ -12,6 +12,7 @@
     <Compile Include="DocumentEndpoints.fs" />
     <Compile Include="ChatGptEndpoints.fs" />
     <Compile Include="SummaryEndpoints.fs" />
+    <Compile Include="LibraryControlEndpoints.fs" />
     <Compile Include="LibraryDeletionEndpoints.fs" />
     <Compile Include="Endpoints.fs" />
     <Compile Include="Program.fs" />

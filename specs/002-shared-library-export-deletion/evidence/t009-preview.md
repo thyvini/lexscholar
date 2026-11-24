@@ -19,3 +19,9 @@ The preview response contains neither summary text nor storage keys/paths. Succe
 No production composition, confirmation, job fencing, intent persistence, retry, file removal or recovery is implemented. Portuguese permanence/external-copy/cancellation explanations remain T017 UI work; T009 supplies the non-destructive impact data only. T010 will recompute and compare the revision under mutation coordination; this preview alone is not deletion authorization. Broader security/log and browser verification remains T018.
 
 Shared integration files changed only to register the new compile units: Application, Infrastructure, Server and Server.Tests `.fsproj`, plus the codebase guide and this task checkbox. Integrate these serially with lane A; `Endpoints.fs`, `TestHarness.fs`, export modules and `SummaryRepository.fs` were not changed.
+
+## T004 release integration
+
+Merged `origin/release/0.5.0` at `a0fcfa5` into the T009 branch for PR #145. Resolved shared project registrations and guide additions by preserving both slices; both task checkboxes and test registrations remain present. No application behavior changed during conflict resolution.
+
+`scripts/check.sh T009 T004` — warning-as-error build passed; 131 tests passed, zero failures/skips. Full-suite CI remains required on the updated PR head.
