@@ -1,6 +1,6 @@
 # F002 validation quickstart
 
-**Owner manual validation is pending.** Automated results are not owner acceptance.
+Owner manual validation is recorded in [T018 evidence](evidence/t018-owner-validation.md).
 Use Linux, Firefox and Chromium, synthetic PDFs from `tests/Fixtures/` only, and a
 new isolated workspace for each browser. Never point these steps at your research
 workspace. No real account or external summary service is needed.
@@ -9,7 +9,7 @@ workspace. No real account or external summary service is needed.
 
 ```sh
 scripts/install-browsers.sh # only if the bundled test browsers are missing
-TMPDIR=/tmp/opencode scripts/check.sh T018
+env TMPDIR=/tmp/opencode scripts/check.sh T018
 ```
 
 This builds with `-warnaserror` and runs task-tagged security/privacy tests and
@@ -40,7 +40,7 @@ Stop the host with Ctrl-C. Seed deterministic stored summaries in **this fixture
 workspace only**, without sending anything externally:
 
 ```sh
-python3 - <<'PY'
+python3 -c '
 import datetime, json, os, pathlib, sqlite3
 root = pathlib.Path(os.environ["F002_DATA"]).resolve()
 assert root.parent == pathlib.Path("/tmp/opencode") and root.name.startswith("f002-owner.")
@@ -48,7 +48,7 @@ with sqlite3.connect(root / "workspace.sqlite") as db:
     db.execute("PRAGMA foreign_keys=ON")
     pairs = db.execute("""SELECT p.ProjectId, p.DocumentId
         FROM ProjectDocuments p JOIN LibraryDocuments d ON d.Id=p.DocumentId
-        WHERE d.OriginalFileName='valid.pdf'""").fetchall()
+        WHERE d.OriginalFileName=?""", ("valid.pdf",)).fetchall()
     assert len(pairs) == 2, "Create the two fixture associations first"
     for index, (project, document) in enumerate(pairs, 1):
         content = dict(version=1, points=[dict(text=f"Ponto sintético do projeto {index}", pages=[1,2])],
@@ -56,8 +56,9 @@ with sqlite3.connect(root / "workspace.sqlite") as db:
                        serviceHost="local-fixture", model="manual-fixture")
         db.execute("""INSERT OR REPLACE INTO DocumentSummaries
             (ProjectId, DocumentId, Content, GeneratedAt) VALUES (?,?,?,?)""",
-            (project, document, json.dumps(content), datetime.datetime.now(datetime.timezone.utc).isoformat()))
-PY
+            (project, document, json.dumps(content),
+             datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f") + "0Z"))
+'
 dotnet run --project src/LexScholar.Server
 ```
 
@@ -88,16 +89,16 @@ dotnet run --project src/LexScholar.Server
    # In this second shell, replace the example with the setup shell's printed path.
    export F002_DATA='/tmp/opencode/f002-owner.REPLACE_WITH_ACTUAL_SUFFIX'
    # Fixture workspace only. The guard rejects any other data directory.
-   python3 - <<'PY'
+   python3 -c '
    import os, pathlib, sqlite3
    root = pathlib.Path(os.environ["F002_DATA"]).resolve()
    assert root.parent == pathlib.Path("/tmp/opencode") and root.name.startswith("f002-owner.")
    with sqlite3.connect(root / "workspace.sqlite") as db:
-       key, = db.execute("SELECT StorageKey FROM LibraryDocuments WHERE OriginalFileName='distinct.pdf'").fetchone()
+       key, = db.execute("SELECT StorageKey FROM LibraryDocuments WHERE OriginalFileName=?", ("distinct.pdf",)).fetchone()
    assert len(key) == 32 and all(c in "0123456789abcdefABCDEF" for c in key)
    (root / "originals" / key).unlink()
    (root / "originals").chmod(0o500)
-   PY
+   '
    ```
 
    As a normal non-root user, preview and confirm both. Expect a partial result:
