@@ -22,6 +22,7 @@
     <Compile Include="WorkspaceStartupTests.fs" />
     <Compile Include="ProjectContractTests.fs" />
     <Compile Include="LibraryContractTests.fs" />
+    <Compile Include="LibraryDeletionPreviewTests.fs" />
     <Compile Include="LibraryCoordinationContractTests.fs" />
     <Compile Include="ReaderContractTests.fs" />
     <Compile Include="SummaryContractTests.fs" />
