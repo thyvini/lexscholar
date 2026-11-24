@@ -7,6 +7,7 @@
     <Compile Include="Ports.fs" />
     <Compile Include="Capabilities.fs" />
     <Compile Include="LibraryControls.fs" />
+    <Compile Include="LibraryExport.fs" />
     <Compile Include="ImportDocument.fs" />
     <Compile Include="Projects.fs" />
     <Compile Include="Library.fs" />
