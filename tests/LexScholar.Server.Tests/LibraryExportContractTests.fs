@@ -26,8 +26,8 @@ let private export (host: TestHarness) = task {
     return! host.Client.SendAsync(request)
 }
 
-[<Fact; Trait("Task", "T004")>]
-let ``empty internal export is a conflict and public export remains unmapped`` () = task {
+[<Fact; Trait("Task", "T004"); Trait("Task", "T008")>]
+let ``empty internal and public exports are conflicts`` () = task {
     use host = start ()
     use! response = export host
     Assert.Equal(HttpStatusCode.Conflict, response.StatusCode)
@@ -35,8 +35,30 @@ let ``empty internal export is a conflict and public export remains unmapped`` (
     use json = JsonDocument.Parse(body)
     Assert.Equal("empty_library", json.RootElement.GetProperty("code").GetString())
     use production = TestHarness.Start()
-    use! disabled = export production
-    Assert.Equal(HttpStatusCode.NotFound, disabled.StatusCode)
+    use! publicResponse = export production
+    Assert.Equal(HttpStatusCode.Conflict, publicResponse.StatusCode)
+}
+
+[<Fact; Trait("Task", "T008")>]
+let ``public export retains header antiforgery and Host Origin checks`` () = task {
+    use host = TestHarness.Start()
+    use! tokenResponse = host.Client.GetAsync("/api/antiforgery")
+    use! tokenBody = tokenResponse.Content.ReadAsStreamAsync()
+    use json = JsonDocument.Parse(tokenBody)
+    let token = json.RootElement.GetProperty("requestToken").GetString()
+    for invalid in ["csrf"; "origin"; "host"] do
+        use request = new HttpRequestMessage(HttpMethod.Post, "/api/library/export")
+        if invalid <> "csrf" then request.Headers.Add("X-CSRF-TOKEN", token)
+        request.Headers.Add("Origin", if invalid = "origin" then "https://example.invalid" else host.Client.BaseAddress.GetLeftPart(UriPartial.Authority))
+        if invalid = "host" then request.Headers.Host <- "example.invalid"
+        use! response = host.Client.SendAsync(request)
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode)
+        Assert.NotEqual<string>("application/zip", response.Content.Headers.ContentType.MediaType)
+    // Export activation must not activate deletion admission.
+    use deletion = new HttpRequestMessage(HttpMethod.Post, "/api/library/deletions")
+    deletion.Headers.Add("X-CSRF-TOKEN", token)
+    use! response = host.Client.SendAsync(deletion)
+    Assert.Equal(HttpStatusCode.NotFound, response.StatusCode)
 }
 
 [<Fact; Trait("Task", "T004")>]
@@ -116,7 +138,7 @@ let ``internal ZIP preserves shared and unassociated originals with exact v1 met
         Assert.Equal(JsonValueKind.Null, item.GetProperty("summary").ValueKind)
     Assert.Equal(2, (LibraryRepository.list host.Root).Length)
     Assert.Empty(Directory.GetFiles(Path.Combine(host.Root, "exports")))
-    // T005 now includes stored summaries; public success remains gated at T008.
+    // Stored summaries use the same complete builder as public export.
     SummaryRepository.save host.Root { Project = first; Document = shared }
         { DocumentId = shared; Points = []; PagesCovered = [1]; UnreadablePages = []
           OmittedPoints = 0; GeneratedAt = imported; ServiceHost = "local"; Model = "fixture" }

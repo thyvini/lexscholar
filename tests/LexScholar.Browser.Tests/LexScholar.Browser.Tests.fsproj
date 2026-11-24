@@ -19,6 +19,8 @@
     <Compile Include="OnboardingJourneyTests.fs" />
     <Compile Include="LibraryStateTests.fs" />
     <Compile Include="LibraryJourneyTests.fs" />
+    <Compile Include="LibraryExportJourneyTests.fs" />
+    <Compile Include="LibraryExportStateTests.fs" />
     <Compile Include="RoleApiTests.fs" />
     <Compile Include="SummaryStateTests.fs" />
     <Compile Include="SummaryJourneyTests.fs" />

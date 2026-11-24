@@ -1,5 +1,14 @@
 module LexScholar.Client.Texts
 
+let exportLibrary = "Exportar biblioteca"
+let exportContents = "Inclui todos os PDFs, projetos, vínculos, papéis e resumos salvos. Os resumos são gerados para revisão, não verificados."
+let exportExplanation = "Para uso fora do LexScholar. Não há restauração no aplicativo. Credenciais e configurações não são incluídas."
+let exporting = "Preparando e recebendo a exportação…"
+let exportReceived = "Arquivo recebido. Confira o download no navegador; o LexScholar não confirma o salvamento no disco."
+let emptyExport = "Não há documentos para exportar."
+let exportUnavailable name = $"Não foi possível exportar: documento indisponível — {name}."
+let exportFailed = "Não foi possível concluir a exportação. Tente novamente. Um download incompleto não é uma exportação completa."
+
 let feedbackLabel = "Como melhorar este resumo?"
 let regenerate = "Refazer resumo"
 let feedbackPrivacy = "Seu feedback será enviado com o texto do documento ao ChatGPT como instrução para o novo resumo. Não é salvo. O resumo atual será mantido até o novo ficar pronto."
