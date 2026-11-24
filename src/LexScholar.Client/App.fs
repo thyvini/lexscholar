@@ -16,6 +16,17 @@ open LexScholar.Domain
 open LexScholar.Client.Projects
 
 module Api =
+    let exportLibrary (javascript: IJSRuntime) = async {
+        try
+            let! result = javascript.InvokeAsync<string>("lexScholarLibraryExport.download").AsTask() |> Async.AwaitTask
+            if result = "received" then return Ok ()
+            else
+                use json = JsonDocument.Parse(result)
+                let root = json.RootElement
+                return Error (Library.parseExportFailure (root.GetProperty("status").GetInt32()) (root.GetProperty("body").GetString()))
+        with _ -> return Error Library.ExportRequestFailed
+    }
+
     let parseFailure (status: HttpStatusCode) (body: string) =
         try
             use json = JsonDocument.Parse(body)
@@ -307,13 +318,14 @@ module private Ui =
         | SendSelect id ->
             Cmd.OfAsync.perform (fun () -> Api.mutate http HttpMethod.Put $"api/projects/{id:D}/active" None) () Selected
 
-    let libraryCommand http effect : Cmd<Msg> =
+    let libraryCommand http javascript effect : Cmd<Msg> =
         let perform work toMessage = Cmd.OfAsync.perform work () (toMessage >> LibraryMsg)
         let fetchLibrary request =
             perform (fun () -> Api.libraryDocuments http) (fun result -> Library.LibraryLoaded (request, result))
         let fetchProject projectId request =
             perform (fun () -> Api.projectDocuments http projectId) (fun result -> Library.ProjectLoaded (projectId, request, result))
         match effect with
+        | Library.SendExport -> perform (fun () -> Api.exportLibrary javascript) Library.Exported
         | Library.FetchLibrary request -> fetchLibrary request
         | Library.FetchProject (projectId, request) -> fetchProject projectId request
         | Library.FetchAll (library, project) ->
@@ -329,11 +341,11 @@ module private Ui =
         | Library.SendRole (projectId, documentId, role) ->
             perform (fun () -> Api.changeRole http projectId documentId role) (fun result -> Library.RoleChanged (projectId, result))
 
-    let private updateLibrary http message state =
+    let private updateLibrary http javascript message state =
         let library, effect = Library.update message state.Library
         let showLibrary = match message with Library.OpenDocument _ when library.Opened.IsSome -> false | _ -> state.ShowLibrary
         let pendingProjectOpen = match message with Library.OpenDocument _ when library.Opened.IsSome -> false | _ -> state.PendingProjectOpen
-        { state with Library = library; ShowLibrary = showLibrary; PendingProjectOpen = pendingProjectOpen }, effect |> Option.map (libraryCommand http) |> Option.defaultValue Cmd.none
+        { state with Library = library; ShowLibrary = showLibrary; PendingProjectOpen = pendingProjectOpen }, effect |> Option.map (libraryCommand http javascript) |> Option.defaultValue Cmd.none
 
     /// How often the open document's running summary is asked for (research §4).
     let private summaryPollMilliseconds = 2000
@@ -405,7 +417,7 @@ module private Ui =
         | Some ChatGpt.SendDismissWelcome -> Cmd.ofEffect (fun _ -> ChatGptApi.dismissWelcome http |> Async.StartImmediate)
         | None -> Cmd.none
 
-    let private updateCore http (navigation: NavigationManager) msg state =
+    let private updateCore http javascript (navigation: NavigationManager) msg state =
         match msg with
         | FinishOnboarding when state.Projects.HasLoaded && state.Projects.Busy.IsNone && state.Library.Busy.IsNone && state.ChatGpt.Status <> ChatGpt.Starting ->
             { state with Onboarding = Some false }, Cmd.none
@@ -461,21 +473,21 @@ module private Ui =
             let state, projectCommand =
                 match message with
                 | Reload ->
-                    let state, libraryCommand = updateLibrary http Library.Refresh state
+                    let state, libraryCommand = updateLibrary http javascript Library.Refresh state
                     state, Cmd.batch [ projectCommand; libraryCommand ]
                 | _ -> state, projectCommand
             // Follow the active project once the project list has loaded.
             if projects.HasLoaded && projects.Snapshot.Active <> state.Library.Project then
-                let state, libraryCommand = updateLibrary http (Library.ActiveProjectChanged projects.Snapshot.Active) state
+                let state, libraryCommand = updateLibrary http javascript (Library.ActiveProjectChanged projects.Snapshot.Active) state
                 state, Cmd.batch [ projectCommand; libraryCommand ]
             else state, projectCommand
-        | LibraryMsg message -> updateLibrary http message state
+        | LibraryMsg message -> updateLibrary http javascript message state
 
     /// The summary follows the library's project and open document after every message.
-    let update http navigation msg state =
+    let update http javascript navigation msg state =
         let viewOf (state: State) = state.Library.Project, state.Library.Opened
         let before = viewOf state
-        let state, command = updateCore http navigation msg state
+        let state, command = updateCore http javascript navigation msg state
         // The markers are read again on every project or document view change (AR 4) and once a summary was asked for or
         // dismissed (its POST or DELETE has been answered) and once a document was removed from the project.
         let statuses, statusEffect =
@@ -514,6 +526,19 @@ module private Ui =
             section {
                 attr.``class`` "card"
                 h2 { text Texts.library }
+                p { text Texts.exportContents }
+                p { text Texts.exportExplanation }
+                button {
+                    attr.``type`` "button"
+                    attr.disabled (library.ExportState = Library.Exporting)
+                    on.click (fun _ -> dispatch Library.Export)
+                    text Texts.exportLibrary
+                }
+                cond library.ExportState <| function
+                    | Library.ExportIdle -> empty ()
+                    | Library.Exporting -> p { "role" => "status"; text Texts.exporting }
+                    | Library.ExportReceived -> p { "role" => "status"; text Texts.exportReceived }
+                    | Library.ExportError failure -> p { "role" => "alert"; text (FailureTexts.export failure) }
                 label { "for" => "library-file"; text Texts.importPdf }
                 comp<InputFile> {
                     "id" => "library-file"
@@ -1281,9 +1306,9 @@ type App() =
                 Cmd.batch [ Ui.command http Fetch |> Cmd.map ProjectsMsg
                             Ui.chatGptCommand http this.Navigation chatGptEffect
                             Ui.statusCommand http statusEffect
-                            libraryEffect |> Option.map (Ui.libraryCommand http) |> Option.defaultValue Cmd.none ]
+                            libraryEffect |> Option.map (Ui.libraryCommand http this.JavaScript) |> Option.defaultValue Cmd.none ]
         let update msg state =
-            let next, command = Ui.update http this.Navigation msg state
+            let next, command = Ui.update http this.JavaScript this.Navigation msg state
             if next.Onboarding <> state.Onboarding then
                 try
                     js.InvokeVoid("sessionStorage.setItem", [| box "lexscholar.onboarding"; box (if next.Onboarding = Some true then "active" else "finished") |])

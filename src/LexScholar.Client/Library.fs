@@ -9,6 +9,17 @@ open LexScholar.Domain
 type Document = { Id: Guid; FileName: string; PageCount: int; ContentUrl: string }
 type Association = { Document: Document; Role: DocumentRole }
 
+type ExportFailure =
+    | EmptyExport
+    | ExportDocumentUnavailable of string
+    | ExportRequestFailed
+
+type ExportState =
+    | ExportIdle
+    | Exporting
+    | ExportReceived
+    | ExportError of ExportFailure
+
 type Failure =
     | NotAPdf
     | CorruptPdf
@@ -34,6 +45,7 @@ type Operation =
 
 type Model =
     { Documents: Document list
+      ExportState: ExportState
       HasLoadedLibrary: bool
       LoadingLibrary: bool
       /// The active project whose associations are shown.
@@ -56,6 +68,8 @@ type Model =
       ProjectRequest: int }
 
 type Message =
+    | Export
+    | Exported of Result<unit, ExportFailure>
     | LoadLibrary
     | LibraryLoaded of request: int * Result<Document list, Failure>
     | ActiveProjectChanged of Guid option
@@ -77,6 +91,7 @@ type Message =
     | Removed of projectId: Guid * documentId: Guid * Result<unit, Failure>
 
 type Effect =
+    | SendExport
     | FetchLibrary of request: int
     | FetchProject of projectId: Guid * request: int
     /// Both lists at once, for Refresh.
@@ -88,6 +103,7 @@ type Effect =
 
 let initial =
     { Documents = []
+      ExportState = ExportIdle
       HasLoadedLibrary = false
       LoadingLibrary = false
       Project = None
@@ -127,6 +143,19 @@ let parseFailure (status: int) (body: string) : Failure =
         else RequestFailed
     with _ -> RequestFailed
 
+let parseExportFailure status (body: string) =
+    try
+        use json = System.Text.Json.JsonDocument.Parse(body)
+        let root = json.RootElement
+        match status, root.GetProperty("code").GetString() with
+        | 409, "empty_library" -> EmptyExport
+        | 409, "document_unavailable" ->
+            match root.GetProperty("name").GetString() with
+            | null | "" -> ExportRequestFailed
+            | name -> ExportDocumentUnavailable name
+        | _ -> ExportRequestFailed
+    with _ -> ExportRequestFailed
+
 /// Starts a new library request; earlier ones become stale.
 let private nextLibrary model =
     let request = model.LibraryRequest + 1
@@ -150,6 +179,10 @@ let private mutated (projectId: Guid) (result: Result<unit, Failure>) model =
 
 let update (message: Message) (model: Model) : Model * Effect option =
     match message with
+    | Export when model.ExportState <> Exporting ->
+        { model with ExportState = Exporting }, Some SendExport
+    | Exported result when model.ExportState = Exporting ->
+        { model with ExportState = match result with Ok () -> ExportReceived | Error failure -> ExportError failure }, None
     | LoadLibrary ->
         let model, request = nextLibrary model
         model, Some (FetchLibrary request)
