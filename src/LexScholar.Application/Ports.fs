@@ -53,6 +53,8 @@ type OpenStoredOriginal = string -> CancellationToken -> Task<Stream>
 
 /// Documents whose SHA-256 equals the given lowercase hex digest. The digest
 /// only narrows candidates; equality is decided by comparing bytes.
+/// Reusable candidates only: excludes identities with unfinished deletion intent.
+/// Import re-reads under the mutation boundary after asynchronous byte comparison.
 type FindDocumentsBySha256 = string -> CancellationToken -> Task<LibraryDocument list>
 
 /// Insert a new library document row.

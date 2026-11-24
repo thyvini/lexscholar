@@ -5,6 +5,8 @@ module LexScholar.Infrastructure.DocumentStore
 
 open System
 open System.IO
+open System.Runtime.InteropServices
+open Microsoft.Win32.SafeHandles
 open LexScholar.Application
 
 let private privateDirectory = UnixFileMode.UserRead ||| UnixFileMode.UserWrite ||| UnixFileMode.UserExecute
@@ -12,6 +14,7 @@ let private privateDirectory = UnixFileMode.UserRead ||| UnixFileMode.UserWrite 
 let stagingDirectory dataDirectory = Path.Combine(dataDirectory, "staging")
 let originalsDirectory dataDirectory = Path.Combine(dataDirectory, "originals")
 let quarantineDirectory dataDirectory = Path.Combine(dataDirectory, "quarantine")
+let exportDirectory dataDirectory = Path.Combine(dataDirectory, "exports")
 
 /// Creates the storage directories, private to the current user, if missing.
 let ensureDirectories dataDirectory =
@@ -74,3 +77,36 @@ let openOriginal (dataDirectory: string) : OpenStoredOriginal =
         if not (isStorageKey storageKey) then
             invalidArg (nameof storageKey) "A storage key must be a generated 32-character lowercase hex key."
         return openRead (Path.Combine(originalsDirectory dataDirectory, storageKey)) }
+
+[<RequireQualifiedAccess>]
+type RemovalStep = BeforeUnlink | AfterUnlink | BeforeSync | AfterSync
+
+[<DllImport("libc", SetLastError = true, EntryPoint = "open")>]
+extern int private openDirectory([<MarshalAs(UnmanagedType.LPUTF8Str)>] string path, int flags)
+
+[<DllImport("libc", SetLastError = true, EntryPoint = "unlinkat")>]
+extern int private unlinkAt(SafeFileHandle directory, [<MarshalAs(UnmanagedType.LPUTF8Str)>] string name, int flags)
+
+[<DllImport("libc", SetLastError = true, EntryPoint = "fsync")>]
+extern int private syncDirectory(SafeFileHandle directory)
+
+/// Linux only. Anchor both unlink and fsync to the same opened directory, never
+/// follow an originals-directory symlink, and accept ONLY ENOENT as missing.
+/// File.Exists cannot distinguish missing from inaccessible storage.
+let removeOriginalWith (checkpoint: RemovalStep -> unit) directory key =
+    if not (isStorageKey key) then invalidArg (nameof key) "Invalid managed storage key."
+    if not (OperatingSystem.IsLinux()) then raise (PlatformNotSupportedException())
+    // O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW
+    let descriptor = openDirectory(originalsDirectory directory, 0x10000 ||| 0x80000 ||| 0x20000)
+    if descriptor < 0 then raise (IOException("Managed originals directory unavailable."))
+    use handle = new SafeFileHandle(IntPtr(descriptor), true)
+    checkpoint RemovalStep.BeforeUnlink
+    if unlinkAt(handle, key, 0) <> 0 then
+        let error = Marshal.GetLastPInvokeError()
+        if error <> 2 then raise (IOException("Managed original removal failed."))
+    checkpoint RemovalStep.AfterUnlink
+    checkpoint RemovalStep.BeforeSync
+    if syncDirectory handle <> 0 then raise (IOException("Managed originals directory sync failed."))
+    checkpoint RemovalStep.AfterSync
+
+let removeOriginal directory key = removeOriginalWith ignore directory key

@@ -12,6 +12,7 @@ open Microsoft.Extensions.Configuration
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Hosting
 open LexScholar.Server
+open LexScholar.Application
 
 /// Owns test data independently of a host so multiple processes can target it.
 type TemporaryWorkspace private (root: string) =
@@ -50,15 +51,17 @@ type TestHarness private (workspace: TemporaryWorkspace, ownsWorkspace: bool, ap
     member _.App = app
     member _.Client = client
 
-    static member Start(?settings: (string * string) list, ?serveClient: bool, ?configure: WebApplication -> unit, ?environment: string, ?workspace: TemporaryWorkspace, ?summaryHandler: HttpMessageHandler, ?summaryExtraction: SummaryEndpoints.PageExtraction) =
+    static member Start(?settings: (string * string) list, ?serveClient: bool, ?configure: WebApplication -> unit, ?environment: string, ?workspace: TemporaryWorkspace, ?summaryHandler: HttpMessageHandler, ?summaryExtraction: SummaryEndpoints.PageExtraction, ?pdfValidation: ValidatePdf, ?deletionRecovery: LexScholar.Infrastructure.LibraryDeletionRecovery.StartupForTests) =
         let ownsWorkspace = Option.isNone workspace
         let workspace = match workspace with Some shared -> shared | None -> TemporaryWorkspace.Create()
         let mutable app: WebApplication option = None
         try
             let builder = HostSetup.builder workspace.Root (defaultArg settings [])
+            deletionRecovery |> Option.iter (fun recovery -> builder.Services.AddSingleton<LexScholar.Infrastructure.LibraryDeletionRecovery.StartupForTests>(recovery) |> ignore)
             // The host takes the outgoing summary handler from DI when one is registered (research §7).
             summaryHandler |> Option.iter (fun handler -> builder.Services.AddSingleton<HttpMessageHandler>(handler) |> ignore)
             summaryExtraction |> Option.iter (fun extraction -> builder.Services.AddSingleton<SummaryEndpoints.PageExtraction>(extraction) |> ignore)
+            pdfValidation |> Option.iter (fun validation -> builder.Services.AddSingleton<ValidatePdf>(validation) |> ignore)
             environment |> Option.iter (fun name -> builder.Environment.EnvironmentName <- name)
             if defaultArg serveClient false then
                 builder.WebHost.UseStaticWebAssets() |> ignore

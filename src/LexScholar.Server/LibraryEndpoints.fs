@@ -88,27 +88,33 @@ let associationRequest (request: HttpRequest) = task {
         return role, documentId
     with :? JsonException -> return None, None }
 
-let map (app: WebApplication) (configuration: WorkspaceConfiguration) (jobs: SummaryJobs) =
+let map (app: WebApplication) (configuration: WorkspaceConfiguration) (jobs: SummaryJobs) (coordination: LibraryCoordination) =
     let directory = configuration.DataDirectory
+    let validate =
+        match app.Services.GetService(typeof<ValidatePdf>) with
+        | :? ValidatePdf as custom -> custom
+        | _ -> PdfValidator.validate
     let store : Library.Store =
         { ListDocuments = fun () -> LibraryRepository.list directory
           ListForProject = LibraryRepository.listForProject directory
-          Associate = LibraryRepository.associate directory
+          Associate = fun item -> coordination.Mutation(fun () -> LibraryRepository.associate directory item)
           Remove = LibraryRepository.removeAssociation directory }
     // Created once per host and shared by every request: each import function
     // owns one serialized commit section, so concurrent identical uploads must
     // go through the same one.
     let import =
-        ImportDocument.create
+        ImportDocument.createCoordinated coordination
             { Limits = configuration.ImportLimits
-              Validate = PdfValidator.validate
+              Validate = validate
               OpenStagedWrite = DocumentStore.openStagedWrite directory
               OpenStagedRead = DocumentStore.openStagedRead directory
               Promote = DocumentStore.promote directory
               Discard = DocumentStore.discard directory
               OpenOriginal = DocumentStore.openOriginal directory
               FindBySha256 = LibraryRepository.findBySha256 directory
-              Insert = LibraryRepository.insert directory
+              Insert = fun document token ->
+                  coordination.Mutation(fun () -> (LibraryRepository.insert directory document token).GetAwaiter().GetResult())
+                  Task.FromResult(())
               Now = fun () -> DateTimeOffset.UtcNow }
 
     app.MapGet("/api/documents", Func<IResult>(fun () -> Results.Ok(Library.list store))) |> ignore

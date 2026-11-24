@@ -75,6 +75,19 @@ type DocumentSummaryRow() =
     member val Content = "" with get, set
     member val GeneratedAt = DateTimeOffset.MinValue with get, set
 
+type DeletionOperationRow() =
+    member val Id = Guid.Empty with get, set
+    member val CreatedUtc = DateTimeOffset.MinValue with get, set
+
+type DeletionItemRow() =
+    member val OperationId = Guid.Empty with get, set
+    member val DocumentId = Guid.Empty with get, set
+    member val OriginalFileName = "" with get, set
+    member val StorageKey = "" with get, set
+    member val Status = "" with get, set
+    member val Phase = "" with get, set
+    member val Reason: string = null with get, set
+
 type WorkspaceDb(options: DbContextOptions) =
     inherit DbContext(options)
     override _.ConfigureConventions(builder: ModelConfigurationBuilder) =
@@ -119,6 +132,22 @@ type WorkspaceDb(options: DbContextOptions) =
         summary.HasKey("ProjectId", "DocumentId") |> ignore
         summary.Property<string>("Content").IsRequired() |> ignore
         summary.HasOne<ProjectDocumentRow>().WithMany().HasForeignKey("ProjectId", "DocumentId").OnDelete(DeleteBehavior.Cascade) |> ignore
+        let deletion = model.Entity<DeletionOperationRow>()
+        deletion.ToTable("DeletionOperations") |> ignore
+        deletion.HasKey("Id") |> ignore
+        deletion.Property<Guid>("Id").ValueGeneratedNever() |> ignore
+        let item = model.Entity<DeletionItemRow>()
+        item.ToTable("DeletionItems", fun (table: TableBuilder<DeletionItemRow>) ->
+            table.HasCheckConstraint("CK_DeletionItems_Status", "Status IN ('pending', 'metadata_removed', 'deleted', 'incomplete')") |> ignore
+            table.HasCheckConstraint("CK_DeletionItems_Phase", "Phase IN ('pending', 'metadata_removed')") |> ignore
+            table.HasCheckConstraint("CK_DeletionItems_StatusPhase", "(Status = 'pending' AND Phase = 'pending') OR (Status IN ('metadata_removed', 'deleted') AND Phase = 'metadata_removed') OR Status = 'incomplete'") |> ignore) |> ignore
+        item.HasKey("OperationId", "DocumentId") |> ignore
+        item.Property<string>("OriginalFileName").IsRequired() |> ignore
+        item.Property<string>("StorageKey").IsRequired() |> ignore
+        item.Property<string>("Status").IsRequired() |> ignore
+        item.Property<string>("Phase").IsRequired() |> ignore
+        item.HasIndex([| "DocumentId" |]).IsUnique().HasFilter("Status <> 'deleted'") |> ignore
+        item.HasOne<DeletionOperationRow>().WithMany().HasForeignKey("OperationId").OnDelete(DeleteBehavior.Cascade) |> ignore
 
 module WorkspaceDb =
     let databasePath dataDirectory = Path.Combine(dataDirectory, "workspace.sqlite")

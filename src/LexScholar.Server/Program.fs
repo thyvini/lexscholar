@@ -7,6 +7,7 @@ open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Logging
 open LexScholar.Server
 open LexScholar.Infrastructure
+open LexScholar.Application
 
 type StartupError = ConfigurationFailure of ConfigurationError | LockFailure of LockError | InvalidPort of string
 
@@ -38,6 +39,7 @@ let private createHost (builder: WebApplicationBuilder) (serveClient: bool) port
                 // it is built but never started. ApplicationStopped also releases it
                 // after a normal stop; SafeFileHandle disposal is idempotent.
                 builder.Services.AddSingleton<DataDirectoryLease>(fun _ -> lease) |> ignore
+                builder.Services.AddSingleton<LibraryCoordination>() |> ignore
                 // The request-start line carries the query string, which on /auth/callback holds
                 // the authorization code and state (F005). Warnings and errors still log.
                 builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.Warning) |> ignore
@@ -50,7 +52,22 @@ let private createHost (builder: WebApplicationBuilder) (serveClient: bool) port
                     app.Logger.LogInformation("Using data directory {DataDirectory}.", configuration.DataDirectory)
                     // Under the lock, after migrations and before serving: discard
                     // interrupted imports. Built first only so a logger exists.
+                    // Resume durable, explicitly confirmed intents before orphan
+                    // cleanup and before any requests or summary jobs can start.
+                    let recovery =
+                        if app.Environment.EnvironmentName = "Testing" then
+                            app.Services.GetService<LibraryDeletionRecovery.StartupForTests>()
+                        else null
+                    try
+                        if not (isNull recovery) then recovery.Invoke(configuration.DataDirectory)
+                        else LibraryDeletionRecovery.run (app.Services.GetRequiredService<LibraryCoordination>()) configuration.DataDirectory
+                    with _ ->
+                        app.Logger.LogWarning("Could not finish deletion recovery; retained operations require attention.")
                     let cleanup = StorageCleanup.run configuration.DataDirectory
+                    if cleanup.DeletionJournalReadFailed then
+                        app.Logger.LogWarning("Could not read the deletion journal; original-file cleanup was skipped and will be retried at next startup.")
+                    if cleanup.ExportCleanupIncomplete then
+                        app.Logger.LogWarning("Could not remove all abandoned export files; private leftovers will be retried at next startup.")
                     for storageKey in cleanup.Quarantined do
                         app.Logger.LogWarning("Moved unreferenced original {StorageKey} to quarantine.", storageKey)
                     for storageKey in cleanup.Conflicting do

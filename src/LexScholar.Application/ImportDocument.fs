@@ -78,7 +78,7 @@ let private copyAtMost (source: Stream) (target: Stream) (limit: int64) (cancell
 /// once per host: streaming and validation run concurrently, but only one
 /// import at a time finds duplicates, promotes and inserts. The data-directory
 /// lock guarantees a single process, so no contention retries are needed.
-let create (dependencies: ImportDependencies) : Import =
+let createCoordinated (coordination: LibraryCoordination) (dependencies: ImportDependencies) : Import =
     let commitSection = new SemaphoreSlim(1, 1)
     // Reading one byte past the limit is enough to prove an upload is too large.
     let stagingLimit =
@@ -107,7 +107,16 @@ let create (dependencies: ImportDependencies) : Import =
         | [] -> return None
         | candidate :: rest ->
             let! same = matches key candidate
-            if same then return Some candidate else return! firstMatch key rest }
+            // File comparison may await while deletion intent commits. Re-read
+            // eligible identities under the mutation boundary before reuse;
+            // repository lookup excludes unfinished deletion items. Only the
+            // database read is inside this monitor, never PDF I/O.
+            let reusable =
+                same && coordination.Mutation(fun () ->
+                    dependencies.FindBySha256 candidate.Sha256 CancellationToken.None
+                    |> fun work -> work.GetAwaiter().GetResult()
+                    |> List.exists (fun current -> current.Id = candidate.Id))
+            if reusable then return Some candidate else return! firstMatch key rest }
 
     // Runs inside the commit section without a cancellation token, so a commit
     // is never abandoned between promotion and the row insert.
@@ -143,6 +152,7 @@ let create (dependencies: ImportDependencies) : Import =
         | Ok validated ->
             do! commitSection.WaitAsync(cancellationToken)
             try
+                use! lease = coordination.FileLease(cancellationToken)
                 let! outcome = commit key validated fileName
                 return Ok outcome
             finally
@@ -164,3 +174,5 @@ let create (dependencies: ImportDependencies) : Import =
         | Error captured ->
             captured.Throw()
             return Unchecked.defaultof<_> }
+
+let create dependencies = createCoordinated (LibraryCoordination()) dependencies

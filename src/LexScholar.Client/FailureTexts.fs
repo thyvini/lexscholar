@@ -1,5 +1,12 @@
 module LexScholar.Client.FailureTexts
 
+let deletion () = Texts.deletionFailure
+
+let export = function
+    | Library.EmptyExport -> Texts.emptyExport
+    | Library.ExportDocumentUnavailable name -> Texts.exportUnavailable name
+    | Library.ExportRequestFailed -> Texts.exportFailed
+
 let library = function
     | Library.NotAPdf -> Texts.notPdf
     | Library.CorruptPdf -> Texts.corruptPdf
