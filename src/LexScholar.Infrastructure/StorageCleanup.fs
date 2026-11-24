@@ -13,7 +13,8 @@ type CleanupReport =
     { DeletedStagingFiles: int
       Quarantined: string list
       Conflicting: string list
-      ExportCleanupIncomplete: bool }
+      ExportCleanupIncomplete: bool
+      DeletionJournalReadFailed: bool }
 
 let private sameContent (left: string) (right: string) =
     use leftStream = File.OpenRead(left)
@@ -40,7 +41,7 @@ let private cleanupExports directory =
 /// stored originals that no document row references to quarantine/, without
 /// overwriting: when quarantine already holds different bytes under the same
 /// key, both files are left in place and the key is reported as Conflicting.
-/// Referenced originals and rows are never touched.
+/// Referenced originals, unfinished deletion keys and rows are never touched.
 let run (dataDirectory: string) : CleanupReport =
     DocumentStore.ensureDirectories dataDirectory
     let staging = DocumentStore.stagingDirectory dataDirectory
@@ -52,22 +53,39 @@ let run (dataDirectory: string) : CleanupReport =
     // No transfer can be active while startup holds the workspace lock.
     let exportCleanupIncomplete = cleanupExports (DocumentStore.exportDirectory dataDirectory)
     let referenced = LibraryRepository.storageKeys dataDirectory
+    // The retained journal is authority even after the library row is gone.
+    // Query failure skips ALL orphan cleanup rather than guessing which files
+    // are orphans. Preserve originals without blocking access to the workspace.
+    // This protection applies even while production recovery is gated off.
+    let deleting =
+        try
+            use db = WorkspaceDb.create dataDirectory
+            db.Set<DeletionItemRow>()
+            |> Seq.filter (fun item -> item.Status <> "deleted")
+            |> Seq.map _.StorageKey
+            |> Set.ofSeq
+            |> Some
+        with _ -> None
     let moves =
-        [ for path in Directory.GetFiles(originals) |> Array.sort do
-            let key = Path.GetFileName(path)
-            if not (referenced.Contains key) then
-                let destination = Path.Combine(quarantine, key)
-                if not (File.Exists(destination)) then
-                    File.Move(path, destination, false)
-                    yield Ok key
-                // A move interrupted after linking the quarantine name leaves the
-                // same bytes under both names; removing the original completes it.
-                elif sameContent path destination then
-                    File.Delete(path)
-                    yield Ok key
-                else
-                    yield Error key ]
+        match deleting with
+        | None -> []
+        | Some deleting ->
+            [ for path in Directory.GetFiles(originals) |> Array.sort do
+                let key = Path.GetFileName(path)
+                if not (referenced.Contains key || deleting.Contains key) then
+                    let destination = Path.Combine(quarantine, key)
+                    if not (File.Exists(destination)) then
+                        File.Move(path, destination, false)
+                        yield Ok key
+                    // A move interrupted after linking the quarantine name leaves the
+                    // same bytes under both names; removing the original completes it.
+                    elif sameContent path destination then
+                        File.Delete(path)
+                        yield Ok key
+                    else
+                        yield Error key ]
     { DeletedStagingFiles = leftovers.Length
       Quarantined = moves |> List.choose (function Ok key -> Some key | Error _ -> None)
       Conflicting = moves |> List.choose (function Error key -> Some key | Ok _ -> None)
-      ExportCleanupIncomplete = exportCleanupIncomplete }
+      ExportCleanupIncomplete = exportCleanupIncomplete
+      DeletionJournalReadFailed = deleting.IsNone }
