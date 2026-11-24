@@ -50,26 +50,49 @@ let private confirmation (request: HttpRequest) = task {
             | _ -> return None
     with :? JsonException -> return None }
 
-/// Only isolated test hosts call this until the complete deletion controls ship.
-let mapForTests (app: WebApplication) (directory: string) =
+let private map (app: WebApplication) (directory: string) (autoStart: bool) (runItem: Guid -> Guid -> Task<Result<unit, LibraryDeletion.MetadataError>>) =
     let coordination = app.Services.GetRequiredService<LibraryCoordination>()
-    app.MapPost("/api/library/deletions", Func<HttpRequest, Task<IResult>>(fun request -> task {
-        match! confirmation request with
-        | None -> return invalid ()
+    let operations =
+        LibraryDeletion.Operations(coordination, (fun () -> LibraryDeletionRepository.results directory),
+                                   LibraryDeletionRepository.acknowledge directory,
+                                   LibraryDeletionRepository.recordFailure directory, runItem)
+    let missing () = LibraryEndpoints.problem 404 "operation_not_found" "Operação não encontrada."
+    app.MapGet("/api/library/deletions", Func<IResult>(fun () ->
+        Results.Ok(operations.List()))) |> ignore
+    app.MapGet("/api/library/deletions/{operation:guid}", Func<Guid, IResult>(fun operation ->
+        match operations.Find operation with
+        | Some result -> Results.Ok result
+        | None -> missing ())) |> ignore
+    app.MapPost("/api/library/deletions/{operation:guid}/retry", Func<Guid, IResult>(fun operation ->
+        if operations.Start operation then Results.Accepted(value = {| operationId = operation |})
+        else missing ())) |> ignore
+    app.MapPost("/api/library/deletions/{operation:guid}/acknowledge", Func<Guid, IResult>(fun operation ->
+        match operations.Acknowledge operation with
+        | Ok () -> Results.NoContent()
+        | Error "operation_not_found" -> missing ()
+        | Error code -> LibraryEndpoints.problem 409 code "A exclusão ainda não foi concluída.")) |> ignore
+    let admit confirmed : IResult =
+        match confirmed with
+        | None -> invalid ()
         | Some (operation, ids, revision) ->
             let jobs = (app :> IApplicationBuilder).Properties["LexScholar.SummaryJobs"] :?> SummaryJobs
             match LibraryDeletion.admitFenced jobs (LibraryDeletionRepository.admit coordination directory) operation ids revision with
-            | Ok id -> return Results.Accepted(value = {| operationId = id |})
-            | Error LibraryDeletion.AdmissionError.InvalidSelection -> return invalid ()
+            | Ok id ->
+                if autoStart then operations.Start id |> ignore
+                Results.Accepted(value = {| operationId = id |})
+            | Error LibraryDeletion.AdmissionError.InvalidSelection -> invalid ()
             | Error LibraryDeletion.AdmissionError.DocumentNotFound ->
-                return LibraryEndpoints.problem 404 "document_not_found" "Documento não encontrado."
+                LibraryEndpoints.problem 404 "document_not_found" "Documento não encontrado."
             | Error LibraryDeletion.AdmissionError.OperationConflict ->
-                return LibraryEndpoints.problem 409 "operation_conflict" "Operação já usada para outra seleção."
+                LibraryEndpoints.problem 409 "operation_conflict" "Operação já usada para outra seleção."
             | Error LibraryDeletion.AdmissionError.DeletionInProgress ->
-                return LibraryEndpoints.problem 409 "deletion_in_progress" "Exclusão já em andamento."
+                LibraryEndpoints.problem 409 "deletion_in_progress" "Exclusão já em andamento."
             | Error (LibraryDeletion.AdmissionError.ImpactChanged preview) ->
-                return Results.Problem(statusCode = Nullable 409, title = "O impacto mudou. Confirme novamente.",
-                                       extensions = dict [ "code", box "impact_changed"; "preview", box preview ]) })) |> ignore
+                Results.Problem(statusCode = Nullable 409, title = "O impacto mudou. Confirme novamente.",
+                                extensions = dict [ "code", box "impact_changed"; "preview", box preview ])
+    app.MapPost("/api/library/deletions", Func<HttpRequest, Task<IResult>>(fun request -> task {
+        let! confirmed = confirmation request
+        return admit confirmed })) |> ignore
     app.MapPost("/api/library/deletions/preview", Func<HttpRequest, Task<IResult>>(fun request -> task {
         let! ids = selection request
         match ids with
@@ -80,3 +103,22 @@ let mapForTests (app: WebApplication) (directory: string) =
             | Error LibraryDeletion.PreviewError.DocumentNotFound ->
                 return LibraryEndpoints.problem 404 "document_not_found" "Documento não encontrado."
             | Ok preview -> return Results.Ok(preview) })) |> ignore
+    operations
+
+/// Explicit isolated-host seam. Tests may wrap the real item processor in
+/// handshakes/fault injection; neither request data nor configuration enables it.
+let mapWithProcessingForTests app directory runItem =
+    map app directory true runItem
+
+/// Preserve admission-only tests; retry still uses the real fenced lifecycle.
+/// Nothing in this module is mapped by production until T017.
+let mapForTests (app: WebApplication) directory =
+    let coordination = app.Services.GetRequiredService<LibraryCoordination>()
+    let jobs = (app :> IApplicationBuilder).Properties["LexScholar.SummaryJobs"] :?> SummaryJobs
+    let runItem operation document = task {
+        return! LibraryDeletion.processItem coordination jobs
+                     (LibraryDeletionRepository.hasItem directory)
+                     (LibraryDeletionRepository.removeMetadata coordination directory)
+                     (LibraryDeletionRepository.finishOriginal coordination directory)
+                      operation document app.Lifetime.ApplicationStopping }
+    map app directory false runItem |> ignore

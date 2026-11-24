@@ -185,3 +185,54 @@ let finishOriginalWith (checkpoint: CompletionStep -> unit) (remove: string -> u
 
 let finishOriginal coordination directory operation document =
     finishOriginalWith ignore (DocumentStore.removeOriginal directory) coordination directory operation document
+
+/// Persist processor failures including failures before a repository step (e.g.
+/// intent lookup). Preserve phase for retry and never regress durable completion.
+/// Failure to write propagates: callers cannot present a successful pending view.
+let recordFailure directory (operation: Guid) (document: Guid) =
+    use db = WorkspaceDb.create directory
+    use transaction = db.Database.BeginTransaction()
+    let item = db.Set<DeletionItemRow>().Find(operation, document)
+    if isNull (box item) then invalidOp "Deletion item unavailable."
+    if item.Status <> "deleted" then
+        item.Status <- "incomplete"
+        item.Reason <- "storage_error"
+        db.SaveChanges() |> ignore
+    transaction.Commit()
+
+/// One SQLite snapshot for operation/item projection; storage keys and internal
+/// phases never cross this boundary. A read failure is an error, never an empty list.
+let results directory =
+    LibraryExportSnapshot.withSnapshot directory (fun db ->
+        let items = db.Set<DeletionItemRow>().AsNoTracking().ToList() |> Seq.toList
+        db.Set<DeletionOperationRow>().AsNoTracking().ToList()
+        |> Seq.sortBy (fun row -> row.CreatedUtc, row.Id)
+        |> Seq.map (fun operation ->
+            let outcomes =
+                items |> List.filter (fun item -> item.OperationId = operation.Id)
+                |> List.sortBy _.DocumentId
+                |> List.map (fun item ->
+                    { DocumentId = item.DocumentId; Name = item.OriginalFileName
+                      Outcome = if item.Status = "deleted" then "deleted" else "not_completed"
+                      Reason = if item.Status = "deleted" then null
+                               elif item.Reason = "storage_error" then "storage_error" else "pending" })
+            { OperationId = operation.Id
+              Status = if not outcomes.IsEmpty && outcomes |> List.forall (fun item -> item.Outcome = "deleted") then "complete" else "partial"
+              Items = outcomes })
+        |> Seq.toList)
+
+let acknowledge directory (operation: Guid) =
+    use db = WorkspaceDb.create directory
+    use transaction = db.Database.BeginTransaction()
+    let row = db.Set<DeletionOperationRow>().Find(operation)
+    if isNull (box row) then Error "operation_not_found"
+    else
+        let items = db.Set<DeletionItemRow>().Where(fun item -> item.OperationId = operation).ToList()
+        if items.Count = 0 || items |> Seq.exists (fun item -> item.Status <> "deleted") then
+            Error "deletion_incomplete"
+        else
+            for item in items do db.Remove(item) |> ignore
+            db.Remove(row) |> ignore
+            db.SaveChanges() |> ignore
+            transaction.Commit()
+            Ok ()
