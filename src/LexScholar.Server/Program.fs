@@ -52,11 +52,17 @@ let private createHost (builder: WebApplicationBuilder) (serveClient: bool) port
                     app.Logger.LogInformation("Using data directory {DataDirectory}.", configuration.DataDirectory)
                     // Under the lock, after migrations and before serving: discard
                     // interrupted imports. Built first only so a logger exists.
-                    // Fail closed until T017: only explicit test DI can resume
-                    // deletion, never a setting or ordinary production startup.
-                    if app.Environment.EnvironmentName = "Testing" then
-                        let recovery = app.Services.GetService<LibraryDeletionRecovery.StartupForTests>()
+                    // Resume durable, explicitly confirmed intents before orphan
+                    // cleanup and before any requests or summary jobs can start.
+                    let recovery =
+                        if app.Environment.EnvironmentName = "Testing" then
+                            app.Services.GetService<LibraryDeletionRecovery.StartupForTests>()
+                        else null
+                    try
                         if not (isNull recovery) then recovery.Invoke(configuration.DataDirectory)
+                        else LibraryDeletionRecovery.run (app.Services.GetRequiredService<LibraryCoordination>()) configuration.DataDirectory
+                    with _ ->
+                        app.Logger.LogWarning("Could not finish deletion recovery; retained operations require attention.")
                     let cleanup = StorageCleanup.run configuration.DataDirectory
                     if cleanup.DeletionJournalReadFailed then
                         app.Logger.LogWarning("Could not read the deletion journal; original-file cleanup was skipped and will be retried at next startup.")

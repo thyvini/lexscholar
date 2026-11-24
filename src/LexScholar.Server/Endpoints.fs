@@ -30,3 +30,4 @@ module Endpoints =
         DocumentEndpoints.map app configuration coordination
         let vault = ChatGptEndpoints.map app configuration
         SummaryEndpoints.map app configuration vault jobs
+        LibraryDeletionEndpoints.mapProduction app directory

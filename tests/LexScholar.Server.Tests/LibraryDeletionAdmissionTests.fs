@@ -173,13 +173,12 @@ let ``invalid unknown or mismatched selections never journal`` () =
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode)
         counts h.Root 0 0
 
-[<Fact; Trait("Task", "T010")>]
-let ``production confirmation and retry remain fail closed`` () =
+[<Fact; Trait("Task", "T017")>]
+let ``production stale confirmation and unknown retry cannot admit work`` () =
     use h = TestHarness.Start()
     let _, shared, _ = seed h.Root
-    let rev = LexScholar.Application.LibraryDeletion.preview (LibraryDeletionRepository.capture h.Root) [shared] |> Result.toOption |> Option.get
-    use response = confirm h (Guid.NewGuid()) [shared] rev.Revision
-    Assert.Equal(HttpStatusCode.NotFound, response.StatusCode)
+    use response = confirm h (Guid.NewGuid()) [shared] "stale"
+    Assert.Equal(HttpStatusCode.Conflict, response.StatusCode)
     use retry = post h $"/api/library/deletions/{Guid.NewGuid()}/retry" "{}"
     Assert.Equal(HttpStatusCode.NotFound, retry.StatusCode)
     counts h.Root 0 0

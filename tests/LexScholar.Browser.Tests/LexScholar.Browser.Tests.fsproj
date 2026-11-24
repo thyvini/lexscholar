@@ -21,6 +21,8 @@
     <Compile Include="LibraryJourneyTests.fs" />
     <Compile Include="LibraryExportJourneyTests.fs" />
     <Compile Include="LibraryExportStateTests.fs" />
+    <Compile Include="LibraryDeletionStateTests.fs" />
+    <Compile Include="LibraryDeletionJourneyTests.fs" />
     <Compile Include="RoleApiTests.fs" />
     <Compile Include="SummaryStateTests.fs" />
     <Compile Include="SummaryJourneyTests.fs" />

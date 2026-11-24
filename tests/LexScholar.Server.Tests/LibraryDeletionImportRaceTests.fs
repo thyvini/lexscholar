@@ -186,8 +186,8 @@ let ``unlink excludes reimport then new association works and old admission stay
     Assert.True(File.Exists(Path.Combine(DocumentStore.originalsDirectory host.Root, imported.Document.StorageKey)))
 }
 
-[<Fact; Trait("Task", "T015")>]
-let ``production rejects valid antiforgery protected deletion confirmation without intent`` () = task {
+[<Fact; Trait("Task", "T017")>]
+let ``production confirmation deletes an imported original through the complete processor`` () = task {
     use host = TestHarness.Start()
     let! imported = import host (dependencies host)
     let ids = [imported.Document.Id]
@@ -199,16 +199,19 @@ let ``production rejects valid antiforgery protected deletion confirmation witho
     use request = new HttpRequestMessage(HttpMethod.Post, "/api/library/deletions")
     request.Headers.Add("Origin", host.Client.BaseAddress.GetLeftPart(UriPartial.Authority))
     request.Headers.Add("X-CSRF-TOKEN", csrf.RootElement.GetProperty("requestToken").GetString())
+    let operation = Guid.NewGuid()
     request.Content <- new StringContent(
-        JsonSerializer.Serialize({| operationId = Guid.NewGuid(); documentIds = ids; revision = preview.Revision |}),
+        JsonSerializer.Serialize({| operationId = operation; documentIds = ids; revision = preview.Revision |}),
         Encoding.UTF8, "application/json")
     use! response = host.Client.SendAsync(request)
-    Assert.Equal(HttpStatusCode.NotFound, response.StatusCode)
+    Assert.Equal(HttpStatusCode.Accepted, response.StatusCode)
+    let operations = (host.App :> Microsoft.AspNetCore.Builder.IApplicationBuilder).Properties["LexScholar.LibraryDeletions"] :?> LibraryDeletion.Operations
+    do! (operations.Settled operation).WaitAsync(TimeSpan.FromSeconds 10.0)
     use db = WorkspaceDb.create host.Root
-    Assert.Empty(db.Set<DeletionOperationRow>())
-    Assert.Empty(db.Set<DeletionItemRow>())
-    Assert.Equal(imported.Document.Id, (LibraryRepository.list host.Root |> List.exactlyOne).Id)
-    Assert.Equal<byte>(bytes (), File.ReadAllBytes(Path.Combine(DocumentStore.originalsDirectory host.Root, imported.Document.StorageKey)))
+    Assert.Single(db.Set<DeletionOperationRow>()) |> ignore
+    Assert.All(db.Set<DeletionItemRow>(), fun item -> Assert.Equal("deleted", item.Status))
+    Assert.Empty(LibraryRepository.list host.Root)
+    Assert.False(File.Exists(Path.Combine(DocumentStore.originalsDirectory host.Root, imported.Document.StorageKey)))
 }
 
 [<Fact; Trait("Task", "T015")>]

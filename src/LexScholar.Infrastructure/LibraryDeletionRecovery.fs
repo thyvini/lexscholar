@@ -6,7 +6,7 @@ open System
 open LexScholar.Application.LibraryDeletion
 open Microsoft.EntityFrameworkCore
 
-/// Explicit DI-only seam, honored only in the Testing environment until T017.
+/// Explicit override honored only in the Testing environment.
 /// It cannot be enabled through configuration or an HTTP request.
 type StartupForTests = delegate of string -> unit
 
@@ -27,6 +27,8 @@ let runWith (remove: Guid -> Guid -> Result<string, MetadataError>)
         | Ok _ -> finish operation document |> ignore
         | Error _ -> ()
 
-let runForTests coordination directory =
+let run coordination directory =
     runWith (LibraryDeletionRepository.removeMetadata coordination directory)
         (LibraryDeletionRepository.finishOriginal coordination directory) directory
+
+let runForTests coordination directory = run coordination directory

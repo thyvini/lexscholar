@@ -160,9 +160,9 @@ let ``impact and revision come from one snapshot while a second connection commi
     Assert.Equal(before, during)
     Assert.NotEqual<Result<LibraryDeletion.Preview, LibraryDeletion.PreviewError>>(before, capture ())
 
-[<Fact; Trait("Task", "T009")>]
-let ``production host does not map preview or confirmation`` () =
+[<Fact; Trait("Task", "T017")>]
+let ``production preview and confirmation reject malformed bodies`` () =
     use harness = TestHarness.Start()
     for path in ["/api/library/deletions/preview"; "/api/library/deletions"] do
         use response = postTo harness path "{}"
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode)
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode)
