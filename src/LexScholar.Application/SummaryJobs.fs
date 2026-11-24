@@ -36,9 +36,10 @@ type private Job =
       mutable State: JobState
       mutable Run: Task }
 
-type SummaryJobs(capabilities: SummaryJobCapabilities, ?coordination: LibraryCoordination) =
+type SummaryJobs(capabilities: SummaryJobCapabilities, ?coordination: LibraryCoordination, ?isPending: Guid -> bool) =
     let gate = obj ()
     let coordination = defaultArg coordination (LibraryCoordination())
+    let isPending = defaultArg isPending (fun _ -> false)
     let locked work = coordination.Mutation(fun () -> lock gate work)
     let jobs = System.Collections.Generic.Dictionary<SummaryKey, Job>()
     // Only in-flight HTTP preparations live here. Cancellation fences them before they can register a job.
@@ -81,10 +82,11 @@ type SummaryJobs(capabilities: SummaryJobCapabilities, ?coordination: LibraryCoo
 
     /// Register before the first async preparation. Dispose at request end; Cancel/Stop/removal invalidate all
     /// preparations for the pair. Registration checks this token under the same lock as cancellation.
-    member _.PrepareReplacement(key: SummaryKey) : CancellationToken * IDisposable =
+    member _.Prepare(key: SummaryKey) : CancellationToken * IDisposable =
         locked (fun () ->
             let id = Guid.NewGuid()
             let source = new CancellationTokenSource()
+            if isPending key.Document then source.Cancel()
             let requests =
                 match preparing.TryGetValue key with
                 | true, requests -> requests
@@ -100,6 +102,22 @@ type SummaryJobs(capabilities: SummaryJobCapabilities, ?coordination: LibraryCoo
                         requests.Remove id |> ignore
                         if requests.Count = 0 then preparing.Remove key |> ignore
                         source.Dispose()) })
+
+    member this.PrepareReplacement(key: SummaryKey) = this.Prepare key
+
+    /// After durable intent commits, fence every pair for the selected documents,
+    /// including preparations not yet associated with a registered job. No saved
+    /// summary is deleted here: metadata processing owns that transaction.
+    member _.FenceDocuments(documents: Guid list) =
+        locked (fun () ->
+            let selected = Set.ofList documents
+            let keys =
+                Seq.append preparing.Keys jobs.Keys
+                |> Seq.filter (fun key -> selected.Contains key.Document)
+                |> Seq.distinct |> Seq.toList
+            for key in keys do
+                cancelPreparing key
+                dropJob key)
 
     /// Starts `run` as the job for `key` (research §1, §3) with a token source the caller made (a plan job needs it before
     /// `prepareSend`) and the token its calls receive (`effective`: the source's own, or the plan run's, which sign-out

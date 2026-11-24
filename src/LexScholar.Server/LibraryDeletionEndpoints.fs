@@ -57,7 +57,8 @@ let mapForTests (app: WebApplication) (directory: string) =
         match! confirmation request with
         | None -> return invalid ()
         | Some (operation, ids, revision) ->
-            match LibraryDeletionRepository.admit coordination directory operation ids revision with
+            let jobs = (app :> IApplicationBuilder).Properties["LexScholar.SummaryJobs"] :?> SummaryJobs
+            match LibraryDeletion.admitFenced jobs (LibraryDeletionRepository.admit coordination directory) operation ids revision with
             | Ok id -> return Results.Accepted(value = {| operationId = id |})
             | Error LibraryDeletion.AdmissionError.InvalidSelection -> return invalid ()
             | Error LibraryDeletion.AdmissionError.DocumentNotFound ->

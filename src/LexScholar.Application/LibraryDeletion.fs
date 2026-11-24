@@ -99,3 +99,14 @@ let admit (store: AdmissionStore) operation ids revision =
             | Ok _ ->
                 store.Persist operation selected
                 Ok operation
+
+/// Workspace -> registry -> SQLite. Intent commits before cancellation, while
+/// completion/admission remain excluded. A refused confirmation fences nothing.
+/// The production host does not compose deletion admission until T017.
+let admitFenced (jobs: SummaryJobs) persist operation ids revision =
+    jobs.Locked(fun () ->
+        let result = persist operation ids revision
+        match result with
+        | Ok _ -> jobs.FenceDocuments ids
+        | Error _ -> ()
+        result)
