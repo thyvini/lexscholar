@@ -22,3 +22,10 @@ Linux, .NET 10 pinned SDK, isolated temporary SQLite WAL workspaces and syntheti
 No production endpoint/startup composition changed: destructive processing remains disabled through T016. These internal capabilities must be composed with the same host-owned coordination/registry; `LibraryDeletion.removeMetadata` performs the intent check/fencing before the repository transaction. No file lease or original unlink occurs in this slice (T013/T015 own those boundaries).
 
 Commit uncertainty is simulated at the actual post-commit boundary, not by a physical power failure. Actual process termination/recovery belongs to T014. If SQLite cannot persist even the incomplete marker, processing returns storage error and leaves durable intent for later recovery; no false success is inferred. File absence/completed deletion and public result/retry remain T013/T016.
+
+## PR #151 P1 — intent lookup failure boundary
+
+- RED: `scripts/check.sh T012` — warning-as-error build passed; 26 tests, two failures from escaping injected SQLite I/O and access-denied exceptions in the workflow's intent lookup. Log: `/tmp/lexscholar-check.S0AJlE`.
+- GREEN: `scripts/check.sh T012 T010 T011` — warning-as-error Release build passed; 148 tests, zero failures/skips.
+- The workflow now converts failed intent reads to the payload-free `MetadataError.StorageError` before fencing or metadata processing. It neither treats failed reads as absent intent nor attempts further journal writes on inaccessible storage.
+- Regression injects SQLite I/O and access-denied failures containing synthetic private-path/research text. Both return only the error union, preserve the operation and both journal items, keep the affected item's pending phase and all metadata/originals, do not cancel its preparation or invoke removal, and permit another selected item to complete metadata processing. Unselected metadata is unchanged. Existing production gating remains intact; CI rerun is pending the updated PR.

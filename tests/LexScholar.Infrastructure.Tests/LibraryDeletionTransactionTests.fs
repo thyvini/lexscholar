@@ -2,6 +2,7 @@ module LexScholar.Infrastructure.Tests.LibraryDeletionTransactionTests
 
 open System
 open System.IO
+open Microsoft.Data.Sqlite
 open Microsoft.EntityFrameworkCore
 open LexScholar.Application
 open LexScholar.Application.LibraryDeletion
@@ -126,3 +127,39 @@ let ``processing fences preparations under the shared boundary and commits all m
     Assert.Equal(Ok (shared.ToString("N")), LibraryDeletion.removeMetadata jobs hasIntent remove operation shared)
     assertMetadata dir.Path shared false
     assertPhase dir.Path operation shared "metadata_removed" "metadata_removed"
+
+[<Theory; InlineData(false); InlineData(true); Trait("Task", "T012")>]
+let ``intent lookup storage failure is sanitized and does not interrupt other items`` accessFailure =
+    use dir = new TemporaryDirectory()
+    let coordination, operation, shared, alone, untouched = seed dir.Path
+    let jobs =
+        SummaryJobs(
+            { Find = fun _ -> None
+              Save = fun _ _ -> ()
+              Delete = fun _ -> ()
+              AssociationExists = fun _ -> true },
+            coordination = coordination)
+    let key : SummaryKey = { Project = Guid.NewGuid(); Document = shared }
+    let token, lease = jobs.Prepare key
+    use _lease = lease
+    let hasIntent op document =
+        Assert.True(coordination.IsMutationHeld)
+        if document = shared then
+            if accessFailure then raise (UnauthorizedAccessException("private/path/research"))
+            else raise (SqliteException("private/path/research", 10))
+        LibraryDeletionRepository.hasItem dir.Path op document
+    let mutable removed = []
+    let remove op document =
+        removed <- document :: removed
+        LibraryDeletionRepository.removeMetadata coordination dir.Path op document
+    Assert.Equal(Error MetadataError.StorageError, LibraryDeletion.removeMetadata jobs hasIntent remove operation shared)
+    Assert.Empty(removed)
+    Assert.False(token.IsCancellationRequested)
+    assertMetadata dir.Path shared true
+    assertPhase dir.Path operation shared "pending" "pending"
+    Assert.Equal(Ok (alone.ToString("N")), LibraryDeletion.removeMetadata jobs hasIntent remove operation alone)
+    assertPhase dir.Path operation alone "metadata_removed" "metadata_removed"
+    assertMetadata dir.Path untouched true
+    use db = WorkspaceDb.create dir.Path
+    Assert.NotNull(db.Set<DeletionOperationRow>().Find(operation))
+    Assert.Equal(2, db.Set<DeletionItemRow>() |> Seq.length)

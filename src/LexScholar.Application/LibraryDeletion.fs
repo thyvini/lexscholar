@@ -120,7 +120,15 @@ type MetadataError =
 /// Not composed by the production host before T017.
 let removeMetadata (jobs: SummaryJobs) hasIntent remove operation document =
     jobs.Locked(fun () ->
-        if not (hasIntent operation document) then Error MetadataError.ItemNotFound
-        else
+        // Intent lookup opens storage too: a failed read is neither missing
+        // authority nor permission to fence/delete. Leave the journal intact
+        // and return a per-item failure so processing can continue elsewhere.
+        let intent =
+            try Ok (hasIntent operation document)
+            with _ -> Error MetadataError.StorageError
+        match intent with
+        | Error error -> Error error
+        | Ok false -> Error MetadataError.ItemNotFound
+        | Ok true ->
             jobs.FenceDocuments [ document ]
             remove operation document)
