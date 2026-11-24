@@ -270,16 +270,23 @@ let private summarizeViaPlan regenerate admission (context: HttpContext) (vault:
     let mutable handedOver = false
     try
         use authHttp = chatgptClient injected (fun () -> OpenAiAuth.createHandler ())
-        match! ChatGptAccess.prepareSend vault (ChatGptEndpoints.authClient authHttp clock) clock body.ConfirmSend context.RequestAborted source.Token with
-        | ChatGptAccess.AwaitingConfirmation account ->
+        use preparation = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted, admission)
+        let! prepared = task {
+            try
+                let! ready = ChatGptAccess.prepareSend vault (ChatGptEndpoints.authClient authHttp clock) clock body.ConfirmSend preparation.Token source.Token
+                return Some ready
+            with :? OperationCanceledException when admission.IsCancellationRequested -> return None }
+        match prepared with
+        | None -> return startAnswer regenerate jobs key StartOutcome.Cancelled
+        | Some (ChatGptAccess.AwaitingConfirmation account) ->
             logger.LogInformation "Summary needs confirmation to use the ChatGPT plan"
             return chatgptConfirmationRequired account
-        | ChatGptAccess.NoSignIn -> return chatgptSignedOut ()
+        | Some ChatGptAccess.NoSignIn -> return chatgptSignedOut ()
         // Decided before anything was sent: the job is created already failed, so the client reads it like any other.
-        | ChatGptAccess.SignInEnded -> return startAnswer regenerate jobs key (jobs.StartFailed(key, "signed_out", signedOutDetail, regenerate = regenerate, admission = admission))
-        | ChatGptAccess.RefreshUnreachable ->
+        | Some ChatGptAccess.SignInEnded -> return startAnswer regenerate jobs key (jobs.StartFailed(key, "signed_out", signedOutDetail, regenerate = regenerate, admission = admission))
+        | Some ChatGptAccess.RefreshUnreachable ->
             return startAnswer regenerate jobs key (jobs.StartFailed(key, "service_failed", "ChatGPT could not be reached to renew your sign-in. Try again.", regenerate = regenerate, admission = admission))
-        | ChatGptAccess.Prepared (credentials, run) ->
+        | Some (ChatGptAccess.Prepared (credentials, run)) ->
             // A refusal ends the sign-in (record deleted, other runs cancelled) before the failure is reported.
             let ended (error: Summarize.ServiceError) : Task<unit> =
                 match error with
@@ -413,10 +420,9 @@ let map (app: WebApplication) (configuration: WorkspaceConfiguration) (vault: Ch
       app.MapPost(path,
                 Func<Guid, Guid, HttpContext, Task<IResult>>(fun projectId documentId context -> task {
         let key = { Project = projectId; Document = documentId }
-        let admission, lease =
-            if regenerate then jobs.PrepareReplacement key
-            else System.Threading.CancellationToken.None, { new IDisposable with member _.Dispose() = () }
+        let admission, lease = jobs.Prepare key
         use _ = lease
+        use preparation = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted, admission)
         let! body = readBody context
         // One summary per document in a project (FR-011): a running or finished (stored included) summary for a pair that is
         // still in the project answers with its state before any destination, confirmation or sign-in check, since nothing
@@ -443,6 +449,7 @@ let map (app: WebApplication) (configuration: WorkspaceConfiguration) (vault: Ch
                         return record.IsSome
                 }
             match resolveDestination configuration signedIn body.Destination with
+            | _ when admission.IsCancellationRequested -> return startAnswer regenerate jobs key StartOutcome.Cancelled
             | Error answer -> return answer
             | Ok destination ->
                 if notAssociated directory projectId documentId then
@@ -454,9 +461,15 @@ let map (app: WebApplication) (configuration: WorkspaceConfiguration) (vault: Ch
                     let extract =
                         let capability = context.RequestServices.GetService<PageExtraction>()
                         if isNull (box capability) then PdfText.extractPages directory else capability.Extract
-                    match! extract documentId context.RequestAborted with
+                    // Cancellation is advisory for extraction; the admission token
+                    // is checked again even when an adapter ignores cancellation.
+                    let! extracted = task {
+                        try return! extract documentId preparation.Token
+                        with :? OperationCanceledException when admission.IsCancellationRequested ->
+                            return Error Summarize.ExtractionError.DocumentNotFound }
+                    match extracted with
+                    | _ when admission.IsCancellationRequested -> return startAnswer regenerate jobs key StartOutcome.Cancelled
                     | Error error -> return extractionProblem error
-                    | Ok _ when admission.IsCancellationRequested -> return startAnswer regenerate jobs key StartOutcome.Cancelled
                     | Ok pages ->
                         match Summaries.readability pages with
                         | Error failure -> return readabilityProblem failure

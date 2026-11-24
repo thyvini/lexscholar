@@ -31,6 +31,7 @@
     <Compile Include="SummaryContractTests.fs" />
     <Compile Include="BackgroundSummaryContractTests.fs" />
     <Compile Include="ChatGptContractTests.fs" />
+    <Compile Include="LibraryDeletionSummaryRaceTests.fs" />
     <Compile Include="RegenerationReviewTests.fs" />
     <Compile Include="PreSendRegressionTests.fs" />
     <Compile Include="ChatGptHygieneTests.fs" />

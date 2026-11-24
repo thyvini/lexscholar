@@ -23,7 +23,8 @@ module Endpoints =
                         not (LibraryDeletionRepository.isPending directory key.Document)
                         && (match LibraryRepository.listForProject directory key.Project with
                             | Ok associations -> associations |> List.exists (fun (item, _) -> item.DocumentId = key.Document)
-                            | Error _ -> false) }, coordination = coordination)
+                            | Error _ -> false) }, coordination = coordination,
+                isPending = LibraryDeletionRepository.isPending directory)
         LibraryEndpoints.map app configuration jobs coordination
         DocumentEndpoints.map app configuration coordination
         let vault = ChatGptEndpoints.map app configuration
