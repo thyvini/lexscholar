@@ -109,4 +109,4 @@ All client slices T002–T011 except T005 share `App.fs`; code-map writers also 
 
 ## Open defect — scope decision pending
 
-- [ ] T026 Preserve a single Biblioteca pointer activation when project creation completes mid-click (bug [$169](https://thyago-cunha-dev.codecks.io/card/169); [reproduction, impact and proposed verification](evidence/t019-library-activation-debt.md)). Agree stable navigation placement/overflow behavior before implementation; likely files: Client `App.fs` and/or `wwwroot/app.css`, Browser `WorkspaceJourneyTests.fs`. Add deterministic held-response pointer regression in Chromium/Firefox, capture RED/GREEN, and retain keyboard access. The T019 test-precondition correction does not resolve this product defect.
+- [x] T026 Preserve a single Biblioteca pointer activation when project creation completes mid-click (bug [$169](https://thyago-cunha-dev.codecks.io/card/169); [RED/GREEN evidence](evidence/t026-stable-library-navigation.md)). The native control precedes the changing project list; focused tests cover both browsers, long lists, keyboard access and project-selection regressions.
