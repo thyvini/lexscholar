@@ -199,13 +199,16 @@ let ``failed project selection preserves the visible library`` (browserName: str
         do! SummaryJourneyTests.arrange page
         do! page.GetByLabel(Texts.projectName).FillAsync("Beta")
         do! click (button (page.Locator("body")) Texts.createProject)
+        let beta = page.Locator("ul.projects li").Filter(LocatorFilterOptions(HasText = "Beta"))
+        // Creation reloads the list and moves Biblioteca; finish setup before clicking it.
+        do! Assertions.Expect(button beta Texts.select).ToBeEnabledAsync()
         do! click (button (page.Locator("body")) Texts.library)
+        let import = page.GetByTestId("main").GetByLabel(Texts.importPdf)
+        do! Assertions.Expect(import).ToBeVisibleAsync()
         let failSelection (route: IRoute) : Task =
             route.FulfillAsync(RouteFulfillOptions(Status = 500, ContentType = "application/json", Body = "{}"))
         use! _ = page.RouteAsync("**/api/projects/*/active", Func<IRoute, Task>(failSelection))
-        let beta = page.Locator("ul.projects li").Filter(LocatorFilterOptions(HasText = "Beta"))
         do! click (button beta Texts.select)
-        let import = page.GetByTestId("main").GetByLabel(Texts.importPdf)
         do! Assertions.Expect(page.GetByRole(AriaRole.Alert)).ToBeVisibleAsync()
         do! Assertions.Expect(import).ToBeVisibleAsync()
         do! Assertions.Expect(page.Locator("ul.projects li").Filter(LocatorFilterOptions(HasText = "Alpha"))).ToHaveAttributeAsync("aria-current", "true")
