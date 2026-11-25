@@ -3,6 +3,8 @@ module LexScholar.Server.Tests.ProcessLockTests
 open System.Net
 open System.IO
 open System.Threading.Tasks
+open System.Runtime.InteropServices
+open Microsoft.Win32.SafeHandles
 open LexScholar.Infrastructure
 open LexScholar.Server
 open LexScholar.Server.Tests.ProcessHarness
@@ -20,6 +22,46 @@ let private assertRefused (host: HostProcess) =
     Assert.Contains("already in use", host.Startup.Message)
     Assert.True(host.HasExited)
     Assert.NotEqual(0, host.ExitCode)
+
+[<DllImport("libc", SetLastError = true, EntryPoint = "fcntl")>]
+extern int private duplicateCloseOnExec(int descriptor, int command, int minimum)
+
+[<Fact; Trait("Task", "T006")>]
+let ``release permits immediate reacquisition even while an inherited descriptor remains open`` () =
+    use workspace = TemporaryWorkspace.Create()
+    let owner =
+        match DataDirectoryLock.acquire workspace.Root with
+        | Ok handle -> handle
+        | Error error -> failwithf "Initial acquisition failed: %A" error
+    use owner = owner
+    let lockPath = Path.Combine(workspace.Root, ".lexscholar.lock")
+    let descriptor =
+        Directory.EnumerateFiles("/proc/self/fd")
+        |> Seq.find (fun path -> FileInfo(path).LinkTarget = lockPath)
+        |> Path.GetFileName
+        |> int
+    // F_DUPFD_CLOEXEC shares the open file description, exactly as fork does.
+    // CLOEXEC only closes that inherited reference at exec, not at fork.
+    let duplicate = duplicateCloseOnExec(descriptor, 1030, 0)
+    Assert.True(duplicate >= 0, $"Descriptor duplication failed: {Marshal.GetLastPInvokeError()}")
+    use inherited = new SafeFileHandle(System.IntPtr(duplicate), true)
+    match DataDirectoryLock.acquire workspace.Root with
+    | Error (DirectoryAlreadyInUse _) -> ()
+    | Ok other ->
+        other.Dispose()
+        Assert.Fail("The live owner must still exclude contenders.")
+    owner.Dispose()
+    match DataDirectoryLock.acquire workspace.Root with
+    | Error error -> Assert.Fail($"Disposed owner retained ownership through an inherited descriptor: {error}")
+    | Ok successor ->
+        use successor = successor
+        // Disposing the old owner again must not unlock its successor.
+        owner.Dispose()
+        match DataDirectoryLock.acquire workspace.Root with
+        | Error (DirectoryAlreadyInUse _) -> ()
+        | Ok other ->
+            other.Dispose()
+            Assert.Fail("Repeated old-owner disposal released its successor.")
 
 [<Fact; Trait("Task", "T006")>]
 let ``a second operating system process cannot own the same directory`` () =
