@@ -31,8 +31,22 @@ module DataDirectoryLock =
             let error = Marshal.GetLastPInvokeError()
             raise (IOException($"Unable to open the data-directory lock file: {path}", Win32Exception(error)))
         let handle = new SafeFileHandle(IntPtr(descriptor), true)
-        // LOCK_EX | LOCK_NB is atomic; descriptor closure releases the lock.
-        if flock(handle, 2 ||| 4) = 0 then Ok (handle :> IDisposable)
+        // LOCK_EX | LOCK_NB is atomic.
+        if flock(handle, 2 ||| 4) = 0 then
+            Ok
+                { new IDisposable with
+                    member _.Dispose() =
+                        lock handle (fun () ->
+                            if not handle.IsClosed then
+                                try
+                                    // A concurrent fork inherits this open file description
+                                    // until exec, even with O_CLOEXEC. Closing only our descriptor
+                                    // can therefore leave ownership behind after host shutdown.
+                                    if flock(handle, 8) <> 0 then // LOCK_UN
+                                        let error = Marshal.GetLastPInvokeError()
+                                        raise (IOException($"Unable to release the data-directory lock: {directory}", Win32Exception(error)))
+                                finally
+                                    handle.Dispose()) }
         else
             let error = Marshal.GetLastPInvokeError()
             handle.Dispose()
