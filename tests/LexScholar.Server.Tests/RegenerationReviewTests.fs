@@ -30,6 +30,74 @@ let private status text =
 [<Theory; Trait("Task", "T024")>]
 [<InlineData(false)>]
 [<InlineData(true)>]
+let ``every configured replacement requires a fresh boolean confirmation but ordinary local sends do not`` remote =
+    let endpoint = if remote then "https://summary.example.test/v1" else "http://127.0.0.1:9/v1"
+    let host = if remote then "summary.example.test" else "127.0.0.1:9"
+    use fake = new FakeChatService(WaitUntilCancelled)
+    use harness = TestHarness.Start(summaryHandler = fake, settings = [
+        "LexScholar:Summary:Endpoint", endpoint; "LexScholar:Summary:Model", "m" ])
+    let path = documentPath harness
+    let key, saved = seedSaved harness path
+    for flag in [ ""; ",\"confirmSend\":false"; ",\"confirmSend\":\"true\""; ",\"confirmSend\":1" ] do
+        let response, content = sendJson harness (path + "/regenerate") ("{\"destination\":\"configured\"" + flag + "}")
+        Assert.Equal(HttpStatusCode.Conflict, response)
+        Assert.Contains("confirmation_required", content)
+        Assert.Contains(host, content)
+        Assert.Empty(fake.Requests)
+        Assert.Equal(saved, SummaryRepository.find harness.Root key)
+    if remote then
+        let response, _ = sendJson harness (path + "/regenerate") """{"confirmSend":true,"confirmedHost":"wrong","confirmedModel":"m"}"""
+        Assert.Equal(HttpStatusCode.Conflict, response)
+        Assert.Empty(fake.Requests)
+    let confirmed =
+        if remote then """{"confirmSend":true,"confirmedHost":"summary.example.test","confirmedModel":"m"}"""
+        else """{"confirmSend":true}"""
+    let started, _ = sendJson harness (path + "/regenerate") confirmed
+    Assert.Equal(HttpStatusCode.Accepted, started)
+    wait fake.Waiting
+    let repeated, content = sendJson harness (path + "/regenerate") "{}"
+    Assert.Equal(HttpStatusCode.OK, repeated)
+    Assert.Equal("running", status content)
+    Assert.Single(fake.Requests) |> ignore
+    Assert.Equal(saved, SummaryRepository.find harness.Root key)
+    sendJson harness (path + "/cancel") "{}" |> ignore
+    if not remote then
+        // A separate unsaved pair still follows the ordinary, no-consent local path.
+        SummaryRepository.delete harness.Root key
+        let ordinary, _ = sendJson harness path "{}"
+        Assert.Equal(HttpStatusCode.Accepted, ordinary)
+
+[<Fact; Trait("Task", "T024")>]
+let ``an already confirmed plan still requires fresh consent for each replacement`` () =
+    use fake = new FakeOpenAi(ResponsesScript.Completed """{"points":[{"text":"Generated","pages":[1]}]}""")
+    use harness = TestHarness.Start(summaryHandler = fake)
+    let path = documentPath harness
+    signInThrough harness fake "" |> ignore
+    let parts = path.Split('/')
+    let project, document = Guid.Parse parts[3], Guid.Parse parts[5]
+    let initial, _ = sendJson harness path """{"destination":"chatgpt","confirmSend":true}"""
+    Assert.Equal(HttpStatusCode.Accepted, initial)
+    wait (SummaryJobsAccess.settled harness.App project document)
+    let key, saved = seedSaved harness path
+    let before = fake.Requests.Length
+    for flag in [ ""; ",\"confirmSend\":false"; ",\"confirmSend\":\"true\""; ",\"confirmSend\":1" ] do
+        let response, content = sendJson harness (path + "/regenerate") ("{\"destination\":\"chatgpt\"" + flag + "}")
+        Assert.Equal(HttpStatusCode.Conflict, response)
+        Assert.Contains("confirmation_required", content)
+        Assert.Contains("\"account\"", content)
+        Assert.Equal(before, fake.Requests.Length)
+        Assert.Equal(saved, SummaryRepository.find harness.Root key)
+    let accepted, _ = sendJson harness (path + "/regenerate") """{"destination":"chatgpt","confirmSend":true}"""
+    Assert.Equal(HttpStatusCode.Accepted, accepted)
+    wait (SummaryJobsAccess.settled harness.App project document)
+    Assert.Equal("Generated", (SummaryRepository.find harness.Root key).Value.Points.Head.Text)
+    // Completion does not carry consent forward to a later replacement.
+    let next, _ = sendJson harness (path + "/regenerate") """{"destination":"chatgpt"}"""
+    Assert.Equal(HttpStatusCode.Conflict, next)
+
+[<Theory; Trait("Task", "T024")>]
+[<InlineData(false)>]
+[<InlineData(true)>]
 let ``ordinary Started response cannot expose a replacement registered before response construction`` fail =
     let key : SummaryKey = { Project = Guid.NewGuid(); Document = Guid.NewGuid() }
     let mutable saved = None
@@ -82,7 +150,7 @@ let ``legacy GET list and ordinary POST never expose replacement stop or close s
         "LexScholar:Summary:Endpoint", "http://127.0.0.1:9/v1"; "LexScholar:Summary:Model", "m" ])
     let path = documentPath harness
     let key, saved = seedSaved harness path
-    let started, _ = sendJson harness (path + "/regenerate") "{}"
+    let started, _ = sendJson harness (path + "/regenerate") """{"confirmSend":true}"""
     Assert.Equal(HttpStatusCode.Accepted, started)
     if fail then wait (SummaryJobsAccess.settled harness.App key.Project key.Document) else wait fake.Waiting
     let get = harness.Client.GetStringAsync(path).GetAwaiter().GetResult()
@@ -110,7 +178,7 @@ let ``ordinary POST after failed replacement bypasses signed-out or remote-conse
     let key, saved = seedSaved harness path
     let confirmation =
         if remote then """{"confirmSend":true,"confirmedHost":"summary.example.test","confirmedModel":"m"}"""
-        else "{}"
+        else """{"confirmSend":true}"""
     let started, _ = sendJson harness (path + "/regenerate") confirmation
     Assert.Equal(HttpStatusCode.Accepted, started)
     wait (SummaryJobsAccess.settled harness.App key.Project key.Document)
@@ -136,7 +204,7 @@ let ``cancel while extracting invalidates admission even when extraction ignores
         "LexScholar:Summary:Endpoint", "http://127.0.0.1:9/v1"; "LexScholar:Summary:Model", "m" ])
     let path = documentPath harness
     let key, saved = seedSaved harness path
-    let pending = Task.Run(fun () -> sendJson harness (path + "/regenerate") "{}")
+    let pending = Task.Run(fun () -> sendJson harness (path + "/regenerate") """{"confirmSend":true}""")
     wait entered.Task
     let cancelled, _ = sendJson harness (path + "/cancel") "{}"
     Assert.Equal(HttpStatusCode.NoContent, cancelled)

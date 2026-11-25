@@ -122,7 +122,8 @@ let ``regeneration preserves the saved row while running and cancel or shutdown 
         SummaryRepository.save harness.Root key summary
         saved <- SummaryRepository.find harness.Root key
         path <- $"/api/projects/{project}/documents/{document}/summary"
-        let status, _ = send harness.Client HttpMethod.Post (path + "/regenerate") None
+        let status, _ = send harness.Client HttpMethod.Post (path + "/regenerate")
+                            (Some (new StringContent("""{"confirmSend":true}""", Encoding.UTF8, "application/json")))
         Assert.Equal(HttpStatusCode.Accepted, status)
         fake.Waiting.WaitAsync(TimeSpan.FromSeconds 30.).GetAwaiter().GetResult()
         Assert.Equal(saved, SummaryRepository.find harness.Root key)
@@ -163,7 +164,8 @@ let ``replacement failure preserves SQLite content and success replaces it acros
         use unsafeResponse = harness.Client.PostAsync(path + "/regenerate", null).GetAwaiter().GetResult()
         Assert.Equal(HttpStatusCode.Forbidden, unsafeResponse.StatusCode)
         Assert.Empty(fake.Requests)
-        let status, _ = send harness.Client HttpMethod.Post (path + "/regenerate") None
+        let status, _ = send harness.Client HttpMethod.Post (path + "/regenerate")
+                            (Some (new StringContent("""{"confirmSend":true}""", Encoding.UTF8, "application/json")))
         Assert.Equal(HttpStatusCode.Accepted, status)
         SummaryJobsAccess.settled harness.App project document |> fun work -> work.WaitAsync(TimeSpan.FromSeconds 30.).GetAwaiter().GetResult()
         expected <- SummaryRepository.find harness.Root key

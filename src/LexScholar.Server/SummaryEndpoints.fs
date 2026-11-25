@@ -220,7 +220,9 @@ let private confirmationRequired (summary: SummaryConfiguration) : IResult =
     Results.Problem(
         statusCode = Nullable 409,
         title = "Confirmation needed",
-        detail = "The text of this document and any optional instruction will leave this machine. Nothing was sent.",
+        detail = (if ServiceLocation.classify summary.Endpoint.Host = Local then
+                      "The text of this document and any optional instruction will be sent to the configured service. Nothing was sent."
+                  else "The text of this document and any optional instruction will leave this machine. Nothing was sent."),
         extensions = dict [ "code", box "confirmation_required"
                             "serviceHost", box summary.Endpoint.Authority
                             "model", box summary.Model ])
@@ -331,13 +333,14 @@ let private summarizeViaPlan regenerate admission (context: HttpContext) (vault:
     finally
         if not handedOver then source.Dispose() }
 
-/// The service from her settings file: F003's rule, unchanged. Elsewhere needs this request's confirmation.
+/// The service from her settings file: ordinary sends retain F003's rule; replacements always need fresh consent.
 /// After the checks the summary runs as a background job (F004): the answer is immediate and closing the request does not stop it.
 let private summarizeConfigured regenerate admission (context: HttpContext) (jobs: SummaryJobs) (configured: SummaryConfiguration) (body: Body) projectId documentId (pages: ReadablePages) : Task<IResult> = task {
     // FR-014: for a service elsewhere nothing is sent without this request's confirmation
     // of the host and model currently configured.
     let current = configured.Endpoint.Authority, configured.Model
-    if ServiceLocation.classify configured.Endpoint.Host = Elsewhere && body.ConfirmedService <> Some current then
+    if (regenerate && not body.ConfirmSend) ||
+       (ServiceLocation.classify configured.Endpoint.Host = Elsewhere && body.ConfirmedService <> Some current) then
         (summaryLogger context).LogInformation("Summary needs confirmation for {Host}, model {Model}", configured.Endpoint.Authority, configured.Model)
         return confirmationRequired configured
     else
@@ -477,6 +480,15 @@ let map (app: WebApplication) (configuration: WorkspaceConfiguration) (vault: Ch
                             // These two calls are the only paths to `summarizeOnce`, and both run after the local checks
                             // and after their own confirmation rule.
                             match destination with
+                            | Chatgpt when regenerate && not body.ConfirmSend ->
+                                // Account-level consent may authorize ordinary sends, never a new replacement.
+                                // Read only: do not refresh credentials, list models or start a job before fresh consent.
+                                let! record = vault.Read()
+                                if admission.IsCancellationRequested then
+                                    return startAnswer regenerate jobs key StartOutcome.Cancelled
+                                else
+                                    return record |> Option.map (fun credentials -> chatgptConfirmationRequired credentials.Account)
+                                                  |> Option.defaultWith chatgptSignedOut
                             | Chatgpt -> return! summarizeViaPlan regenerate admission context vault jobs body projectId documentId readable
                             | Configured -> return! summarizeConfigured regenerate admission context jobs configuration.Summary.Value body projectId documentId readable })) |> ignore
     let path = "/api/projects/{projectId:guid}/documents/{documentId:guid}/summary"
