@@ -22,6 +22,8 @@ Hafiz Gaffar and Saleh Albarashdi, “Copyright Protection for AI-Generated Work
 
 The built-in prompt and any map/combine steps are implementation-dependent; blank optional instruction does not mean there is no prompt. Record the commit so the implementation can be inspected, but do not claim the exact provider-side prompt, parameters or hidden model version were observed if they were not. Even the same displayed model and input may produce different outputs or change over time; one run cannot establish repeatability or broad quality.
 
+In the review conclusion, distinguish: **citation/extraction defects** (wrong navigation, page mapping or observed text extraction); **incorrect or misleading generated claims** (including lost qualifications); **prompt-related limitations** (what the observed instructions can and cannot establish); **expected model variability** (differences between runs are not automatically defects); and **insufficient evidence** (missing output, inaccessible text or unobservable behavior). Do not assign a cause without evidence. Track each concrete, reproducible product defect separately in Codecks, linking its evidence and recording steps and observed versus expected behavior; do not turn uncertain observations or normal variation into defect claims.
+
 ## Evidence template — copy for each run
 
 Leave unknown fields as “not exposed,” “not checked,” or “uncertain”; never fill them by inference.
