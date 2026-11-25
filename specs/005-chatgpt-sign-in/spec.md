@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-13
 
-**Status**: Draft
+**Status**: Implemented in v0.2.0; historical specification (see [tasks](tasks.md) and [specification index](../../docs/specification-index.md) for provenance and later changes).
 
 **Input**: User description: "Sign in with ChatGPT so summaries use the researcher's own ChatGPT plan." Background, research, the spike result and OpenAI's app requirements: `docs/notes/summary-service-access.md`.
 
