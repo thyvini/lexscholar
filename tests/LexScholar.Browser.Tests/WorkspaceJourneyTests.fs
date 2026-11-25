@@ -139,6 +139,63 @@ let ``document heading sits above separate request and summary cards`` (browserN
         Assert.True(headingBox.Y + headingBox.Height < summaryBox.Y)
     })
 
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T026"); Trait("Category", "Browser")>]
+let ``library remains actionable while project creation reloads`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use harness = TestHarness.Start(serveClient = true)
+        let! page = openApp browser harness
+        do! SummaryJourneyTests.arrange page
+        let arrived = TaskCompletionSource<unit>()
+        let release = TaskCompletionSource<unit>()
+        let holdProjects (route: IRoute) : Task = task {
+            let! response = route.FetchAsync()
+            arrived.SetResult()
+            do! release.Task
+            do! route.FulfillAsync(RouteFulfillOptions(Response = response))
+        }
+        use! _ = page.RouteAsync("**/api/projects", Func<IRoute, Task>(fun route ->
+            if route.Request.Method = "GET" then holdProjects route else route.ContinueAsync()))
+        do! page.GetByLabel(Texts.projectName).FillAsync("Beta")
+        do! click (button (page.Locator("body")) Texts.createProject)
+        do! arrived.Task
+        let library = button (page.Locator("body")) Texts.library
+        let! before = library.BoundingBoxAsync()
+        do! page.Mouse.MoveAsync(before.X + before.Width / 2.0f, before.Y + before.Height / 2.0f)
+        do! page.Mouse.DownAsync()
+        release.SetResult()
+        let beta = page.Locator("ul.projects li").Filter(LocatorFilterOptions(HasText = "Beta"))
+        do! Assertions.Expect(button beta Texts.select).ToBeEnabledAsync()
+        do! page.Mouse.UpAsync()
+        do! Assertions.Expect(page.GetByTestId("main").GetByLabel(Texts.importPdf)).ToBeVisibleAsync()
+    })
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T026"); Trait("Category", "Browser")>]
+let ``library and long project list remain keyboard accessible across widths`` (browserName: string) =
+    withBrowser browserName (fun browser -> task {
+        use harness = TestHarness.Start(serveClient = true)
+        let! page = openApp browser harness
+        do! SummaryJourneyTests.arrange page
+        let sidebar = page.Locator(".project-column")
+        for index in 1..10 do
+            let name = sprintf "Project %02d" index
+            do! page.GetByLabel(Texts.projectName).FillAsync(name)
+            do! click (button sidebar Texts.createProject)
+            let row = sidebar.Locator("ul.projects li").Filter(LocatorFilterOptions(HasText = name))
+            do! Assertions.Expect(button row Texts.select).ToBeEnabledAsync()
+        let last = sidebar.Locator("ul.projects li").Filter(LocatorFilterOptions(HasText = "Project 10"))
+        let library = button sidebar Texts.library
+        for width in [ 1440; 800 ] do
+            do! page.SetViewportSizeAsync(width, 600)
+            do! (button last Texts.select).ScrollIntoViewIfNeededAsync()
+            do! (button last Texts.select).PressAsync("Enter")
+            do! Assertions.Expect(last).ToHaveAttributeAsync("aria-current", "true")
+            do! library.ScrollIntoViewIfNeededAsync()
+            do! library.FocusAsync()
+            do! Assertions.Expect(library).ToBeFocusedAsync()
+            do! page.Keyboard.PressAsync("Enter")
+            do! Assertions.Expect(page.GetByTestId("main").GetByLabel(Texts.importPdf)).ToBeVisibleAsync()
+    })
+
 [<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T019"); Trait("Category", "Browser")>]
 let ``late successful project selection preserves newer library navigation`` (browserName: string) =
     withBrowser browserName (fun browser -> task {

@@ -1362,6 +1362,16 @@ module private Ui =
                 concat {
                     aside {
                         attr.``class`` "project-column"
+                        button {
+                            attr.``type`` "button"
+                            "aria-label" => Texts.library
+                            attr.``class`` (if state.ShowLibrary then "library-navigation selected" else "library-navigation")
+                            on.click (fun _ -> dispatch' ShowLibrary)
+                            text Texts.library
+                            cond state.Library.HasLoadedLibrary <| function
+                                | true -> small { attr.``class`` "library-count"; text (string state.Library.Documents.Length) }
+                                | false -> empty ()
+                        }
                         projectForm model dispatch
                         section {
                             h2 { text Texts.projects }
@@ -1406,16 +1416,6 @@ module private Ui =
                                     }
                             }
                             button { attr.``type`` "button"; attr.disabled busy; on.click (fun _ -> dispatch Reload); text Texts.refresh }
-                        }
-                        button {
-                            attr.``type`` "button"
-                            "aria-label" => Texts.library
-                            attr.``class`` (if state.ShowLibrary then "library-navigation selected" else "library-navigation")
-                            on.click (fun _ -> dispatch' ShowLibrary)
-                            text Texts.library
-                            cond state.Library.HasLoadedLibrary <| function
-                                | true -> small { attr.``class`` "library-count"; text (string state.Library.Documents.Length) }
-                                | false -> empty ()
                         }
                     }
                     aside {
