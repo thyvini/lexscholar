@@ -1,6 +1,6 @@
 # T018 — Security, privacy and owner validation
 
-**Status: automated checks complete; owner manual validation accepted in Firefox and Chromium.**
+**Status: automated checks complete; owner attested manual acceptance in Firefox and Chromium.**
 
 Base: `origin/release/0.5.0` at `1848a3b` (T017 merged). Developer B, GPT-6.1 Sol.
 Linux 7.3.5-2-cachyos x86_64, .NET SDK 10.0.114; installed Playwright Chromium
@@ -77,11 +77,13 @@ including the 2 new Chromium/Firefox cases; 7 new server cases). Build passed wi
 - Full suite not run locally. CI URL: **pending PR/full-suite run** (no push or PR
   authorized for this implementation handoff).
 
-## Owner manual validation — accepted
+## Owner-attested manual validation — accepted
 
-Follow [quickstart](../quickstart.md) separately in Firefox and Chromium with
-fresh isolated fixture workspaces. The permission-based partial-result check
-requires a non-root user. Automated headless journeys do not replace these checks.
+The owner reported acceptance of the [quickstart](../quickstart.md) checks in both
+browsers using isolated fixture workspaces. This is owner-attested acceptance, not
+a claim that the agent independently witnessed each manual step. The permission-based
+partial-result check requires a non-root user. Automated headless journeys do not
+replace these checks.
 
 | Required record | Firefox | Chromium |
 |---|---|---|

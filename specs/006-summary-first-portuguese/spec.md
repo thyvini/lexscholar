@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-16
 
-**Status**: Draft
+**Status**: Implemented in v0.4.0; historical specification (see [tasks](tasks.md) and [specification index](../../docs/specification-index.md) for provenance and later changes).
 
 **Input**: User description: "Rework the workspace around the summary, without the built-in reader, and translate the interface into Brazilian Portuguese." The researcher is a Brazilian law master's student who reads whole documents in her own PDF software and uses LexScholar day to day for summaries (F003, F004, F005).
 
