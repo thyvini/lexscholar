@@ -56,7 +56,7 @@ In the app, generating a new summary uses your ChatGPT plan. Signing in opens th
 
 Before the first summary send for a login, LexScholar asks you to confirm sending the document's extracted text and any optional instruction to OpenAI through your ChatGPT account. Cancel if you do not want to send them. After confirmation, later ordinary summaries can be sent without asking again until you sign out. Regenerating an existing summary with feedback asks for confirmation each time. Stopping a request cannot recall data already sent.
 
-An optional initial instruction or regeneration feedback is sent along with document text, including in multi-part summary requests. LexScholar does not separately save the instruction or feedback, but the generated summary may reflect it and is saved locally. Summaries are generated for your review and are not verified. How an external service uses or retains sent data is governed by that service and your account settings; local deletion cannot control it.
+An optional initial instruction or regeneration feedback is sent along with document text, including in multi-part summary requests. LexScholar does not separately save the instruction or feedback, but the generated summary may reflect it and is saved locally. Summaries are generated for your review and are not verified. How an external service uses or retains sent data is governed by that service and your account settings; local deletion cannot control it. See OpenAI's [data controls guidance](https://help.openai.com/en/articles/7730893-data-controls-in-chatgpt) for information about ChatGPT account settings.
 
 The server also supports a separately configured chat-completions service through its API. For a non-local configured service, the API requires confirmation identifying its host and model before sending text and optional instructions; the current app offers the ChatGPT plan rather than a service chooser. A locally configured service processes requests at that local destination.
 
@@ -66,7 +66,7 @@ The browser uses session storage for onboarding state and, when applicable, a pe
 
 ## Exporting and deleting
 
-In the library, **Exportar biblioteca** downloads a ZIP containing the original PDFs, project and association metadata, roles, and saved summaries (including readable text versions). Credentials and settings are not included. Check the browser's download: LexScholar cannot confirm it was saved to disk. The archive is for use outside LexScholar; there is no in-app restore. An unavailable document can prevent export.
+In the library, **Exportar biblioteca** downloads a ZIP containing the original PDFs, project and association metadata, roles, and saved summaries (including readable text versions). Only projects linked to library PDFs are included; projects with no document associations are excluded. Credentials and settings are not included. Check the browser's download: LexScholar cannot confirm it was saved to disk. The archive is for use outside LexScholar; there is no in-app restore. An unavailable document can prevent export.
 
 To delete library documents, use **Selecionar para exclusão**, review the impact, and confirm **Excluir permanentemente**. This removes selected library PDFs, their project associations and saved summaries. Check the results: deletion can be incomplete and offer a retry. Removing a document from one project is a different action and retains the library PDF.
 
