@@ -6,7 +6,7 @@
 
 **Created**: 2026-11-12
 
-**Status**: Draft
+**Status**: Implemented in v0.2.0; historical specification (see [tasks](tasks.md) and [specification index](../../docs/specification-index.md) for provenance and later changes).
 
 **Input**: User description: "Summarize one library document with page references. While reading a document in a project, the researcher asks for a summary of that document. She gets a short summary, in the document's language, of its main points. Every point cites the page(s) it comes from, and she can jump from a citation to that page in the reader to check it." (Full description, including the constitution requirements and scope limits, in the F003 planning request.)
 

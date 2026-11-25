@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-14
 
-**Status**: Draft
+**Status**: Implemented in v0.3.0; historical specification (see [tasks](tasks.md) and [specification index](../../docs/specification-index.md) for provenance and later changes).
 
 **Input**: User description: "Summaries keep generating in the background." The researcher asks for a summary of a document and keeps working; she can open another document or project while it is generated, and when she comes back she finds the summary finished, its progress, or why it failed. This replaces F003's FR-009 rule that switching document or project abandons a summary in progress (F003 clarification: "Background generation is planned for F004").
 

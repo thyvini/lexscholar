@@ -60,7 +60,7 @@ let private seed root =
     db.SaveChanges() |> ignore
     document, bytes
 
-[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T008"); Trait("Category", "Browser")>]
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T008"); Trait("Task", "A2"); Trait("Category", "Browser")>]
 let ``public export downloads a complete local archive with no credentials or settings`` browserName =
     Ui.withBrowser browserName (fun browser -> task {
         use host = TestHarness.Start(serveClient = true)
@@ -90,7 +90,7 @@ let ``public export downloads a complete local archive with no credentials or se
         page.Request.Add(fun request ->
             if (Uri request.Url).Host <> "127.0.0.1" && (Uri request.Url).Host <> "localhost" then
                 external.Add(request.Url))
-        do! Assertions.Expect(page.GetByText("Inclui todos os PDFs, projetos, vínculos, papéis e resumos salvos. Os resumos são gerados para revisão, não verificados.")).ToBeVisibleAsync()
+        do! Assertions.Expect(page.GetByText("Inclui todos os PDFs da biblioteca, os projetos vinculados a eles, seus vínculos, papéis e resumos salvos. Projetos sem documentos vinculados não são incluídos. Os resumos são gerados para revisão, não verificados.")).ToBeVisibleAsync()
         do! Assertions.Expect(page.GetByText("Para uso fora do LexScholar. Não há restauração no aplicativo. Credenciais e configurações não são incluídas.")).ToBeVisibleAsync()
         let downloadTask = page.WaitForDownloadAsync()
         do! Ui.click (exportButton page)

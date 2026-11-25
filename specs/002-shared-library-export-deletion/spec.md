@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-23
 
-**Status**: Draft — decisions and owner approval required before planning
+**Status**: Implemented in v0.5.0; historical specification (see [tasks](tasks.md) and [specification index](../../docs/specification-index.md) for provenance and later changes).
 
 **Input**: F002, [Codecks $12y](https://thyago-cunha-dev.codecks.io/card/12y): export the shared PDF library and its relevant information, and deliberately delete selected documents and their derived data.
 
