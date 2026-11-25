@@ -1,35 +1,48 @@
 # Workstream E: governance proposal and verification debt
 
-**Status: proposal only; no amendment or acceptance has been approved or performed.**
+**Status: tracking amendment approved and applied on 2026-11-25; verification proposals remain unapproved.**
 Cards [$166](https://thyago-cunha-dev.codecks.io/card/166) and
 [$167](https://thyago-cunha-dev.codecks.io/card/167) remain open. This note
-does not change the constitution, historical feature records, or acceptance results.
+records only the approved tracking amendment below; it does not change historical
+feature records or acceptance results.
 
-## Proposed constitution clarification
+## Approved constitution tracking clarification ($165)
 
-The constitution's “Current user-control delivery tracking” still describes
+The constitution's “Current user-control delivery tracking” previously described
 F002 export and deletion as deferred. F002's
 [T018 evidence](../../specs/002-shared-library-export-deletion/evidence/t018-owner-validation.md)
 records owner acceptance in Firefox and Chromium. Delivery of those controls
 alone does not establish every aspect of Principle II.
 
-**Proposed exact replacement** for the paragraph under “Current user-control
+**Approved exact replacement**, now applied to the paragraph under “Current user-control
 delivery tracking” (not for Principle II itself):
 
 > F001 retains shared documents after their final project association is removed. Full-library export and deletion were deferred from F001 and tracked for F002 in [Codecks card $12y](https://thyago-cunha-dev.codecks.io/card/12y). F002 delivered and verified those controls; its acceptance and limitations are recorded in [T018 evidence](../../specs/002-shared-library-export-deletion/evidence/t018-owner-validation.md). This delivery does not by itself establish full compliance with Principle II. F001's approved feature scope and historical deferral remain unchanged.
 
-If separately approved, replace the metadata line with:
+Applied metadata:
 
 > **Version**: 2.0.1 | **Ratified**: 2026-11-04 | **Last Amended**: 2026-11-25
 
-The proposed amendment date is **2026-11-25**, subject to owner approval; if
-adopted on another date, use the actual adoption date instead. Version 2.0.1
-is a patch because this corrects delivery tracking without changing any
-principle or obligation. The impact is confined to current tracking and
+The owner explicitly approved this exact narrow amendment and its detailed
+implementation plan in the Workstream A ($165) instruction on **2026-11-25**.
+The actual adoption date is **2026-11-25**; ratification remains **2026-11-04**.
+Version 2.0.1 is a patch because this corrects delivery tracking without changing
+any principle or obligation. The impact is confined to current tracking and
 metadata: F001's historical scope and evidence remain intact, F002's recorded
 limitations still apply, and no blanket Principle II compliance is claimed.
-The owner must separately approve the wording and amendment; this note does
-not authorize editing `.specify/memory/constitution.md`.
+No core principle, development-workflow obligation or governance rule changed.
+This approval does not approve the $166/$167 proposals below, run their checks,
+accept their evidence risks or retroactively pass their historical criteria.
+
+### Amendment verification
+
+Focused Python assertions before editing: **RED**, the approved paragraph was
+absent. After editing: **GREEN**, exact approved paragraph and metadata matched;
+the rest of the constitution and both verification proposals were byte-for-byte
+unchanged from the branch base; approval/status wording and all six local links
+in these two files passed checks. `git diff --check` passed.
+`scripts/check.sh` passed the solution build with `-warnaserror`.
+No application tests were run for this documentation-only amendment.
 
 ## $166: owner-checkable usability evidence
 

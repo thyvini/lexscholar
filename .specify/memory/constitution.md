@@ -28,10 +28,10 @@ LexScholar development MUST follow Spec-Driven Development. Feature work MUST be
 
 ### Current user-control delivery tracking
 
-F001 retains shared documents after their final project association is removed. Full-library export and deletion are deferred from F001 and tracked for F002 in [Codecks card $12y](https://thyago-cunha-dev.codecks.io/card/12y). Until the missing controls are delivered and verified, Principle II remains outstanding; this tracking does not establish full compliance. F001's approved feature scope remains unchanged.
+F001 retains shared documents after their final project association is removed. Full-library export and deletion were deferred from F001 and tracked for F002 in [Codecks card $12y](https://thyago-cunha-dev.codecks.io/card/12y). F002 delivered and verified those controls; its acceptance and limitations are recorded in [T018 evidence](../../specs/002-shared-library-export-deletion/evidence/t018-owner-validation.md). This delivery does not by itself establish full compliance with Principle II. F001's approved feature scope and historical deferral remain unchanged.
 
 ## Governance
 
 This constitution governs project specifications, plans, implementation, and reviews. Amendments MUST be proposed as explicit changes to this document, reviewed for impact on existing principles and artifacts, and recorded with an updated version and amendment date. Versioning follows semantic versioning: MAJOR for incompatible governance changes, MINOR for added principles or materially expanded obligations, and PATCH for clarifications that do not change obligations. Compliance MUST be reviewed during specification, planning, and change review; any exception MUST be documented with its rationale and scope in the relevant project artifact. Technology selection remains a planning decision and MUST comply with this constitution.
 
-**Version**: 2.0.0 | **Ratified**: 2026-11-04 | **Last Amended**: 2026-11-04
+**Version**: 2.0.1 | **Ratified**: 2026-11-04 | **Last Amended**: 2026-11-25
