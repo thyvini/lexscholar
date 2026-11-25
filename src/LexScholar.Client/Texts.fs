@@ -28,7 +28,7 @@ let deletionNoSummary = "Sem resumo salvo"
 let deletionNoProjects = "Sem vínculos com projetos"
 
 let exportLibrary = "Exportar biblioteca"
-let exportContents = "Inclui todos os PDFs, projetos, vínculos, papéis e resumos salvos. Os resumos são gerados para revisão, não verificados."
+let exportContents = "Inclui todos os PDFs da biblioteca, os projetos vinculados a eles, seus vínculos, papéis e resumos salvos. Projetos sem documentos vinculados não são incluídos. Os resumos são gerados para revisão, não verificados."
 let exportExplanation = "Para uso fora do LexScholar. Não há restauração no aplicativo. Credenciais e configurações não são incluídas."
 let exporting = "Preparando e recebendo a exportação…"
 let exportReceived = "Arquivo recebido. Confira o download no navegador; o LexScholar não confirma o salvamento no disco."
