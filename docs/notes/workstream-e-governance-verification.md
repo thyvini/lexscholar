@@ -1,10 +1,10 @@
 # Workstream E: governance proposal and verification debt
 
-**Status: tracking amendment approved and applied on 2026-11-25; verification proposals remain unapproved.**
+**Status: tracking amendment approved and applied on 2026-11-25; $166 standard approved; actual results pending; $167 procedure requested, with no new results accepted.**
 Cards [$166](https://thyago-cunha-dev.codecks.io/card/166) and
 [$167](https://thyago-cunha-dev.codecks.io/card/167) remain open. This note
-records only the approved tracking amendment below; it does not change historical
-feature records or acceptance results.
+records the approved tracking amendment and current verification decisions below;
+it does not change historical feature records or acceptance results.
 
 ## Approved constitution tracking clarification ($165)
 
@@ -31,8 +31,10 @@ any principle or obligation. The impact is confined to current tracking and
 metadata: F001's historical scope and evidence remain intact, F002's recorded
 limitations still apply, and no blanket Principle II compliance is claimed.
 No core principle, development-workflow obligation or governance rule changed.
-This approval does not approve the $166/$167 proposals below, run their checks,
-accept their evidence risks or retroactively pass their historical criteria.
+The amendment approval itself does not run the $166/$167 checks, accept their
+evidence risks or retroactively pass their historical criteria. Separately, the
+owner approved the $166 practical current-workflow standard and requested the
+$167 procedure below; neither decision accepts new verification results.
 
 ### Amendment verification
 
@@ -50,9 +52,13 @@ F001 [SC-001 and SC-006](../../specs/001-research-workspace/spec.md) set
 90% unassisted participant thresholds; [T046 and the participant evaluations
 remain deferred](../../specs/001-research-workspace/verification.md). Technical
 completion is not proof that those thresholds passed. Do not change those
-historical records or organize a participant study as part of this proposal.
+historical records or organize a participant study as part of this verification.
 
-Proposed current-workflow checks, for the owner to approve or decline:
+The owner explicitly approved these checks as the practical current-workflow
+verification standard. Actual results remain pending; no results have been
+accepted.
+
+Approved current-workflow checks:
 
 1. In an isolated workspace, create two projects, switch between them, and
    identify the active project from the interface after each switch.
@@ -65,12 +71,13 @@ Proposed current-workflow checks, for the owner to approve or decline:
    not run with an explanation; link any supporting evidence.
 
 These are practical single-researcher checks, not a participant study or a
-statistical replacement for the original thresholds. The owner should record
-an explicit decision: accept the proposed checks as a *new* current-workflow
-standard and record actual results, or retain the evidence deferral. A failure
-or incomplete check remains visible; adopting a new standard does not
-retroactively pass T046, SC-001 or SC-006. Keep $166 open until the owner
-decides and records results or explicitly retains the deferral.
+statistical replacement for the original thresholds. Approval adopts a *new*
+current-workflow standard, not acceptance of results. Record actual outcomes
+against it for owner review. A failure or incomplete check remains visible;
+adopting this standard does not retroactively pass T046, SC-001 or SC-006, whose
+historical evidence deferral remains unchanged. Keep $166 open until actual
+results and the owner's acceptance decision are recorded or the owner explicitly
+retains the evidence deferral.
 
 ## $167: representative summary quality evidence
 
@@ -78,7 +85,7 @@ The [F003 manual evidence](../../specs/003-document-summary/evidence/t012-manual
 reports 9 of 10 sampled fixture points supported, but repetitive passages limit
 its strength. Valid page references alone do not establish semantic support.
 
-Proposed owner-reviewed check, not yet run:
+Requested owner-reviewed procedure, not yet run:
 
 1. Select one representative academic PDF with an independently verifiable
    open licence (for example CC BY 4.0); record title, authors, version, source
