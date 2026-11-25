@@ -62,7 +62,7 @@ let ``intent fences extraction preparations even when extractor ignores cancella
     let path = documentPath h
     let key = keyOf path
     let before = if replacement then saved h key else None
-    let pending = Task.Run(fun () -> sendJson h (path + if replacement then "/regenerate" else "") "{}")
+    let pending = Task.Run(fun () -> sendJson h (path + if replacement then "/regenerate" else "") """{"confirmSend":true}""")
     try
         wait entered.Task
         admit h key.Document
@@ -74,7 +74,7 @@ let ``intent fences extraction preparations even when extractor ignores cancella
     Assert.Equal(before, SummaryRepository.find h.Root key)
     Assert.Equal(before |> Option.map JobState.Finished, (registry h).State key)
     // New preparations after intent are fenced too.
-    let status, _ = sendJson h (path + "/regenerate") "{}"
+    let status, _ = sendJson h (path + "/regenerate") """{"confirmSend":true}"""
     Assert.NotEqual(HttpStatusCode.Accepted, status)
     Assert.Empty fake.Requests
 
@@ -89,7 +89,7 @@ let ``intent cancels running jobs prevents later chunks and leaves unrelated job
     let before = if replacement then saved h key else None
     let otherPath = documentPathFor h "article-pt.pdf"
     let other = keyOf otherPath
-    let status, _ = sendJson h (path + if replacement then "/regenerate" else "") "{}"
+    let status, _ = sendJson h (path + if replacement then "/regenerate" else "") """{"confirmSend":true}"""
     Assert.Equal(HttpStatusCode.Accepted, status)
     wait fake.Waiting
     let settled = (registry h).Settled key

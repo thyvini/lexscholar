@@ -89,6 +89,7 @@ let ``replacement aware client keeps durable summary without destructive stop or
         use request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, path + "/regenerate")
         request.Headers.TryAddWithoutValidation("Origin", harness.Client.BaseAddress.GetLeftPart(UriPartial.Authority)) |> ignore
         request.Headers.TryAddWithoutValidation("X-CSRF-TOKEN", csrf.RootElement.GetProperty("requestToken").GetString()) |> ignore
+        request.Content <- new System.Net.Http.StringContent("""{"confirmSend":true}""", System.Text.Encoding.UTF8, "application/json")
         use! started = harness.Client.SendAsync request
         Assert.Equal(System.Net.HttpStatusCode.Accepted, started.StatusCode)
         if fail then do! SummaryJobsAccess.settled harness.App project document

@@ -220,7 +220,9 @@ let private confirmationRequired (summary: SummaryConfiguration) : IResult =
     Results.Problem(
         statusCode = Nullable 409,
         title = "Confirmation needed",
-        detail = "The text of this document and any optional instruction will leave this machine. Nothing was sent.",
+        detail = (if ServiceLocation.classify summary.Endpoint.Host = Local then
+                      "The text of this document and any optional instruction will be sent to the configured service. Nothing was sent."
+                  else "The text of this document and any optional instruction will leave this machine. Nothing was sent."),
         extensions = dict [ "code", box "confirmation_required"
                             "serviceHost", box summary.Endpoint.Authority
                             "model", box summary.Model ])
@@ -256,6 +258,17 @@ let startAnswer regenerate (jobs: SummaryJobs) (key: SummaryKey) (outcome: Start
     | NotAssociated -> problem 404 "not_found" "Association not found" null
     | NoSavedSummary -> problem 404 "no_summary" "No saved summary to replace" null
     | StartOutcome.Cancelled -> problem 409 "cancelled" "Replacement cancelled" "The saved summary is unchanged."
+
+/// Extraction/vault awaits can outlive another request's admission. Decide rejection against
+/// the current job under the registration lock, with cancellation and association fencing first.
+let private replacementConfirmation (jobs: SummaryJobs) (key: SummaryKey) (admission: System.Threading.CancellationToken) (answer: IResult) =
+    jobs.Locked(fun () ->
+        if admission.IsCancellationRequested then startAnswer true jobs key StartOutcome.Cancelled
+        elif not (jobs.Capabilities.AssociationExists key) then startAnswer true jobs key NotAssociated
+        else
+            match jobs.State key with
+            | Some (JobState.Running _ as state) -> stateResult 200 state
+            | _ -> answer)
 
 /// The summary through her plan, as a background job. `prepareSend` is the only way to a token: confirmation, refresh
 /// and save happen there under one lock, and nothing is sent before it returns `Prepared`. The job's token source exists
@@ -331,15 +344,17 @@ let private summarizeViaPlan regenerate admission (context: HttpContext) (vault:
     finally
         if not handedOver then source.Dispose() }
 
-/// The service from her settings file: F003's rule, unchanged. Elsewhere needs this request's confirmation.
+/// The service from her settings file: ordinary sends retain F003's rule; replacements always need fresh consent.
 /// After the checks the summary runs as a background job (F004): the answer is immediate and closing the request does not stop it.
 let private summarizeConfigured regenerate admission (context: HttpContext) (jobs: SummaryJobs) (configured: SummaryConfiguration) (body: Body) projectId documentId (pages: ReadablePages) : Task<IResult> = task {
     // FR-014: for a service elsewhere nothing is sent without this request's confirmation
     // of the host and model currently configured.
     let current = configured.Endpoint.Authority, configured.Model
-    if ServiceLocation.classify configured.Endpoint.Host = Elsewhere && body.ConfirmedService <> Some current then
+    if (regenerate && not body.ConfirmSend) ||
+       (ServiceLocation.classify configured.Endpoint.Host = Elsewhere && body.ConfirmedService <> Some current) then
         (summaryLogger context).LogInformation("Summary needs confirmation for {Host}, model {Model}", configured.Endpoint.Authority, configured.Model)
-        return confirmationRequired configured
+        let answer = confirmationRequired configured
+        return if regenerate then replacementConfirmation jobs { Project = projectId; Document = documentId } admission answer else answer
     else
         // Everything the job needs is taken from the request now: it outlives it.
         let logger = summaryLogger context
@@ -477,6 +492,16 @@ let map (app: WebApplication) (configuration: WorkspaceConfiguration) (vault: Ch
                             // These two calls are the only paths to `summarizeOnce`, and both run after the local checks
                             // and after their own confirmation rule.
                             match destination with
+                            | Chatgpt when regenerate && not body.ConfirmSend ->
+                                // Account-level consent may authorize ordinary sends, never a new replacement.
+                                // Read only: do not refresh credentials, list models or start a job before fresh consent.
+                                let! record = vault.Read()
+                                if admission.IsCancellationRequested then
+                                    return startAnswer regenerate jobs key StartOutcome.Cancelled
+                                else
+                                    let answer = record |> Option.map (fun credentials -> chatgptConfirmationRequired credentials.Account)
+                                                        |> Option.defaultWith chatgptSignedOut
+                                    return replacementConfirmation jobs key admission answer
                             | Chatgpt -> return! summarizeViaPlan regenerate admission context vault jobs body projectId documentId readable
                             | Configured -> return! summarizeConfigured regenerate admission context jobs configuration.Summary.Value body projectId documentId readable })) |> ignore
     let path = "/api/projects/{projectId:guid}/documents/{documentId:guid}/summary"
