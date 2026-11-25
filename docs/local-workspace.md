@@ -31,7 +31,7 @@ LexScholar creates the folder if it does not exist, readable only by your user a
 
 | Item | What it holds |
 |---|---|
-| `workspace.sqlite` | Your projects, active project, library records (original filename, size, page count, import time), project associations and roles, and saved summaries and their generation details. |
+| `workspace.sqlite` | Your projects, active project, library records (original filename, size, page count, import time), project associations and roles, saved summaries and their generation details, and deletion journals and results. |
 | `originals/` | The PDFs you imported, exactly as imported. Each file is read-only and has a generated name; your original filename is never used as a file name. |
 | `staging/` | Uploads in progress. Anything left here is deleted the next time LexScholar starts. |
 | `quarantine/` | Stored PDFs that ended up without a library record because an import was interrupted (for example by a crash). LexScholar moves them here when it starts and logs a warning; it never deletes them. You can inspect or delete them yourself. |
@@ -69,6 +69,8 @@ The browser uses session storage for onboarding state and, when applicable, a pe
 In the library, **Exportar biblioteca** downloads a ZIP containing the original PDFs, project and association metadata, roles, and saved summaries (including readable text versions). Only projects linked to library PDFs are included; projects with no document associations are excluded. Credentials and settings are not included. Check the browser's download: LexScholar cannot confirm it was saved to disk. The archive is for use outside LexScholar; there is no in-app restore. An unavailable document can prevent export.
 
 To delete library documents, use **Selecionar para exclusão**, review the impact, and confirm **Excluir permanentemente**. This removes selected library PDFs, their project associations and saved summaries. Check the results: deletion can be incomplete and offer a retry. Removing a document from one project is a different action and retains the library PDF.
+
+LexScholar retains a local deletion journal in `workspace.sqlite`, including original filenames, document and operation IDs, storage keys and deletion status, to track and recover the request. Even after the documents are deleted, the journal remains until you dismiss the completed result with **Dispensar resultado**. A result can only be dismissed after all documents in that request have been deleted; incomplete requests remain available for retry. Dismissing removes the journal records, but does not guarantee secure physical erasure.
 
 Deleting a summary, library document, or the data directory does not remove original files you imported, downloads, exports, backups, other copies, or data already sent to external services. Deletion does not guarantee secure physical erasure. To back up, move or remove the entire local workspace, stop LexScholar and copy, move or delete its data directory yourself; protect any copies, especially sign-in credentials.
 
