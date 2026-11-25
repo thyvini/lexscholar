@@ -4,6 +4,9 @@
 scope decision. The test-precondition correction does not fix this product debt.
 Existing card statuses are unchanged.
 
+Tracked by Bugs card [$169](https://thyago-cunha-dev.codecks.io/card/169)
+under F006 and unchecked task T026 in [tasks.md](../tasks.md).
+
 ## Reproduction and impact
 
 1. Open a workspace with active Alpha and an opened article.
