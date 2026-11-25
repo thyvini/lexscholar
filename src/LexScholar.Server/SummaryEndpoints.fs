@@ -259,6 +259,17 @@ let startAnswer regenerate (jobs: SummaryJobs) (key: SummaryKey) (outcome: Start
     | NoSavedSummary -> problem 404 "no_summary" "No saved summary to replace" null
     | StartOutcome.Cancelled -> problem 409 "cancelled" "Replacement cancelled" "The saved summary is unchanged."
 
+/// Extraction/vault awaits can outlive another request's admission. Decide rejection against
+/// the current job under the registration lock, with cancellation and association fencing first.
+let private replacementConfirmation (jobs: SummaryJobs) (key: SummaryKey) (admission: System.Threading.CancellationToken) (answer: IResult) =
+    jobs.Locked(fun () ->
+        if admission.IsCancellationRequested then startAnswer true jobs key StartOutcome.Cancelled
+        elif not (jobs.Capabilities.AssociationExists key) then startAnswer true jobs key NotAssociated
+        else
+            match jobs.State key with
+            | Some (JobState.Running _ as state) -> stateResult 200 state
+            | _ -> answer)
+
 /// The summary through her plan, as a background job. `prepareSend` is the only way to a token: confirmation, refresh
 /// and save happen there under one lock, and nothing is sent before it returns `Prepared`. The job's token source exists
 /// before it and is handed to the registry after, so the run it registers ends with the job and with sign-out (research §2).
@@ -342,7 +353,8 @@ let private summarizeConfigured regenerate admission (context: HttpContext) (job
     if (regenerate && not body.ConfirmSend) ||
        (ServiceLocation.classify configured.Endpoint.Host = Elsewhere && body.ConfirmedService <> Some current) then
         (summaryLogger context).LogInformation("Summary needs confirmation for {Host}, model {Model}", configured.Endpoint.Authority, configured.Model)
-        return confirmationRequired configured
+        let answer = confirmationRequired configured
+        return if regenerate then replacementConfirmation jobs { Project = projectId; Document = documentId } admission answer else answer
     else
         // Everything the job needs is taken from the request now: it outlives it.
         let logger = summaryLogger context
@@ -487,8 +499,9 @@ let map (app: WebApplication) (configuration: WorkspaceConfiguration) (vault: Ch
                                 if admission.IsCancellationRequested then
                                     return startAnswer regenerate jobs key StartOutcome.Cancelled
                                 else
-                                    return record |> Option.map (fun credentials -> chatgptConfirmationRequired credentials.Account)
-                                                  |> Option.defaultWith chatgptSignedOut
+                                    let answer = record |> Option.map (fun credentials -> chatgptConfirmationRequired credentials.Account)
+                                                        |> Option.defaultWith chatgptSignedOut
+                                    return replacementConfirmation jobs key admission answer
                             | Chatgpt -> return! summarizeViaPlan regenerate admission context vault jobs body projectId documentId readable
                             | Configured -> return! summarizeConfigured regenerate admission context jobs configuration.Summary.Value body projectId documentId readable })) |> ignore
     let path = "/api/projects/{projectId:guid}/documents/{documentId:guid}/summary"

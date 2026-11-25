@@ -28,6 +28,58 @@ let private status text =
     json.RootElement.GetProperty("status").GetString()
 
 [<Theory; Trait("Task", "T024")>]
+[<InlineData("local")>]
+[<InlineData("remote")>]
+[<InlineData("chatgpt")>]
+let ``unconfirmed replacement waiting in extraction adopts a concurrently admitted running job`` destination =
+    let entered = TaskCompletionSource()
+    let release = TaskCompletionSource()
+    let mutable extractions = 0
+    let extraction : LexScholar.Server.SummaryEndpoints.PageExtraction =
+        { Extract = fun _ _ -> task {
+            if Threading.Interlocked.Increment(&extractions) = 1 then
+                entered.SetResult()
+                do! release.Task
+            return Ok [{ Number = 1; Text = String.replicate 100 "Readable source text. " }] } }
+    use configured = new FakeChatService(WaitUntilCancelled)
+    use plan = new FakeOpenAi(ResponsesScript.WaitUntilCancelled)
+    let handler : System.Net.Http.HttpMessageHandler = if destination = "chatgpt" then plan else configured
+    let endpoint = if destination = "remote" then "https://summary.example.test/v1" else "http://127.0.0.1:9/v1"
+    use harness = TestHarness.Start(summaryHandler = handler, summaryExtraction = extraction, settings = [
+        "LexScholar:Summary:Endpoint", endpoint; "LexScholar:Summary:Model", "m" ])
+    let path = documentPath harness
+    let key, saved = seedSaved harness path
+    if destination = "chatgpt" then signInThrough harness plan "" |> ignore
+    let unconfirmed =
+        if destination = "chatgpt" then """{"destination":"chatgpt"}"""
+        else """{"destination":"configured"}"""
+    let confirmed =
+        if destination = "chatgpt" then """{"destination":"chatgpt","confirmSend":true}"""
+        elif destination = "remote" then """{"destination":"configured","confirmSend":true,"confirmedHost":"summary.example.test","confirmedModel":"m"}"""
+        else """{"destination":"configured","confirmSend":true}"""
+    let pending = Task.Run(fun () -> sendJson harness (path + "/regenerate") unconfirmed)
+    try
+        wait entered.Task
+        let admitted, _ = sendJson harness (path + "/regenerate") confirmed
+        Assert.Equal(HttpStatusCode.Accepted, admitted)
+        wait (if destination = "chatgpt" then plan.Waiting else configured.Waiting)
+    finally release.TrySetResult() |> ignore
+    let response, content = pending.WaitAsync(TimeSpan.FromSeconds 30.).GetAwaiter().GetResult()
+    Assert.Equal(HttpStatusCode.OK, response)
+    Assert.Equal("running", status content)
+    if destination = "chatgpt" then
+        Assert.Single(plan.RequestsTo("api.openai.com", "/v1/responses")) |> ignore
+        Assert.Single(plan.RequestsTo("api.openai.com", "/v1/models")) |> ignore
+    else Assert.Single(configured.Requests) |> ignore
+    Assert.Equal(saved, SummaryRepository.find harness.Root key)
+    let ordinary, durable = sendJson harness path """{"destination":"chatgpt"}"""
+    Assert.Equal(HttpStatusCode.OK, ordinary)
+    Assert.Equal("finished", status durable)
+    Assert.Contains("Original", durable)
+    sendJson harness (path + "/cancel") "{}" |> ignore
+    Assert.Equal(saved, SummaryRepository.find harness.Root key)
+
+[<Theory; Trait("Task", "T024")>]
 [<InlineData(false)>]
 [<InlineData(true)>]
 let ``every configured replacement requires a fresh boolean confirmation but ordinary local sends do not`` remote =
@@ -66,6 +118,27 @@ let ``every configured replacement requires a fresh boolean confirmation but ord
         SummaryRepository.delete harness.Root key
         let ordinary, _ = sendJson harness path "{}"
         Assert.Equal(HttpStatusCode.Accepted, ordinary)
+
+[<Fact; Trait("Task", "T024")>]
+let ``unconfirmed replacement with expiring confirmed credentials performs no provider requests`` () =
+    use workspace = TemporaryWorkspace.Create()
+    let now = DateTimeOffset.UtcNow
+    let credentials : Credentials =
+        { ClientId = "test-client"; HostId = $"urn:uuid:{Guid.NewGuid()}"; Subject = "test-subject"; Account = "researcher@example.test"
+          AccessToken = "old-access"; RefreshToken = "old-refresh"; IdToken = "old-id"
+          ExpiresAt = now.AddMinutes 5.; Scopes = [ChatGptSignIn.planScope]; SignedInAt = now.AddHours -1.; ConfirmedAt = Some(now.AddMinutes -30.) }
+    ChatGptCredentials.save workspace.Root credentials
+    use fake = new FakeOpenAi(ResponsesScript.Completed """{"points":[{"text":"Unexpected","pages":[1]}]}""")
+    use harness = TestHarness.Start(workspace = workspace, summaryHandler = fake)
+    let path = documentPath harness
+    let key, saved = seedSaved harness path
+    let response, content = sendJson harness (path + "/regenerate") """{"destination":"chatgpt"}"""
+    Assert.Empty(fake.Requests)
+    Assert.Equal(HttpStatusCode.Conflict, response)
+    Assert.Contains("confirmation_required", content)
+    Assert.Contains(credentials.Account, content)
+    Assert.Equal(Some credentials, ChatGptCredentials.read harness.Root)
+    Assert.Equal(saved, SummaryRepository.find harness.Root key)
 
 [<Fact; Trait("Task", "T024")>]
 let ``an already confirmed plan still requires fresh consent for each replacement`` () =
