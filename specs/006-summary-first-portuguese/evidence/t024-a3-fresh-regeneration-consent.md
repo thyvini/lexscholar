@@ -2,7 +2,7 @@
 
 - RED: `scripts/check.sh T024` — 46 tests, 2 failed, 0 skipped. An already-confirmed plan and a local configured service both admitted unconfirmed replacements (`202`, expected `409`). Log: `/tmp/lexscholar-check.XYV2NZ`.
 - GREEN: `LOG=/tmp/opencode/a3-green-final.log scripts/check.sh T024 T011 T007 T023` — warning-as-error Release build passed; 290 tests, 0 failed, 0 skipped.
-- Full suite: deferred to PR CI; no PR opened by this workstream.
+- Full suite: [PR #166 CI](https://github.com/thyvini/lexscholar/actions/runs/45663861709/job/139380732039) passed on the reviewed head.
 
 New HTTP coverage rejects missing, false, string and numeric confirmation for local/remote configured services and an already-confirmed plan. Rejections preserve the saved summary and issue no outgoing requests (including refresh/model calls). Explicit consent admits replacements, remote host/model matching remains required, subsequent plan replacements require consent again, and running configured replacements return their state without renewed consent or duplicate sends. Ordinary local admission remains unchanged.
 
@@ -17,4 +17,4 @@ Environment: Linux, .NET 10 SDK pinned by `global.json`; isolated temporary work
 - **P2 expiring confirmed credentials coverage — must fix:** a new regression seeds valid already-confirmed credentials expiring in five minutes and asserts zero outgoing requests, unchanged credentials and unchanged saved summary on unconfirmed rejection.
 - Sensitivity: temporarily disabled only the fresh ChatGPT consent guard (uncommitted); `LOG=/tmp/opencode/a3-p2-sensitivity.log scripts/check.sh T024` — the new test failed `Assert.Empty`, observing `POST auth.openai.com/api/accounts/oauth/token`. Restored the guard before GREEN.
 - GREEN: `LOG=/tmp/opencode/a3-review-green.log scripts/check.sh T024 T011 T007 T023` — warning-as-error Release build passed; 294 tests, 0 failed, 0 skipped. Includes existing cancellation/deletion fences, ordinary sends, persistence and browser isolation. No sleeps/polling; race tests use held extraction and provider handshakes.
-- Full-suite CI and independent re-review remain PR gates; no self-review performed.
+- Full-suite CI and GPT review passed on head `021b038` before PR #166 merged; an independent reviewer also rechecked the follow-up.

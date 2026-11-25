@@ -9,4 +9,4 @@ export-format contract and implementation are unchanged.
   description was absent (Chromium and Firefox; 2 failed, 0 skipped).
 - GREEN: `LOG=/tmp/opencode/a2-green.log scripts/check.sh A2` — build passed
   with `-warnaserror`; both complete export journeys passed (2 passed, 0 skipped).
-- Full-suite CI: pending the parent workstream's PR; not run locally.
+- Full-suite CI: [PR #165](https://github.com/thyvini/lexscholar/actions/runs/45661127801/job/139370918510) passed; not run locally.
