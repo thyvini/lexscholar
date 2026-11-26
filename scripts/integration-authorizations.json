@@ -1,0 +1,15 @@
+{
+  "repository": "thyvini/lexscholar",
+  "release": "release/0.5.3",
+  "max_gate_age_seconds": 86400,
+  "exceptions": [],
+  "slices": {
+    "chore/engineering-team": {"card": "$16a", "files": ["opencode.jsonc", ".opencode/agents/*", ".agents/skills/*/SKILL.md", ".claude/skills/*/SKILL.md", ".claude/agents/*", ".claude/team-settings.json", "AGENTS.md", "CLAUDE.md", "docs/agents/codebase.md", "docs/agents/team.md", "docs/product/*", "docs/specification-index.md"]},
+    "chore/bridge-integration": {"card": "$16c", "files": ["scripts/integrate-pr.py", "scripts/integration-authorizations.json", "tests/tooling/test_integration.py", "tests/tooling/fixtures/integration/*", "docs/agents/integration.md"]},
+    "chore/team-watchdog": {"card": "$16e", "files": ["scripts/watchdog*", "scripts/notify*", "tests/tooling/*watchdog*", "tests/tooling/*notify*", "docs/agents/operations.md"]},
+    "docs/spike-google-docs": {"card": "$16g", "files": ["docs/discovery/s001*"]},
+    "docs/spike-legal-retrieval": {"card": "$16h", "files": ["docs/discovery/s002*"]},
+    "docs/spike-reading-email": {"card": "$16i", "files": ["docs/discovery/s003*"]},
+    "test/team-acceptance": {"card": "$16f", "files": ["docs/agents/*acceptance*", ".github/workflows/ci.yml", "tests/tooling/*acceptance*"]}
+  }
+}
