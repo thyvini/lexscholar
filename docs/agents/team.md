@@ -49,15 +49,23 @@ The team profiles use OpenCode V2's `.opencode/agents/` discovery and
 the skill tool. Configured models, effective permissions, child-session
 handoffs and tracker access must be verified in the actual deployment; a
 profile alone does not establish that a model or integration is available.
-Integration ([PR #182](https://github.com/thyvini/lexscholar/pull/182)) and
-watchdog ([PR #181](https://github.com/thyvini/lexscholar/pull/181)) are
-separate, unmerged deliverables. The integration proposal uses
-`scripts/integrate-pr.py`, not `scripts/integrate-pr.sh`; its trusted-release
-bootstrap and final invocation must be reconciled with Bridge's permissions
-after review. No `scripts/team-branch.sh` is supplied here. Until applicable
-tooling is reviewed and available on the release branch, use operator-prepared
-worktrees and manual checkpoints; Bridge reports integration blocked. Do not
-substitute an unreviewed command or rely on candidate-PR tooling.
+Integration and watchdog are separate release tooling, documented in
+[`integration.md`](integration.md) and [`operations.md`](operations.md).
+No `scripts/team-branch.sh` is supplied; use operator-prepared worktrees.
+Conductor can request approval for watchdog commands and automation creation or
+deletion. Bridge can request approval for the documented trusted-copy command;
+the operator must first prepare and verify that copy as described in
+`integration.md`. Do not substitute candidate-PR tooling.
+
+These permissions are **not unattended enforcement**: `automation_create`
+accepts arbitrary actions, the shell rules match text rather than Python
+arguments or script content, and a writable script can change after inspection.
+The operator must inspect each requested command/action and approve **once**,
+never save a broad approval or use auto-approval for these operations. Approve
+only the documented one-shot watchdog action or the intended trusted Bridge
+invocation, with its scope and gates. External-directory checks may require
+separate approval. Other shell commands remain denied for these roles. If
+approval or a trusted copy is unavailable, report the affected workflow blocked.
 
 ### Local verification (2026-11-26)
 
@@ -72,3 +80,15 @@ Subagent handoffs, every configured model, other permission paths, effective
 external-directory approvals, Codecks mutation, integration and watchdog
 operation remain unverified. Recheck after the separate tooling lands or the
 effective global/project configuration changes.
+
+Follow-up on the merged release: OpenCode v2.4.2 initially denied Conductor's
+`python3 -B scripts/watchdog.py --help` and Bridge's
+`python3 /tmp/opencode/bridge/integrate-pr.py --help`. With these profile
+changes, isolated archived `opencode run --auto` probes ran those harmless
+`--help` commands; the Bridge file was copied from the fetched release.
+An unrelated Conductor `python3 --version` remained denied even with `--auto`.
+`opencode debug agents` reported `ask` for both command patterns and for
+Conductor's automation create/delete. `--auto` was used only for these
+non-mutating probes, not for operation. No automation was created, no
+integration or notification executed, and interactive approval behavior and
+complete workflows were not tested.
