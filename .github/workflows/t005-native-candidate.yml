@@ -6,7 +6,7 @@ permissions:
   contents: read
 jobs:
   native:
-    runs-on: macos-15-arm64
+    runs-on: macos-15
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
@@ -28,6 +28,37 @@ jobs:
           clang -Wall -Wextra -Werror "$RUNNER_TEMP/flags.c" -o "$RUNNER_TEMP/flags"
           "$RUNNER_TEMP/flags"
           git rev-parse HEAD
+          git rev-parse HEAD:src/LexScholar.Infrastructure/DocumentStore.fs
+      - name: Demonstrate anchored-unlink and directory-sync sensitivity
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          file=src/LexScholar.Infrastructure/DocumentStore.fs
+          for mutation in unlink sync; do
+            MUTATION="$mutation" python3 - <<'PY'
+          import os
+          from pathlib import Path
+          p = Path("src/LexScholar.Infrastructure/DocumentStore.fs")
+          text = p.read_text()
+          if os.environ["MUTATION"] == "unlink":
+              old = "    if unlinkAt(handle, key, 0) <> 0 then"
+              new = "    use replacement = new SafeFileHandle(IntPtr(-2), false)\n    if unlinkAt(replacement, Path.Combine(originalsDirectory directory, key), 0) <> 0 then"
+          else:
+              old = "    if syncDirectory handle <> 0 then raise (IOException(\"Managed originals directory sync failed.\"))"
+              new = "    let reopened = openDirectory(originalsDirectory directory, flags)\n    if reopened < 0 then raise (IOException(\"Managed originals directory unavailable.\"))\n    use replacement = new SafeFileHandle(IntPtr(reopened), true)\n    if syncDirectory replacement <> 0 then raise (IOException(\"Managed originals directory sync failed.\"))"
+          assert text.count(old) == 1
+          p.write_text(text.replace(old, new))
+          PY
+            if dotnet test --project tests/LexScholar.Infrastructure.Tests/LexScholar.Infrastructure.Tests.fsproj -c Release --filter-trait 'Task=T005' > "$RUNNER_TEMP/$mutation.log" 2>&1; then
+              cat "$RUNNER_TEMP/$mutation.log"
+              exit 1
+            fi
+            cat "$RUNNER_TEMP/$mutation.log"
+            if [ "$mutation" = unlink ]; then expected='removal stays anchored when the originals pathname is replaced'; else expected='sync uses the opened directory when its pathname disappears'; fi
+            grep -F "$expected" "$RUNNER_TEMP/$mutation.log"
+            git show "HEAD:$file" > "$file"
+          done
       - name: Native storage and managed reimport tests
         shell: bash
         run: |
