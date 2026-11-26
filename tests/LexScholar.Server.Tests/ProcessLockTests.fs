@@ -49,9 +49,10 @@ let ``concurrent first acquisitions leave one owner and a private persistent fil
     let second = attempt ()
     start.SignalAndWait() |> ignore
     acquired.SignalAndWait() |> ignore
-    let results =
-        [ first.GetAwaiter().GetResult(); second.GetAwaiter().GetResult() ]
-        |> List.map (function Choice1Of2 result -> result | Choice2Of2 error -> raise error)
+    let attempts = [ first.GetAwaiter().GetResult(); second.GetAwaiter().GetResult() ]
+    let errors = attempts |> List.choose (function Choice2Of2 error -> Some error | _ -> None)
+    Assert.True(List.isEmpty errors, $"Concurrent acquisitions must not throw: {errors}")
+    let results = attempts |> List.choose (function Choice1Of2 result -> Some result | _ -> None)
     let owners = results |> List.choose (function Ok owner -> Some owner | _ -> None)
     try
         Assert.Single(owners) |> ignore
