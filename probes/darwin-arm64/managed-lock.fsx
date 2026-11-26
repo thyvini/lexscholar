@@ -11,6 +11,8 @@ module Native =
     extern int flock(SafeFileHandle fd, int operation)
     [<DllImport("libSystem.B.dylib", EntryPoint = "fcntl", SetLastError = true)>]
     extern int getfd(SafeFileHandle fd, int command)
+    [<DllImport("libSystem.B.dylib", EntryPoint = "dup", SetLastError = true)>]
+    extern int dup(SafeFileHandle fd)
 
 let check what n =
     if n < 0 then failwithf "%s errno=%d" what (Marshal.GetLastPInvokeError())
@@ -62,9 +64,12 @@ proc.WaitForExit()
 expect (sprintf "child contention exit %d" proc.ExitCode) (proc.ExitCode = 0)
 proc.Dispose()
 printfn "managed private creation, flock and independent same/cross-process contention: OK"
+let duplicate = new SafeFileHandle(nativeint (Native.dup(created.SafeFileHandle) |> check "dup"), true)
 unlock created.SafeFileHandle
-lockExclusive "flock after explicit unlock" other
+lockExclusive "flock after explicit unlock with duplicate live" other
+printfn "explicit unlock permits reacquisition while same-description duplicate remains live: OK"
 unlock other
+duplicate.Dispose()
 other.Dispose()
 created.Dispose()
 let reopened = openExisting lockPath
@@ -72,6 +77,20 @@ lockExclusive "flock reopened existing" reopened
 unlock reopened
 reopened.Dispose()
 printfn "persistent pathname reopen and explicit unlock: OK"
+
+let sensitivityPath = Path.Combine(fixture, "duplicate-sensitivity")
+let owner = create sensitivityPath
+lockExclusive "sensitivity lock" owner.SafeFileHandle
+let held = new SafeFileHandle(nativeint (Native.dup(owner.SafeFileHandle) |> check "dup sensitivity"), true)
+owner.Dispose()
+let contender = openExisting sensitivityPath
+expectBlocked contender
+unlock held
+lockExclusive "sensitivity reacquire" contender
+unlock contender
+held.Dispose()
+contender.Dispose()
+printfn "duplicate sensitivity: closing original alone retains lock until explicit unlock: OK"
 
 for targetName in [ "present"; "missing" ] do
     let target = Path.Combine(fixture, "target-" + targetName)
