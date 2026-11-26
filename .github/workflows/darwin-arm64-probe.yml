@@ -32,3 +32,4 @@ jobs:
           clang -dynamiclib -Wall -Wextra -Werror probes/darwin-arm64/shim.c -o "$fixture/libdarwinprobe.dylib"
           "$fixture/constants" | tee "$fixture/constants.txt"
           DYLD_LIBRARY_PATH="$fixture" dotnet fsi probes/darwin-arm64/probe.fsx "$fixture" "$fixture/constants.txt"
+          dotnet fsi probes/darwin-arm64/managed-lock.fsx "$fixture" "$fixture/constants.txt"
