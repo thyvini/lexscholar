@@ -1,4 +1,4 @@
-# T002 — Linux ownership checks; Darwin blocked
+# T002 — workspace ownership, partial native candidate evidence
 
 Original test and sensitivity base: `607c545` (`docs/platform-expansion-phase3`).
 Integrated onto `598dd97` (release baseline after #190). This is partial T002
@@ -55,7 +55,7 @@ The new descriptor observer is Linux-specific and is not a Darwin observer.
 The inherited-description test remains unchanged under historical `T006`;
 T003 owns its future Darwin extension and explicit-unlock sensitivity.
 
-## Open gates
+## Original open gates (before the native candidate)
 
 - Darwin ARM64 creation-mode/variadic ABI, SDK flag values, errno handling,
   no-follow, native contention and explicit-unlock semantics have **not** been
@@ -65,3 +65,46 @@ T003 owns its future Darwin extension and explicit-unlock sensitivity.
   reference remains required by `research.md` before Darwin implementation.
   T002 remains incomplete pending that evidence and subsequent native tests.
 - PR #191 [CI full solution suite](https://github.com/thyvini/lexscholar/actions/runs/45868938946) passed on Ubuntu: 1,204 tests total. The run's PR head was `fbdf91e60b2ea29aab58c7bc89502f7d10f546c5`; checkout used the PR merge commit `1861f7fbe2e711b87e8fe7777d09337ef014a86d`. This is Linux evidence only, not a Darwin result.
+
+## Shim-free Darwin candidate
+
+On Darwin, create the persistent lock file with managed `CreateNew`, private
+creation mode and read/write sharing; on `EEXIST` open the existing file with
+two-argument `open`, `O_NOFOLLOW` and `O_CLOEXEC`. Explicit nonblocking
+`flock`, explicit unlock and error handling remain; Linux uses its existing
+native creation flags. The managed stream remains alive until unlock and
+disposal. This avoids a Darwin ARM64 variadic mode argument and a native build
+and distribution dependency. Fixed-signature variadic calls were rejected
+after the [native ABI discovery](darwin-arm64-abi-discovery.md). The runner
+probe in PR #196 separately exercised the individual managed and native
+operations, including a raw same-description duplicate. The actual candidate
+must still meet the remaining gates below.
+
+- **RED:** [macOS run 45897372825](https://github.com/thyvini/lexscholar/actions/runs/45897372825),
+  `dotnet test --project tests/LexScholar.Server.Tests/LexScholar.Server.Tests.fsproj -c Release --filter-trait Category=NativeOwnership`:
+  one assertion failed because both initial acquisitions threw the original
+  platform-not-supported error. No production candidate was present.
+- **GREEN:** [macOS run 45902452874](https://github.com/thyvini/lexscholar/actions/runs/45902452874),
+  the same command against the candidate files: 10 passed, 0 failed, 0 skipped.
+  This includes separate child-process contention, termination and clean
+  reacquisition, same-process contention, concurrent initial acquisition,
+  private file creation, persistent inode witness, unexpected I/O and existing
+  and dangling symlinks. Its disposable verification PR #198 includes the
+  candidate files byte-for-byte, plus a separate native-only workflow; it does
+  not replace or weaken the ordinary Linux CI job.
+- **Linux GREEN:** `scripts/check.sh T002 T006`: 153 passed, 0 failed,
+  0 skipped, warning-as-error Release build.
+
+Native runner: GitHub-hosted macOS 15.8.2 (24H232), ARM64, .NET SDK 10.0.114;
+test executable reported `net10.0|arm64`. The runner's temporary filesystem
+type was not captured; these results do not establish behavior on other
+filesystems or machines, and are not a macOS support claim. Concurrent-start
+coverage does not force a particular interleaving of creation and reopening.
+The probe demonstrates explicit unlock with a live duplicate for individual
+operations, but does not observe a duplicate of the candidate's own descriptor;
+T003 owns that sensitive candidate-level check. The native test selection is
+not the full solution or the eventual required two-platform CI gate.
+
+As on Linux, an actor able to replace the lock pathname in the workspace can
+create a different inode and bypass the original advisory lock. This candidate
+does not claim to protect that boundary or record acceptance of a new risk.
