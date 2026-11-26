@@ -55,28 +55,26 @@ on `release/0.5.3`. They are separate release tooling, documented in
 [`integration.md`](integration.md) and [`operations.md`](operations.md).
 The integration script is `scripts/integrate-pr.py`, not `scripts/integrate-pr.sh`.
 No `scripts/team-branch.sh` is supplied; use operator-prepared worktrees.
-Conductor can request approval for watchdog commands and automation creation or
-deletion. Bridge can request approval for the documented trusted-copy command;
-the operator must first prepare and verify that copy as described in
-`integration.md`. Do not substitute candidate-PR tooling.
+Conductor can run the documented watchdog commands and one-shot automation.
+Bridge can run the documented trusted-copy command after that copy is prepared
+and verified as described in `integration.md`. Do not substitute candidate-PR
+tooling.
 
 These permissions are **not unattended enforcement**: `automation_create`
 accepts arbitrary actions, the shell rules match text rather than Python
 arguments or script content, and a writable script can change after inspection.
-The operator must inspect each requested command/action and approve **once**,
-never save a broad approval or use auto-approval for these operations. Approve
-only the documented one-shot watchdog action or the intended trusted Bridge
-invocation, with its scope and gates. External-directory checks may require
-separate approval. Other shell commands remain denied for these roles. If
-approval or a trusted copy is unavailable, report the affected workflow blocked.
+Use only the documented one-shot watchdog action or the intended trusted Bridge
+invocation, with its scope and gates. Other shell commands remain denied for
+these roles. If a trusted copy is unavailable, report the workflow blocked.
 
 Routine developer tests, inspection and ordinary branch pushes are permitted by
 the project rules within an approved feature. Shell patterns are not an argument
 parser or a security boundary: their push deny patterns do not cover every
 spelling or indirect invocation. Never use force, delete remote refs, push
-directly to release or main, or bypass the review and CI gates. Other shell
-commands and external-directory access may still require approval; broader
-user, managed or harness policy can further restrict any action.
+directly to release or main, or bypass the review and CI gates. Shell and
+external-directory access are allowed by default for ordinary roles, so agents
+must not use destructive or bypass commands. Broader user, managed or harness
+policy can still prompt or deny any action.
 
 See
 [team acceptance evidence](team-acceptance-16f.md) for observed limitations;
@@ -107,3 +105,13 @@ Conductor's automation create/delete. `--auto` was used only for these
 non-mutating probes, not for operation. No automation was created, no
 integration or notification executed, and interactive approval behavior and
 complete workflows were not tested.
+
+### Routine-default probe
+
+On OpenCode v2.4.2, isolated archived sessions without `--auto` ran Lambda's
+`python3 --version` and external `/etc/hostname` read, Conductor's watchdog
+`--help`, and Bridge's trusted-copy `--help`. Lambda's force-push help and
+trusted-copy help were denied; Sentinel had no shell tool. These harmless probes
+do not exercise a real push, integration, scheduled action, or every command
+spelling. Automation permissions cannot restrict the payload: Conductor must use
+only the documented one-shot action, never an arbitrary or recurring action.
