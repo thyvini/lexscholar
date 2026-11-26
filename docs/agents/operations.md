@@ -111,24 +111,27 @@ This is a human fencing protocol, not an OpenCode distributed execution lease.
 Prefer the existing native session completion/permission/form notifications for
 immediate attention. Add an explicit **one-shot** native automation at the next
 checkpoint so silence is noticed too. With the automation connector available,
-Conductor calls `tools.automation.create` through Code Mode:
+Conductor requests the directly exposed `automation_create` tool (Code Mode
+is denied in this project's configuration):
 
 ```js
-return await tools.automation.create({
+{
   name: "LexScholar checkpoint (one shot)",
   trigger: {type: "at", at: "in 10 minutes"},
   action: {
     type: "shell",
     command: "cd /ABSOLUTE/TOOLING/CHECKOUT && python3 -B scripts/watchdog.py --state /ABSOLUTE/PRIVATE/state.json check"
   }
-});
+}
 ```
 
 Replace the three absolute paths before submitting; quote shell paths if needed.
 Use `--notify-config /ABSOLUTE/PRIVATE/ntfy.json` only after the setup below.
 Save the returned automation ID in Conductor's durable decisions. Arm the next
 one-shot only after reconciling this checkpoint; cancel obsolete IDs with
-`tools.automation.delete({id: "aut_..."})`. Do not create an unbounded repeating
+`automation_delete` with the ID. Both require per-call operator approval; the
+operator must check the complete payload, not save a broad approval. Do not
+create an unbounded repeating
 job or run a permanent shell loop. No automation was installed by this change.
 Without the connector, run the one-shot command manually at the declared
 checkpoint and report scheduling as **unconfigured**, not monitored.
