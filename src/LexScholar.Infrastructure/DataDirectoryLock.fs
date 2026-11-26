@@ -24,6 +24,10 @@ module DataDirectoryLock =
     extern int private flock(SafeFileHandle handle, int operation)
 
     let acquire (dataDirectory: string) : Result<IDisposable, LockError> =
+        // Until the candidate's own duplicated descriptor is verified on native
+        // Darwin, do not enable the macOS path.
+        if OperatingSystem.IsMacOS() then
+            raise (PlatformNotSupportedException("Data-directory locking on macOS is pending native verification."))
         if not (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS()) then
             raise (PlatformNotSupportedException("Data-directory locking supports Linux and macOS only."))
         let directory = Path.GetFullPath(dataDirectory)
