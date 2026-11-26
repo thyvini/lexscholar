@@ -64,5 +64,4 @@ T003 owns its future Darwin extension and explicit-unlock sensitivity.
 - Native ARM64 probe against the actual candidate binding and compiler-built C
   reference remains required by `research.md` before Darwin implementation.
   T002 remains incomplete pending that evidence and subsequent native tests.
-- CI full-suite result: pending PR checks. No `tasks.md` edits, release, risk
-  acceptance or support announcement.
+- PR #191 [CI full solution suite](https://github.com/thyvini/lexscholar/actions/runs/45868938946) passed on Ubuntu: 1,204 tests total. The run's PR head was `fbdf91e60b2ea29aab58c7bc89502f7d10f546c5`; checkout used the PR merge commit `1861f7fbe2e711b87e8fe7777d09337ef014a86d`. This is Linux evidence only, not a Darwin result.
