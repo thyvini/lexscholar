@@ -30,6 +30,35 @@ extern int private duplicateCloseOnExec(int descriptor, int command, int minimum
 [<DllImport("libc", SetLastError = true, EntryPoint = "open")>]
 extern int private openLinuxObserver(string path, int flags)
 
+[<DllImport("libc", SetLastError = true, EntryPoint = "link")>]
+extern int private hardLink(string source, string target)
+
+[<Fact; Trait("Task", "T002"); Trait("Category", "NativeOwnership")>]
+let ``release and reacquisition retain the original lock inode`` () =
+    use workspace = TemporaryWorkspace.Create()
+    let path = Path.Combine(workspace.Root, ".lexscholar.lock")
+    File.WriteAllText(path, "initial")
+    let witness = Path.Combine(workspace.Root, "witness")
+    Assert.Equal(0, hardLink(path, witness))
+    let take () =
+        match DataDirectoryLock.acquire workspace.Root with
+        | Ok owner -> owner
+        | Error error -> failwithf "Unexpected lock rejection: %A" error
+    let owner = take ()
+    owner.Dispose()
+    File.WriteAllText(witness, "after release")
+    Assert.Equal("after release", File.ReadAllText(path))
+    let successor = take ()
+    owner.Dispose()
+    match DataDirectoryLock.acquire workspace.Root with
+    | Error (DirectoryAlreadyInUse _) -> ()
+    | Ok other ->
+        other.Dispose()
+        Assert.Fail("Repeated disposal released the successor.")
+    successor.Dispose()
+    File.WriteAllText(witness, "after reacquisition")
+    Assert.Equal("after reacquisition", File.ReadAllText(path))
+
 [<Fact; Trait("Task", "T002"); Trait("Category", "NativeOwnership")>]
 let ``concurrent first acquisitions leave one owner and a private persistent file`` () =
     use workspace = TemporaryWorkspace.Create()
@@ -103,7 +132,7 @@ let ``release permits immediate reacquisition even while an inherited descriptor
             other.Dispose()
             Assert.Fail("Repeated old-owner disposal released its successor.")
 
-[<Fact; Trait("Task", "T006"); Trait("Task", "T002")>]
+[<Fact; Trait("Task", "T006"); Trait("Task", "T002"); Trait("Category", "NativeOwnership")>]
 let ``a second operating system process cannot own the same directory`` () =
     use workspace = TemporaryWorkspace.Create()
     use owner = HostProcess.Start(workspace.Root, [])
@@ -135,7 +164,7 @@ let ``functional lock boundary reports only demonstrated contention`` () =
         Assert.Fail("T006: another process owns this data directory; acquire returned success.")
     | None -> Assert.Fail("T006: contention requires a typed lock error; acquire is unimplemented.")
 
-[<Fact; Trait("Task", "T006"); Trait("Task", "T002")>]
+[<Fact; Trait("Task", "T006"); Trait("Task", "T002"); Trait("Category", "NativeOwnership")>]
 let ``filesystem errors are not reported as lock contention`` () =
     use workspace = TemporaryWorkspace.Create()
     let file = Path.Combine(workspace.Root, "not-a-directory")
@@ -147,7 +176,7 @@ let ``filesystem errors are not reported as lock contention`` () =
     Assert.NotNull(error)
     Assert.True(error :? IOException, $"T006: expected unexpected filesystem IOException, got {error.GetType().FullName}.")
 
-[<Fact; Trait("Task", "T006"); Trait("Task", "T002")>]
+[<Fact; Trait("Task", "T006"); Trait("Task", "T002"); Trait("Category", "NativeOwnership")>]
 let ``an unopenable lock file is not reported as contention`` () =
     use workspace = TemporaryWorkspace.Create()
     Directory.CreateDirectory(Path.Combine(workspace.Root, ".lexscholar.lock")) |> ignore
@@ -169,7 +198,7 @@ let ``unexpected startup IO failure is not reported as lock contention`` () =
     Assert.Equal<string>(typeof<IOException>.FullName, host.Startup.ErrorType)
     Assert.NotEqual(0, host.ExitCode)
 
-[<Fact; Trait("Task", "T006"); Trait("Task", "T002")>]
+[<Fact; Trait("Task", "T006"); Trait("Task", "T002"); Trait("Category", "NativeOwnership")>]
 let ``lock file symlinks are rejected rather than followed or classified as contention`` () =
     use workspace = TemporaryWorkspace.Create()
     let target = Path.Combine(workspace.Root, "unrelated")
@@ -184,7 +213,7 @@ let ``lock file symlinks are rejected rather than followed or classified as cont
     Assert.IsType<IOException>(error) |> ignore
     Assert.Equal("preserve", File.ReadAllText(target))
 
-[<Fact; Trait("Task", "T006"); Trait("Task", "T002")>]
+[<Fact; Trait("Task", "T006"); Trait("Task", "T002"); Trait("Category", "NativeOwnership")>]
 let ``same-process attempts cannot release or bypass an existing lock`` () =
     use workspace = TemporaryWorkspace.Create()
     let first = DataDirectoryLock.acquire workspace.Root
@@ -202,7 +231,7 @@ let ``same-process attempts cannot release or bypass an existing lock`` () =
         use contender = HostProcess.Start(workspace.Root, [])
         assertRefused contender
 
-[<Fact; Trait("Task", "T006"); Trait("Task", "T002")>]
+[<Fact; Trait("Task", "T006"); Trait("Task", "T002"); Trait("Category", "NativeOwnership")>]
 let ``new directory and lock file use private permissions and persist after release`` () =
     use workspace = TemporaryWorkspace.Create()
     let directory = Path.Combine(workspace.Root, "new-private-directory")
@@ -276,7 +305,7 @@ let ``disposing a constructed but unstarted host releases ownership`` () =
         use successor = HostProcess.Start(workspace.Root, [])
         assertReady successor
 
-[<Fact; Trait("Task", "T006"); Trait("Task", "T002")>]
+[<Fact; Trait("Task", "T006"); Trait("Task", "T002"); Trait("Category", "NativeOwnership")>]
 let ``normal owner exit releases actual exclusive ownership`` () =
     use workspace = TemporaryWorkspace.Create()
     use owner = HostProcess.Start(workspace.Root, [])
@@ -291,7 +320,7 @@ let ``normal owner exit releases actual exclusive ownership`` () =
     assertReady successor
     assertRefused contender
 
-[<Fact; Trait("Task", "T006"); Trait("Task", "T002")>]
+[<Fact; Trait("Task", "T006"); Trait("Task", "T002"); Trait("Category", "NativeOwnership")>]
 let ``termination releases actual exclusive ownership without deleting lock artifacts`` () =
     use workspace = TemporaryWorkspace.Create()
     use owner = HostProcess.Start(workspace.Root, [])
