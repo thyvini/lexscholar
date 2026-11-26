@@ -29,7 +29,6 @@
     { "action": "shell", "resource": "git worktree list *", "effect": "allow" },
     { "action": "shell", "resource": "git add *", "effect": "allow" },
     { "action": "shell", "resource": "git commit -m *", "effect": "allow" },
-    { "action": "shell", "resource": "scripts/team-branch.sh publish", "effect": "allow" },
     { "action": "shell", "resource": "gh pr create --base release/*", "effect": "allow" },
     { "action": "shell", "resource": "gh pr view *", "effect": "allow" },
     { "action": "shell", "resource": "gh pr checks *", "effect": "allow" },

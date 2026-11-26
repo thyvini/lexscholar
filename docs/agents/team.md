@@ -49,6 +49,26 @@ The team profiles use OpenCode V2's `.opencode/agents/` discovery and
 the skill tool. Configured models, effective permissions, child-session
 handoffs and tracker access must be verified in the actual deployment; a
 profile alone does not establish that a model or integration is available.
-The integration, branch-preparation and watchdog commands referenced by roles
-are separate deliverables. If absent or unverified, stop the affected workflow
-and report the blocker rather than substituting an unreviewed command.
+Integration ([PR #182](https://github.com/thyvini/lexscholar/pull/182)) and
+watchdog ([PR #181](https://github.com/thyvini/lexscholar/pull/181)) are
+separate, unmerged deliverables. The integration proposal uses
+`scripts/integrate-pr.py`, not `scripts/integrate-pr.sh`; its trusted-release
+bootstrap and final invocation must be reconciled with Bridge's permissions
+after review. No `scripts/team-branch.sh` is supplied here. Until applicable
+tooling is reviewed and available on the release branch, use operator-prepared
+worktrees and manual checkpoints; Bridge reports integration blocked. Do not
+substitute an unreviewed command or rely on candidate-PR tooling.
+
+### Local verification (2026-11-26)
+
+In this worktree, OpenCode v2.4.2 `opencode debug agents` discovered all eight
+project role IDs. An archived, non-mutating `opencode run --agent sage` probe
+called the skill tool for `speckit-specify`; it loaded from this worktree's
+`.agents/skills/speckit-specify`. A separate Sage probe of `speckit-plan`
+returned `Permission denied: skill`. Both used `openai/gpt-6.1-terra#low` as
+an explicit test override, not Sage's configured model; neither ran the skill
+workflow. This verifies representative skill permission behavior only.
+Subagent handoffs, every configured model, other permission paths, effective
+external-directory approvals, Codecks mutation, integration and watchdog
+operation remain unverified. Recheck after the separate tooling lands or the
+effective global/project configuration changes.

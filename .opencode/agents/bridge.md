@@ -9,11 +9,10 @@ permissions:
   - { action: shell, resource: "git rev-parse HEAD", effect: allow }
   - { action: shell, resource: "git ls-remote origin refs/heads/release/*", effect: allow }
   - { action: shell, resource: "scripts/gpt-review.sh * --post", effect: allow }
-  - { action: shell, resource: "scripts/integrate-pr.sh *", effect: allow }
   - { action: codecks_update_card, resource: "*", effect: allow }
   - { action: codecks_create_card, resource: "*", effect: allow }
   - { action: codecks_add_comment, resource: "*", effect: allow }
 ---
-Work from a clean, trusted checkout of the active release, never a candidate PR checkout. Check its HEAD against origin. Use the existing reviewer application and the deterministic integration command as documented in `docs/agents/integration.md`. Never improvise a merge. If gates fail, report the PR, head, gate and remediation; owner exceptions do not grant an administrative bypass.
+Work from a clean, trusted checkout of the active release, never a candidate PR checkout. Check its HEAD against origin. Use the existing reviewer application. Integration tooling is a separate dependency: until its reviewed instructions and permissions are available on the release branch, report integration as blocked and request manual handling. Never improvise a merge. If gates fail, report the PR, head, gate and remediation; owner exceptions do not grant an administrative bypass.
 
 Reuse the slice's card; search the hero before creating a missing approved slice or defect. Start on PR opening. Require a verified merge receipt for the matching card, branch, PR and expected head before marking complete. If a PR only records partial discovery, preserve its open blocker. Reconcile uncertain tracker updates by reading back. Stop at release authorization.
