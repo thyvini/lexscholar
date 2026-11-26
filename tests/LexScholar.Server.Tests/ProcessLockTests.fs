@@ -200,18 +200,20 @@ let ``unexpected startup IO failure is not reported as lock contention`` () =
 
 [<Fact; Trait("Task", "T006"); Trait("Task", "T002"); Trait("Category", "NativeOwnership")>]
 let ``lock file symlinks are rejected rather than followed or classified as contention`` () =
-    use workspace = TemporaryWorkspace.Create()
-    let target = Path.Combine(workspace.Root, "unrelated")
-    File.WriteAllText(target, "preserve")
-    File.CreateSymbolicLink(Path.Combine(workspace.Root, ".lexscholar.lock"), target) |> ignore
-    let error = Record.Exception(fun () ->
-        match DataDirectoryLock.acquire workspace.Root with
-        | Ok handle ->
-            handle.Dispose()
-            Assert.Fail("A lock-file symlink must not be followed.")
-        | Error lockError -> Assert.Fail($"Symlink open failure misclassified as contention: {lockError}"))
-    Assert.IsType<IOException>(error) |> ignore
-    Assert.Equal("preserve", File.ReadAllText(target))
+    for targetExists in [ true; false ] do
+        use workspace = TemporaryWorkspace.Create()
+        let target = Path.Combine(workspace.Root, "unrelated")
+        if targetExists then File.WriteAllText(target, "preserve")
+        File.CreateSymbolicLink(Path.Combine(workspace.Root, ".lexscholar.lock"), target) |> ignore
+        let error = Record.Exception(fun () ->
+            match DataDirectoryLock.acquire workspace.Root with
+            | Ok handle ->
+                handle.Dispose()
+                Assert.Fail("A lock-file symlink must not be followed.")
+            | Error lockError -> Assert.Fail($"Symlink open failure misclassified as contention: {lockError}"))
+        Assert.IsType<IOException>(error) |> ignore
+        if targetExists then Assert.Equal("preserve", File.ReadAllText(target))
+        else Assert.False(File.Exists(target))
 
 [<Fact; Trait("Task", "T006"); Trait("Task", "T002"); Trait("Category", "NativeOwnership")>]
 let ``same-process attempts cannot release or bypass an existing lock`` () =
