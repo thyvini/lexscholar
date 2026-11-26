@@ -43,3 +43,12 @@ Role prompts and tool permissions are operational aids, not proof of a
 security boundary: shell commands and indirect tools can have side effects.
 Use the least access practical, verify the effective configuration, and do not
 rely on a prompt or a single deny rule to enforce reserved decisions.
+
+The team profiles use OpenCode V2's `.opencode/agents/` discovery and
+`opencode.jsonc` configuration. Skills are loaded by their exact IDs through
+the skill tool. Configured models, effective permissions, child-session
+handoffs and tracker access must be verified in the actual deployment; a
+profile alone does not establish that a model or integration is available.
+The integration, branch-preparation and watchdog commands referenced by roles
+are separate deliverables. If absent or unverified, stop the affected workflow
+and report the blocker rather than substituting an unreviewed command.

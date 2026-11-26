@@ -2,8 +2,11 @@
 
 LexScholar is a local workspace for one researcher to organize research
 projects and a shared PDF library. It helps the researcher work with sources
-and their summaries; Linux with Firefox and Chromium is the supported
-environment. The authoritative behavior of shipped features remains in their
+and their summaries. Linux x86-64 and macOS ARM64 are mandatory target
+platforms for future delivery, with Firefox and Chromium as target browsers.
+Current shipped support remains Linux with Firefox and Chromium; macOS support
+requires implementation and verification, not merely this roadmap decision.
+The authoritative behavior of shipped features remains in their
 specifications and the codebase guide, not in this roadmap.
 
 ## Direction
