@@ -88,6 +88,9 @@ not healthy. `busy: null` means unknown; session metadata timestamps do not
 establish current activity. A checkpoint expiry is **not** a failed session.
 The distinct `observation_unavailable` incident means a native read failed,
 so notification deduplication does not suppress it after `status_unknown`.
+Read-failure incidents use a new dedup identity to avoid suppression by old
+ledger entries. Upgrading can therefore send one additional read-failure alert
+for an already reported incident; existing ledger entries remain intact.
 An expected wait is a recorded expectation, not proof of an active command.
 The v2.4.2 `/api/session/active` reports running agents in its server process,
 not detached processes; this watchdog does not query it or infer writer safety

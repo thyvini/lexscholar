@@ -153,7 +153,8 @@ def check(state, persist, config=None, observer=observe, now=None):
         results[card] = {"kind": kind}
         persist()
         if kind in notify.KINDS:
-            incident = {"id": f'{card}:{task["session"]}:{task["alert_epoch"]}:{kind}',
+            incident_kind = "observation_unavailable_v2" if kind == "observation_unavailable" else kind
+            incident = {"id": f'{card}:{task["session"]}:{task["alert_epoch"]}:{incident_kind}',
                         "kind": kind, "card": card, "pr": task["pr"]}
             try:
                 results[card]["notification"] = notify.deliver(config, incident, state["alerts"], persist)

@@ -156,6 +156,20 @@ class StateTests(unittest.TestCase):
             watchdog.check(state, lambda: None, observer=lambda _: {"status_unknown": True, "unavailable": True}, now=50)
         self.assertEqual(["status_unknown", "observation_unavailable"], sent)
 
+    def test_legacy_unavailable_alert_does_not_suppress_read_failure(self):
+        legacy = "$16e:ses_test:0:observation_unavailable"
+        state = dict(tasks={"$16e": task(checkpoint=200)}, observations={},
+                     alerts={legacy: "delivered"})
+        sent = []
+        def deliver(config, incident, alerts, persist):
+            if incident["id"] not in alerts:
+                sent.append(incident["id"])
+            return "delivered"
+        with patch.object(notify, "deliver", side_effect=deliver):
+            watchdog.check(state, lambda: None, observer=lambda _: {"unavailable": True}, now=50)
+        self.assertEqual(1, len(sent))
+        self.assertNotEqual(legacy, sent[0])
+
     def test_partial_observation_preserves_permission_and_failure(self):
         for info, permissions, expected in [
             ({"time": {}, "outcome": None}, [object()], "permission"),
