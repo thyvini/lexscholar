@@ -48,6 +48,11 @@ admin override, auto-merge, branch deletion, or Codecks API call exists.
   App IDs are **15368** (`build-and-test`) and **5758986** (`gpt-review`).
   All runs are examined, not just GitHub's latest projection. Duplicate gate
   runs intentionally require investigation; rerunning blindly cannot fix ambiguity.
+- GPT review additionally requires exactly one PR whose current head is that
+  SHA, including closed PRs, and exactly one unedited reviewer-app comment on
+  this PR matching the successful check's model, review text and timing. A
+  shared head, missing or ambiguous evidence blocks; GitHub's check is attached
+  to a commit, not intrinsically to a PR.
 - Latest formal changes-requested review, any unresolved review thread, or
   P0/P1 issue comment other than the mandatory reviewer app's check-backed
   rounds. Greptile is optional: absence is fine; an existing blocker is not.
@@ -80,7 +85,7 @@ verification detects a changed parent but cannot prevent or undo that merge.
 Strict atomic base CAS would require a different integration mechanism.
 
 Before mutation stderr prints `MERGE_INTENT {JSON}`. Preserve the log. Only
-stdout `receipt: verified-squash` permits the lead to mark that exact card done.
+stdout JSON containing `"receipt": "verified-squash"` permits the lead to mark that exact card done.
 No receipt means no Codecks completion, even if GitHub reports a merge.
 
 If transport is uncertain, **do not retry the merge blindly**. Extract the JSON

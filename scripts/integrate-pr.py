@@ -47,6 +47,7 @@ def validate(snapshot, policy, now):
                     and any(matches_path(path, pattern) for pattern in slice_["files"]),
                     "out-of-scope file: " + path)
     head = p["head"]["sha"]
+    require(snapshot["head_prs"] == [p["number"]], "ambiguous PRs sharing review head")
     for name, app in [("build-and-test", 15368), ("gpt-review", 5758986)]:
         checks = [c for c in snapshot["checks"] if c["name"] == name]
         require(len(checks) == 1, name + ": missing/ambiguous")
@@ -57,6 +58,20 @@ def validate(snapshot, policy, now):
         require(timestamp(snapshot["head_date"]) <= started <= completed <= now
                 and (now - completed).total_seconds() <= policy["max_gate_age_seconds"],
                 name + ": stale/invalid timestamp")
+        if name == "gpt-review":
+            summary = c["output"]["summary"]
+            prefix = f"Review of {head[:7]} by "
+            match = re.fullmatch(re.escape(prefix) + r"([^\n]+) through Codex CLI\.\n\n([\s\S]+)", summary)
+            require(match is not None, "unrecognized review check")
+            model, review = match.groups()
+            body = f"[gpt-review · {model}] Review of {head[:7]} (check gpt-review: success)\n\n{review}"
+            evidence = [comment for comment in snapshot["comments"]
+                        if comment["user"]["login"] == "thyvinibots-pull-request-reviewer[bot]"
+                        and (comment.get("performed_via_github_app") or {}).get("id") == app
+                        and comment["body"].rstrip("\n") == body.rstrip("\n")
+                        and started <= timestamp(comment["created_at"]) <= completed
+                        and comment["updated_at"] == comment["created_at"]]
+            require(len(evidence) == 1, "missing/ambiguous PR-specific review evidence")
     def excepted(kind, identifier):
         return any(e["pr"] == p["number"] and e["head"] == head and e["kind"] == kind
                    and str(e["id"]) == str(identifier) and bool(e["reason"].strip())
@@ -121,7 +136,9 @@ def read_snapshot(pr):
     if threads["pageInfo"]["hasNextPage"]:
         raise Blocked("too many review threads")
     return {"pr": p, "files": pages(f"{prefix}/pulls/{pr}/files"),
-            "checks": pages(f"{prefix}/commits/{head}/check-runs?filter=all", "check_runs"),
+             "checks": pages(f"{prefix}/commits/{head}/check-runs?filter=all", "check_runs"),
+             "head_prs": [item["number"] for item in pages(f"{prefix}/commits/{head}/pulls")
+                          if item["head"]["sha"] == head],
             "head_date": api(f"{prefix}/commits/{head}")["commit"]["committer"]["date"],
             "reviews": pages(f"{prefix}/pulls/{pr}/reviews"),
             "comments": pages(f"{prefix}/issues/{pr}/comments"), "threads": threads["nodes"]}

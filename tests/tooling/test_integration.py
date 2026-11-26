@@ -25,6 +25,34 @@ class IntegrationTests(unittest.TestCase):
     def test_ready(self):
         self.assertEqual(self.validate()["card"], "$16c")
 
+    def test_review_must_belong_unambiguously_to_this_pr(self):
+        mutations = [
+            lambda s: s.update(head_prs=[180, 181]),
+            lambda s: s.update(head_prs=[]),
+            lambda s: s.update(comments=[]),
+            lambda s: s["comments"][0]["performed_via_github_app"].update(id=1),
+            lambda s: s["comments"][0].update(body=s["comments"][0]["body"].replace("No findings.", "Different review.")),
+            lambda s: s["comments"][0].update(created_at="2026-11-26T09:59:59Z"),
+            lambda s: s["comments"].append(copy.deepcopy(s["comments"][0])),
+        ]
+        original = copy.deepcopy(self.snapshot)
+        for mutation in mutations:
+            with self.subTest(mutation=mutations.index(mutation)):
+                self.snapshot = copy.deepcopy(original)
+                mutation(self.snapshot)
+                with self.assertRaises(bridge.Blocked):
+                    self.validate()
+
+    def test_authorized_skill_files_are_bounded(self):
+        self.snapshot["pr"]["head"]["ref"] = "chore/engineering-team"
+        self.snapshot["pr"]["title"] = "chore: team skills ($16a)"
+        for path in (".agents/skills/example/SKILL.md", ".claude/skills/example/SKILL.md"):
+            self.snapshot["files"] = [{"filename": path}]
+            self.validate()
+        self.snapshot["files"] = [{"filename": ".agents/skills/example/nested/unapproved"}]
+        with self.assertRaises(bridge.Blocked):
+            self.validate()
+
     def test_refuse_unsafe_inputs(self):
         mutations = [
             lambda s: s["pr"]["base"].update(ref="main"),
@@ -60,7 +88,7 @@ class IntegrationTests(unittest.TestCase):
                     self.validate()
 
     def test_exception_is_exact_and_cannot_override_gates(self):
-        self.snapshot["comments"] = [{"id": 12, "body": "[P1] unsafe", "user": {"login": "greptile[bot]"}}]
+        self.snapshot["comments"].append({"id": 12, "body": "[P1] unsafe", "user": {"login": "greptile[bot]"}})
         exception = {"pr": 180, "head": "a" * 40, "kind": "comment", "id": 12, "reason": "Owner accepted risk"}
         self.policy["exceptions"] = [exception]
         self.assertEqual(self.validate()["card"], "$16c")
@@ -109,6 +137,10 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(result["status"], "validated-only")
         self.assertNotIn("receipt", result)
         request.assert_not_called()
+
+    def test_documented_receipt_matches_json_output(self):
+        documentation = (ROOT / "docs/agents/integration.md").read_text()
+        self.assertIn(json.dumps({"receipt": "verified-squash"})[1:-1], documentation)
 
     def test_changed_head_or_base_prevents_merge(self):
         changed = copy.deepcopy(self.snapshot)
