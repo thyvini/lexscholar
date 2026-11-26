@@ -49,8 +49,11 @@ The team profiles use OpenCode V2's `.opencode/agents/` discovery and
 the skill tool. Configured models, effective permissions, child-session
 handoffs and tracker access must be verified in the actual deployment; a
 profile alone does not establish that a model or integration is available.
-Integration and watchdog are separate release tooling, documented in
+Integration ([PR #182](https://github.com/thyvini/lexscholar/pull/182)) and
+watchdog ([PR #181](https://github.com/thyvini/lexscholar/pull/181)) have landed
+on `release/0.5.3`. They are separate release tooling, documented in
 [`integration.md`](integration.md) and [`operations.md`](operations.md).
+The integration script is `scripts/integrate-pr.py`, not `scripts/integrate-pr.sh`.
 No `scripts/team-branch.sh` is supplied; use operator-prepared worktrees.
 Conductor can request approval for watchdog commands and automation creation or
 deletion. Bridge can request approval for the documented trusted-copy command;
@@ -66,6 +69,10 @@ only the documented one-shot watchdog action or the intended trusted Bridge
 invocation, with its scope and gates. External-directory checks may require
 separate approval. Other shell commands remain denied for these roles. If
 approval or a trusted copy is unavailable, report the affected workflow blocked.
+
+See
+[team acceptance evidence](team-acceptance-16f.md) for observed limitations;
+merged tooling does not itself prove end-to-end team operation.
 
 ### Local verification (2026-11-26)
 
