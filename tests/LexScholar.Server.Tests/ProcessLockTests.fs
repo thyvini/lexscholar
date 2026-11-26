@@ -3,6 +3,7 @@ module LexScholar.Server.Tests.ProcessLockTests
 open System.Net
 open System.IO
 open System.Threading.Tasks
+open System.Threading
 open System.Runtime.InteropServices
 open Microsoft.Win32.SafeHandles
 open LexScholar.Infrastructure
@@ -28,6 +29,41 @@ extern int private duplicateCloseOnExec(int descriptor, int command, int minimum
 
 [<DllImport("libc", SetLastError = true, EntryPoint = "open")>]
 extern int private openLinuxObserver(string path, int flags)
+
+[<Fact; Trait("Task", "T002"); Trait("Category", "NativeOwnership")>]
+let ``concurrent first acquisitions leave one owner and a private persistent file`` () =
+    use workspace = TemporaryWorkspace.Create()
+    let directory = Path.Combine(workspace.Root, "concurrent")
+    Directory.CreateDirectory(directory) |> ignore
+    use start = new Barrier(3)
+    use acquired = new Barrier(3)
+    let attempt () =
+        Task.Run(fun () ->
+            start.SignalAndWait() |> ignore
+            let result =
+                try Choice1Of2 (DataDirectoryLock.acquire directory)
+                with error -> Choice2Of2 error
+            acquired.SignalAndWait() |> ignore
+            result)
+    let first = attempt ()
+    let second = attempt ()
+    start.SignalAndWait() |> ignore
+    acquired.SignalAndWait() |> ignore
+    let results =
+        [ first.GetAwaiter().GetResult(); second.GetAwaiter().GetResult() ]
+        |> List.map (function Choice1Of2 result -> result | Choice2Of2 error -> raise error)
+    let owners = results |> List.choose (function Ok owner -> Some owner | _ -> None)
+    try
+        Assert.Single(owners) |> ignore
+        Assert.Single(results |> List.choose (function Error (DirectoryAlreadyInUse _) -> Some () | _ -> None)) |> ignore
+        let path = Path.Combine(directory, ".lexscholar.lock")
+        Assert.Equal(UnixFileMode.UserRead ||| UnixFileMode.UserWrite, File.GetUnixFileMode(path))
+    finally
+        owners |> List.iter (fun owner -> owner.Dispose())
+    Assert.True(File.Exists(Path.Combine(directory, ".lexscholar.lock")))
+    match DataDirectoryLock.acquire directory with
+    | Ok next -> next.Dispose()
+    | Error error -> Assert.Fail($"Reacquisition failed: {error}")
 
 [<Fact; Trait("Task", "T006")>]
 let ``release permits immediate reacquisition even while an inherited descriptor remains open`` () =
