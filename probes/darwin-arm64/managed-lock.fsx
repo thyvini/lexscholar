@@ -80,9 +80,11 @@ printfn "persistent pathname reopen and explicit unlock: OK"
 
 let sensitivityPath = Path.Combine(fixture, "duplicate-sensitivity")
 let owner = create sensitivityPath
-lockExclusive "sensitivity lock" owner.SafeFileHandle
-let held = new SafeFileHandle(nativeint (Native.dup(owner.SafeFileHandle) |> check "dup sensitivity"), true)
 owner.Dispose()
+let rawOwner = openExisting sensitivityPath
+lockExclusive "sensitivity lock" rawOwner
+let held = new SafeFileHandle(nativeint (Native.dup(rawOwner) |> check "dup sensitivity"), true)
+rawOwner.Dispose()
 let contender = openExisting sensitivityPath
 expectBlocked contender
 unlock held
