@@ -72,6 +72,35 @@ writer's execution status from the watchdog. Offline tests at `2a2b5a1`
 passed: 21 watchdog tests and 18 integration tests. They do not prove live
 integration or notification delivery.
 
+## Independent dispatch while a synthetic writer was held
+
+On release `55843d8`, an isolated worktree used the release's actual
+Conductor and Scout profiles in OpenCode. The operator supplied a snapshot of
+the existing synthetic held-writer ledger and a separate read-only fixture
+brief with no dependency on that writer or write targets. The initial Conductor
+session (`ses_de836ada8ffeqSgTltA82ozj1e`) declined to dispatch because no
+assignment and checkpoint had been recorded and its instructions prohibited
+edits and shell access.
+
+The operator then recorded a manual Scout assignment and bounded checkpoint
+before resuming that same session. Conductor dispatched exactly one Scout
+(`ses_de8361b8affeZQwLfWeSINOXeM`) through the native subagent tool, reported
+the child ID, and received its answer: `17 + 29 + 41 = 87`. The child session
+record shows one read of the independent brief and a successful result; the
+Conductor transcript records the result. The live writer process was present
+and waiting in process listings before and after the probe; no FIFO was opened
+by the operator and no replacement writer was assigned.
+
+The manual checkpoint and raw Conductor transcripts are preserved under the
+isolated worktree's `.synthetic-16f/`. The held assignment was a snapshot, not
+a live ledger read by Conductor, and the Scout assignment was a manual
+checkpoint rather than a durable watchdog assignment; the child ID is recorded
+in the transcript, not written back to that checkpoint. The task was read-only
+and synthetic. This demonstrates one independent child dispatch and report,
+not live scheduling of multiple writing slices, continuous process monitoring,
+automatic fencing or writer recovery. The watchdog's prior status remained
+unknown; optional notifications were not configured or tested.
+
 ## Limits and follow-up
 
 The watchdog is a one-shot observer, not a scheduler or execution lease. It
