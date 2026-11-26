@@ -45,7 +45,7 @@ Use `scripts/check.sh`, not the raw commands: it prints only build errors, faile
 ## Workflow
 
 - Releases: each release has a branch `release/<version>`, merged into `main` with a merge commit only when the owner says so, then tagged `v<version>`. A feature is a minor version (`0.2.0`); fixes and process or tooling changes are a patch (`0.1.1`).
-- Work one task (or slice) at a time, on its own branch `<type>/<feature>-<topic>` (e.g. `feat/f002-library-export`), or `<type>/<topic>` for work not tied to a feature. Branch from and open PRs against the active release branch (currently `release/0.5.1`), not `main`.
+- Work one task (or slice) at a time, on its own branch `<type>/<feature>-<topic>` (e.g. `feat/f002-library-export`), or `<type>/<topic>` for work not tied to a feature. Branch from and open PRs against the active release branch (currently `release/0.5.2`), not `main`.
 - Plan first and wait for approval. Keep changes to what the task asks for; record new technology choices in the feature's `research.md` with rationale and alternatives (constitution VI).
 - Before considering a feature complete, reconcile implementation with current authoritative requirements, identify superseded requirements, update affected user-facing guidance, and record applicable tests and evidence. Ensure Codecks reflects delivery, new debt and accepted risks are explicit, relevant existing defects are resolved or explicitly deferred, and the codebase guide reflects architectural changes.
 - If a task looks over-specified or conflicts with constitution Principle V (simplicity), say so and ask before implementing. Do not add requirements or safeguards beyond what the spec and task ask for.
