@@ -141,9 +141,8 @@ Replace the three absolute paths before submitting; quote shell paths if needed.
 Use `--notify-config /ABSOLUTE/PRIVATE/ntfy.json` only after the setup below.
 Save the returned automation ID in Conductor's durable decisions. Arm the next
 one-shot only after reconciling this checkpoint; cancel obsolete IDs with
-`automation_delete` with the ID. Both require per-call operator approval; the
-operator must check the complete payload, not save a broad approval. Do not
-create an unbounded repeating
+`automation_delete` with the ID. Check the complete payload and use only this
+documented one-shot action. Do not create an unbounded repeating
 job or run a permanent shell loop. No automation was installed by this change.
 Without the connector, run the one-shot command manually at the declared
 checkpoint and report scheduling as **unconfigured**, not monitored.
