@@ -23,7 +23,8 @@ jobs:
           sw_vers
           uname -a
           dotnet --info
-          stat -f 'temporary filesystem: %T' "$RUNNER_TEMP"
+          df "$RUNNER_TEMP"
+          mount
           printf '#include <fcntl.h>\n#include <stdio.h>\nint main(void){printf("O_DIRECTORY=%%x O_CLOEXEC=%%x O_NOFOLLOW=%%x\\n", O_DIRECTORY, O_CLOEXEC, O_NOFOLLOW);}\n' > "$RUNNER_TEMP/flags.c"
           clang -Wall -Wextra -Werror "$RUNNER_TEMP/flags.c" -o "$RUNNER_TEMP/flags"
           "$RUNNER_TEMP/flags"
@@ -66,5 +67,6 @@ jobs:
           umask 077
           for project in tests/LexScholar.Infrastructure.Tests/LexScholar.Infrastructure.Tests.fsproj tests/LexScholar.Server.Tests/LexScholar.Server.Tests.fsproj; do
             dotnet test --project "$project" -c Release --filter-trait 'Task=T005' --filter-trait 'Task=T013' --filter-trait 'Task=T015' 2>&1 | tee "$RUNNER_TEMP/$(basename "$project").log"
-            awk '/^[[:space:]]+total: [0-9]+/ { t += $2 } /^[[:space:]]+skipped: [0-9]+/ { s += $2 } END { if (!t || s) exit 1 }' "$RUNNER_TEMP/$(basename "$project").log"
+            sed -E 's/\x1B\[[0-9;?]*[A-Za-z]//g' "$RUNNER_TEMP/$(basename "$project").log" |
+              awk '/^[[:space:]]+total: [0-9]+/ { t += $2 } /^[[:space:]]+skipped: [0-9]+/ { s += $2 } END { if (!t || s) exit 1 }'
           done
