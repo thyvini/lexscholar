@@ -50,14 +50,15 @@ the skill tool. Configured models, effective permissions, child-session
 handoffs and tracker access must be verified in the actual deployment; a
 profile alone does not establish that a model or integration is available.
 Integration ([PR #182](https://github.com/thyvini/lexscholar/pull/182)) and
-watchdog ([PR #181](https://github.com/thyvini/lexscholar/pull/181)) are
-separate, unmerged deliverables. The integration proposal uses
-`scripts/integrate-pr.py`, not `scripts/integrate-pr.sh`; its trusted-release
-bootstrap and final invocation must be reconciled with Bridge's permissions
-after review. No `scripts/team-branch.sh` is supplied here. Until applicable
-tooling is reviewed and available on the release branch, use operator-prepared
-worktrees and manual checkpoints; Bridge reports integration blocked. Do not
-substitute an unreviewed command or rely on candidate-PR tooling.
+watchdog ([PR #181](https://github.com/thyvini/lexscholar/pull/181)) have landed
+on `release/0.5.3`. Follow [Bridge integration](integration.md) for trusted
+release bootstrap, scope and gates, and [Conductor operations](operations.md)
+for durable checkpoints and manual writer fencing. The integration script is
+`scripts/integrate-pr.py`, not `scripts/integrate-pr.sh`; its invocation still
+needs to be reconciled with Bridge's effective permissions. No
+`scripts/team-branch.sh` is supplied: use operator-prepared worktrees. See
+[team acceptance evidence](team-acceptance-16f.md) for observed limitations;
+merged tooling does not itself prove end-to-end team operation.
 
 ### Local verification (2026-11-26)
 
