@@ -53,7 +53,8 @@ let private descriptorsFor path =
         child.WaitForExit()
         Assert.True(child.ExitCode = 0, $"Descriptor observation failed: {errors}")
         let mutable current = None
-        [ for line in output.Split('\n', System.StringSplitOptions.RemoveEmptyEntries) do
+        let descriptors =
+          [ for line in output.Split('\n', System.StringSplitOptions.RemoveEmptyEntries) do
             if line.StartsWith("f") then
                 match System.Int32.TryParse(line.Substring(1)) with
                 | true, descriptor -> current <- Some descriptor
@@ -62,6 +63,8 @@ let private descriptorsFor path =
                 match current with
                 | Some descriptor -> yield descriptor
                 | None -> () ]
+        Assert.True(not descriptors.IsEmpty, $"No descriptor for {path}; lsof output: {output}")
+        descriptors
 
 [<Fact; Trait("Task", "T002"); Trait("Task", "T003"); Trait("Category", "NativeOwnership")>]
 let ``candidate explicitly releases ownership with its duplicated descriptor alive`` () =
