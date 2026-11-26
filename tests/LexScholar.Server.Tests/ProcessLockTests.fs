@@ -26,6 +26,9 @@ let private assertRefused (host: HostProcess) =
 [<DllImport("libc", SetLastError = true, EntryPoint = "fcntl")>]
 extern int private duplicateCloseOnExec(int descriptor, int command, int minimum)
 
+[<DllImport("libc", SetLastError = true, EntryPoint = "open")>]
+extern int private openLinuxObserver(string path, int flags)
+
 [<Fact; Trait("Task", "T006")>]
 let ``release permits immediate reacquisition even while an inherited descriptor remains open`` () =
     use workspace = TemporaryWorkspace.Create()
@@ -63,17 +66,24 @@ let ``release permits immediate reacquisition even while an inherited descriptor
             other.Dispose()
             Assert.Fail("Repeated old-owner disposal released its successor.")
 
-[<Fact; Trait("Task", "T006")>]
+[<Fact; Trait("Task", "T006"); Trait("Task", "T002")>]
 let ``a second operating system process cannot own the same directory`` () =
     use workspace = TemporaryWorkspace.Create()
     use owner = HostProcess.Start(workspace.Root, [])
     assertReady owner
-    use contender = HostProcess.Start(workspace.Root, [])
+    // A distinct requested port rules out a listener collision masquerading as
+    // workspace exclusion. Hold that port until the child has been rejected:
+    // even a bind failure must not replace the typed ownership rejection.
+    use reserved = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0)
+    reserved.Start()
+    let port = (reserved.LocalEndpoint :?> IPEndPoint).Port
+    Assert.NotEqual(System.Uri(owner.Startup.Address).Port, port)
+    use contender = HostProcess.Start(workspace.Root, [ "LexScholar:Port", string port ])
     Assert.NotEqual(owner.Id, contender.Id)
     Assert.False(owner.HasExited)
     assertRefused contender
 
-[<Fact; Trait("Task", "T006")>]
+[<Fact; Trait("Task", "T006"); Trait("Task", "T002")>]
 let ``functional lock boundary reports only demonstrated contention`` () =
     use workspace = TemporaryWorkspace.Create()
     use owner = HostProcess.Start(workspace.Root, [])
@@ -88,7 +98,7 @@ let ``functional lock boundary reports only demonstrated contention`` () =
         Assert.Fail("T006: another process owns this data directory; acquire returned success.")
     | None -> Assert.Fail("T006: contention requires a typed lock error; acquire is unimplemented.")
 
-[<Fact; Trait("Task", "T006")>]
+[<Fact; Trait("Task", "T006"); Trait("Task", "T002")>]
 let ``filesystem errors are not reported as lock contention`` () =
     use workspace = TemporaryWorkspace.Create()
     let file = Path.Combine(workspace.Root, "not-a-directory")
@@ -100,7 +110,7 @@ let ``filesystem errors are not reported as lock contention`` () =
     Assert.NotNull(error)
     Assert.True(error :? IOException, $"T006: expected unexpected filesystem IOException, got {error.GetType().FullName}.")
 
-[<Fact; Trait("Task", "T006")>]
+[<Fact; Trait("Task", "T006"); Trait("Task", "T002")>]
 let ``an unopenable lock file is not reported as contention`` () =
     use workspace = TemporaryWorkspace.Create()
     Directory.CreateDirectory(Path.Combine(workspace.Root, ".lexscholar.lock")) |> ignore
@@ -113,7 +123,7 @@ let ``an unopenable lock file is not reported as contention`` () =
     Assert.NotNull(error)
     Assert.IsType<IOException>(error) |> ignore
 
-[<Fact; Trait("Task", "T006")>]
+[<Fact; Trait("Task", "T006"); Trait("Task", "T002")>]
 let ``unexpected startup IO failure is not reported as lock contention`` () =
     use workspace = TemporaryWorkspace.Create()
     Directory.CreateDirectory(Path.Combine(workspace.Root, ".lexscholar.lock")) |> ignore
@@ -122,7 +132,7 @@ let ``unexpected startup IO failure is not reported as lock contention`` () =
     Assert.Equal<string>(typeof<IOException>.FullName, host.Startup.ErrorType)
     Assert.NotEqual(0, host.ExitCode)
 
-[<Fact; Trait("Task", "T006")>]
+[<Fact; Trait("Task", "T006"); Trait("Task", "T002")>]
 let ``lock file symlinks are rejected rather than followed or classified as contention`` () =
     use workspace = TemporaryWorkspace.Create()
     let target = Path.Combine(workspace.Root, "unrelated")
@@ -137,7 +147,7 @@ let ``lock file symlinks are rejected rather than followed or classified as cont
     Assert.IsType<IOException>(error) |> ignore
     Assert.Equal("preserve", File.ReadAllText(target))
 
-[<Fact; Trait("Task", "T006")>]
+[<Fact; Trait("Task", "T006"); Trait("Task", "T002")>]
 let ``same-process attempts cannot release or bypass an existing lock`` () =
     use workspace = TemporaryWorkspace.Create()
     let first = DataDirectoryLock.acquire workspace.Root
@@ -155,7 +165,7 @@ let ``same-process attempts cannot release or bypass an existing lock`` () =
         use contender = HostProcess.Start(workspace.Root, [])
         assertRefused contender
 
-[<Fact; Trait("Task", "T006")>]
+[<Fact; Trait("Task", "T006"); Trait("Task", "T002")>]
 let ``new directory and lock file use private permissions and persist after release`` () =
     use workspace = TemporaryWorkspace.Create()
     let directory = Path.Combine(workspace.Root, "new-private-directory")
@@ -173,7 +183,49 @@ let ``new directory and lock file use private permissions and persist after rele
         | Ok next -> next.Dispose()
         | Error error -> Assert.Fail($"Released lock could not be reacquired: {error}")
 
-[<Fact; Trait("Task", "T006")>]
+[<Fact; Trait("Task", "T002")>]
+let ``Linux lock inode remains linked across release and reacquisition`` () =
+    use workspace = TemporaryWorkspace.Create()
+    let path = Path.Combine(workspace.Root, ".lexscholar.lock")
+    // Keep a reference independent of the owner's descriptor. If release
+    // unlinks and recreates the pathname, /proc exposes this reference as
+    // deleted even if a replacement file has identical bytes and permissions.
+    File.WriteAllText(path, "existing lock file")
+    File.SetUnixFileMode(path, UnixFileMode.UserRead ||| UnixFileMode.UserWrite)
+    // Raw Linux open avoids FileStream's advisory sharing lock: this observer
+    // holds the inode, but must not itself compete for workspace ownership.
+    let descriptor = openLinuxObserver(path, 0x80000) // O_RDONLY | O_CLOEXEC; no creation argument.
+    Assert.True(descriptor >= 0, $"Observer open failed: {Marshal.GetLastPInvokeError()}")
+    use observed = new SafeFileHandle(System.IntPtr(descriptor), true)
+    let descriptorPath = $"/proc/self/fd/{observed.DangerousGetHandle().ToInt32()}"
+    let assertStillLinked () =
+        Assert.Equal(path, FileInfo(descriptorPath).LinkTarget)
+        let bytes = Array.zeroCreate<byte> 64
+        let count = RandomAccess.Read(observed, System.Span<byte>(bytes), 0L)
+        Assert.Equal("existing lock file", System.Text.Encoding.UTF8.GetString(bytes, 0, count))
+        Assert.Equal(UnixFileMode.UserRead ||| UnixFileMode.UserWrite, File.GetUnixFileMode(path))
+    assertStillLinked () // Validate the observer against a deliberately held reference.
+    let acquire () =
+        match DataDirectoryLock.acquire workspace.Root with
+        | Ok handle -> handle
+        | Error error -> failwithf "Lock unexpectedly rejected: %A" error
+    use owner = acquire ()
+    assertStillLinked ()
+    owner.Dispose()
+    assertStillLinked ()
+    use successor = acquire ()
+    assertStillLinked ()
+    owner.Dispose()
+    assertStillLinked ()
+    match DataDirectoryLock.acquire workspace.Root with
+    | Error (DirectoryAlreadyInUse _) -> ()
+    | Ok other ->
+        other.Dispose()
+        Assert.Fail("A repeated old-owner disposal must not release the successor.")
+    successor.Dispose()
+    assertStillLinked ()
+
+[<Fact; Trait("Task", "T006"); Trait("Task", "T002")>]
 let ``disposing a constructed but unstarted host releases ownership`` () =
     use workspace = TemporaryWorkspace.Create()
     let builder = HostSetup.builder workspace.Root []
@@ -187,7 +239,7 @@ let ``disposing a constructed but unstarted host releases ownership`` () =
         use successor = HostProcess.Start(workspace.Root, [])
         assertReady successor
 
-[<Fact; Trait("Task", "T006")>]
+[<Fact; Trait("Task", "T006"); Trait("Task", "T002")>]
 let ``normal owner exit releases actual exclusive ownership`` () =
     use workspace = TemporaryWorkspace.Create()
     use owner = HostProcess.Start(workspace.Root, [])
@@ -202,7 +254,7 @@ let ``normal owner exit releases actual exclusive ownership`` () =
     assertReady successor
     assertRefused contender
 
-[<Fact; Trait("Task", "T006")>]
+[<Fact; Trait("Task", "T006"); Trait("Task", "T002")>]
 let ``termination releases actual exclusive ownership without deleting lock artifacts`` () =
     use workspace = TemporaryWorkspace.Create()
     use owner = HostProcess.Start(workspace.Root, [])
@@ -216,7 +268,7 @@ let ``termination releases actual exclusive ownership without deleting lock arti
     assertReady successor
     assertRefused contender
 
-[<Fact; Trait("Task", "T006")>]
+[<Fact; Trait("Task", "T006"); Trait("Task", "T002")>]
 let ``independent directories have independent exclusive owners`` () =
     use first = TemporaryWorkspace.Create()
     use second = TemporaryWorkspace.Create()
