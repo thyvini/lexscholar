@@ -3,7 +3,9 @@ module LexScholar.Browser.Tests.PublishedWorkspaceJourneyTests
 open System
 open System.Diagnostics
 open System.IO
+open System.IO.Compression
 open System.Net.Http
+open System.Runtime.InteropServices
 open System.Threading.Tasks
 open Microsoft.Playwright
 open Xunit
@@ -12,6 +14,9 @@ open LexScholar.Browser.Tests.Ui
 
 let private repo = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "../.."))
 let private deadline = TimeSpan.FromSeconds(60.)
+
+[<DllImport("libc", EntryPoint = "kill", SetLastError = true)>]
+extern int private signalProcess(int pid, int signal)
 
 let private run (directory: string) (program: string) (args: string list) =
     let info = ProcessStartInfo(program, WorkingDirectory = directory, UseShellExecute = false)
@@ -41,6 +46,35 @@ type PublishedWorkspace(archive: string, root: string) =
         Directory.CreateDirectory(workspace) |> ignore
         run root "tar" [ "-xzf"; archive; "-C"; publish ]
     member _.Publish = publish
+    member _.Workspace = workspace
+    member _.Stop() =
+        if not (isNull child) then
+            if not child.HasExited then
+                if signalProcess(child.Id, 15) <> 0 then failwith "Could not stop published host"
+                if not (child.WaitForExit(10_000)) then
+                    child.Kill(true)
+                    failwith "Published host did not stop on SIGTERM"
+            child.Dispose()
+            child <- null
+    member _.RefuseSecond() = task {
+        let info = ProcessStartInfo("dotnet", WorkingDirectory = publish, UseShellExecute = false,
+                                    RedirectStandardOutput = true, RedirectStandardError = true)
+        info.ArgumentList.Add("LexScholar.Server.dll")
+        info.ArgumentList.Add("--LexScholar:Port=0")
+        info.Environment["LexScholar__DataDirectory"] <- workspace
+        use other = Process.Start(info)
+        let output = other.StandardOutput.ReadToEndAsync()
+        let errors = other.StandardError.ReadToEndAsync()
+        try
+            do! other.WaitForExitAsync().WaitAsync(deadline)
+            let! stdout = output
+            let! stderr = errors
+            Assert.NotEqual(0, other.ExitCode)
+            Assert.DoesNotContain("address already in use", stdout + stderr, StringComparison.OrdinalIgnoreCase)
+            Assert.Contains("already in use by another instance", stdout + stderr, StringComparison.OrdinalIgnoreCase)
+        finally
+            if not other.HasExited then other.Kill(true)
+    }
     member _.Start() = task {
         let info = ProcessStartInfo("dotnet", WorkingDirectory = publish, UseShellExecute = false,
                                     RedirectStandardOutput = true, RedirectStandardError = true)
@@ -63,11 +97,7 @@ type PublishedWorkspace(archive: string, root: string) =
         return address.Value
     }
     interface IDisposable with
-        member _.Dispose() =
-            if not (isNull child) then
-                if not child.HasExited then child.Kill(true)
-                child.WaitForExit()
-                child.Dispose()
+        member this.Dispose() = this.Stop()
 
 [<Fact; Trait("Task", "T001")>]
 let ``package clean and publish use the same isolated source without checkout outputs`` () =
@@ -131,6 +161,102 @@ let ``package clean and publish use the same isolated source without checkout ou
             Assert.Contains(needle, original)
             let mutated = original.Replace(needle, $"dotnet {command} \"$root/")
             Assert.ThrowsAny<Exception>(fun () -> exercise mutated) |> ignore
+    finally
+        Directory.Delete(root, true)
+
+[<Theory; InlineData "chromium"; InlineData "firefox"; Trait("Task", "T007"); Trait("Category", "Browser")>]
+let ``published candidate preserves the researcher journey through restart and deletion`` browserName =
+    let root = Path.Combine(Path.GetTempPath(), "lexscholar-journey-" + Guid.NewGuid().ToString("N"))
+    Directory.CreateDirectory(root, UnixFileMode.UserRead ||| UnixFileMode.UserWrite ||| UnixFileMode.UserExecute) |> ignore
+    try
+        let supplied = Environment.GetEnvironmentVariable("LEXSCHOLAR_CANDIDATE_ARCHIVE") |> Option.ofObj
+        let archive = candidate supplied (Path.Combine(root, "candidate.tar.gz"))
+        let fixture = Path.Combine(AppContext.BaseDirectory, "Fixtures", "valid.pdf")
+        let expected = File.ReadAllBytes(fixture)
+        let exported = Path.Combine(root, "export.zip")
+        use host = new PublishedWorkspace(archive, root)
+        (withBrowser browserName (fun browser -> task {
+            let! address = host.Start()
+            let! page = browser.NewPageAsync()
+            let! _ = page.GotoAsync(address)
+            do! enterWorkspace page
+            do! page.GetByLabel(Texts.projectName).FillAsync("Candidate project")
+            do! click (button (page.Locator("body")) Texts.createProject)
+            let project = page.Locator("ul.projects li").Filter(LocatorFilterOptions(HasText = "Candidate project"))
+            do! click (button project Texts.select)
+            do! click (button (page.Locator("body")) Texts.library)
+            do! page.GetByLabel(Texts.importPdf).SetInputFilesAsync(fixture)
+            do! Assertions.Expect(page.GetByText(Texts.imported "valid.pdf")).ToBeVisibleAsync()
+            do! click (button (page.Locator("ul.documents li")) Texts.addFocused)
+            let source = page.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = "valid.pdf"))
+            do! click (button source Texts.openDocument)
+            let verifyOriginal () = task {
+                let main = page.GetByTestId("main")
+                do! Assertions.Expect(main.Locator(".summary-request")).ToBeVisibleAsync()
+                let pdf = link main Texts.openPdf
+                let! href = pdf.GetAttributeAsync("href")
+                let requested = TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously)
+                let handler = EventHandler<IRequest>(fun _ request ->
+                    if request.IsNavigationRequest && request.Url.Contains("/api/documents/") then
+                        requested.TrySetResult(request.Url) |> ignore)
+                page.Context.Request.AddHandler(handler)
+                let! popup = page.Context.RunAndWaitForPageAsync(fun () -> pdf.ClickAsync())
+                let! url = requested.Task.WaitAsync(deadline)
+                page.Context.Request.RemoveHandler(handler)
+                Assert.Equal(Uri(Uri(address), href).AbsoluteUri, url)
+                use http = new HttpClient()
+                let! bytes = http.GetByteArrayAsync(url)
+                Assert.Equal<byte>(expected, bytes)
+                do! popup.CloseAsync()
+            }
+            do! verifyOriginal ()
+            do! host.RefuseSecond()
+            do! verifyOriginal ()
+            do! page.CloseAsync()
+            host.Stop()
+            let! restarted = host.Start()
+            let! page2 = browser.NewPageAsync()
+            let! _ = page2.GotoAsync(restarted)
+            do! enterWorkspace page2
+            let project2 = page2.Locator("ul.projects li").Filter(LocatorFilterOptions(HasText = "Candidate project"))
+            do! Assertions.Expect(project2).ToBeVisibleAsync()
+            let source2 = page2.Locator("ul.project-documents li").Filter(LocatorFilterOptions(HasText = "valid.pdf"))
+            do! click (button source2 Texts.openDocument)
+            let pdf2 = link (page2.GetByTestId("main")) Texts.openPdf
+            let! href2 = pdf2.GetAttributeAsync("href")
+            use http = new HttpClient()
+            let! bytes2 = http.GetByteArrayAsync(Uri(Uri(restarted), href2))
+            Assert.Equal<byte>(expected, bytes2)
+            do! click (button (page2.Locator("body")) Texts.library)
+            let downloadTask = page2.WaitForDownloadAsync()
+            do! click (button (page2.Locator("body")) "Exportar biblioteca")
+            let! download = downloadTask
+            do! download.SaveAsAsync(exported)
+            let checkExport () =
+                use zip = ZipFile.OpenRead(exported)
+                let entries = zip.Entries |> Seq.filter (fun e -> e.FullName.StartsWith("pdf/") && e.FullName.EndsWith(".pdf")) |> Seq.toArray
+                Assert.Single(entries) |> ignore
+                use stream = entries[0].Open()
+                use memory = new MemoryStream()
+                stream.CopyTo(memory)
+                Assert.Equal<byte>(expected, memory.ToArray())
+            checkExport ()
+            do! page2.GetByRole(AriaRole.Checkbox, PageGetByRoleOptions(Name = $"{Texts.deletionSelection}: valid.pdf", Exact = true)).CheckAsync()
+            do! click (button (page2.Locator("body")) Texts.deleteSelection)
+            do! click (button (page2.Locator("body")) Texts.deletionConfirm)
+            do! Assertions.Expect(page2.GetByText(Texts.deletionComplete, PageGetByTextOptions(Exact = true))).ToBeVisibleAsync()
+            do! page2.CloseAsync()
+            host.Stop()
+            let! last = host.Start()
+            let! page3 = browser.NewPageAsync()
+            let! _ = page3.GotoAsync(last)
+            do! enterWorkspace page3
+            do! Assertions.Expect(page3.Locator("ul.projects li").Filter(LocatorFilterOptions(HasText = "Candidate project"))).ToBeVisibleAsync()
+            do! Assertions.Expect(page3.Locator("ul.project-documents li")).ToHaveCountAsync(0)
+            do! click (button (page3.Locator("body")) Texts.library)
+            do! Assertions.Expect(page3.GetByText(Texts.emptyLibrary)).ToBeVisibleAsync()
+            checkExport ()
+        })).GetAwaiter().GetResult()
     finally
         Directory.Delete(root, true)
 
