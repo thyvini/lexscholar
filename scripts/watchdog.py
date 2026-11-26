@@ -25,7 +25,9 @@ def classify(task, native, now):
         return "blocked"
     if task["wait"]:
         return "expected_wait" if now < task["wait"]["until"] else "wait_expired"
-    return "checkpoint_expired" if now >= task["checkpoint"] else "healthy"
+    if now >= task["checkpoint"]:
+        return "checkpoint_expired"
+    return "observation_unavailable" if native.get("status_unknown") else "healthy"
 
 
 def validate(state):
@@ -120,9 +122,11 @@ def observe(session, request=api):
             try:
                 value = request(root + suffix)
                 if suffix == "":
-                    timing = value["time"]
-                    result["failed"] = value.get("outcome") == "failed"
-                    result["busy"] = timing.get("busy", 0) > timing.get("idle", 0)
+                    outcome = value.get("outcome")
+                    result["failed"] = None if outcome is None else outcome == "failed"
+                    # Session timestamps do not prove current execution state.
+                    result["busy"] = None
+                    result["status_unknown"] = True
                 elif suffix == "/permission":
                     result["permission"] = bool(value)
                 else:

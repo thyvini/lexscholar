@@ -130,9 +130,18 @@ class StateTests(unittest.TestCase):
             routes.append(path)
             return {"time": {"busy": 10, "idle": 5}, "outcome": "failed"} if path.endswith("ses_test") else []
         observation = watchdog.observe("ses_test", request)
-        self.assertTrue(observation["busy"])
+        self.assertIsNone(observation["busy"])
         self.assertTrue(observation["failed"])
         self.assertEqual(["/api/session/ses_test", "/api/session/ses_test/permission", "/api/session/ses_test/form"], routes)
+
+    def test_metadata_without_lifecycle_is_unknown_not_idle_or_healthy(self):
+        def request(path):
+            return {"time": {"created": 1, "updated": 1}} if path.endswith("ses_test") else []
+        native = watchdog.observe("ses_test", request)
+        self.assertIsNone(native["busy"])
+        self.assertIsNone(native["failed"])
+        self.assertEqual("observation_unavailable", watchdog.classify(task(checkpoint=200), native, 100))
+        self.assertEqual("checkpoint_expired", watchdog.classify(task(checkpoint=100), native, 101))
 
     def test_partial_observation_preserves_permission_and_failure(self):
         for info, permissions, expected in [
