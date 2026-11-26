@@ -1,6 +1,7 @@
 # Darwin ARM64 probe evidence
 
-- Base: `origin/release/0.5.2` at `2885499`.
+- Base: `origin/release/0.5.3` at `5b868c1`; probe originally prepared on
+  `release/0.5.2` and cherry-picked without changing the original worktree.
 - Local compilation: `dotnet fsi probes/darwin-arm64/probe.fsx /tmp /dev/null`
   compiled and then rejected the local x64 OS and process as intended.
 - Native execution: **not run**. GitHub rejected the branch push because the
