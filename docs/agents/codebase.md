@@ -175,7 +175,8 @@ Import (`ImportDocument.create`, `POST /api/documents`): stage at most MaxBytes 
 OpenCode session observer with private durable assignment state; `scripts/notify.py`
 is its opt-in controlled ntfy adapter. Owner setup, fencing, limitations and
 offline tests are in `docs/agents/operations.md`. It does not launch or replace
-writers, install a scheduler, or configure notifications.
+writers, install a scheduler, or configure notifications. Session metadata
+alone leaves execution status unknown, never proof of idle or writer safety.
 
 **Add an endpoint.**
 1. Domain types and rules first, if any, with tests in `tests/LexScholar.Domain.Tests`.

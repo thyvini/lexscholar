@@ -130,9 +130,45 @@ class StateTests(unittest.TestCase):
             routes.append(path)
             return {"time": {"busy": 10, "idle": 5}, "outcome": "failed"} if path.endswith("ses_test") else []
         observation = watchdog.observe("ses_test", request)
-        self.assertTrue(observation["busy"])
+        self.assertIsNone(observation["busy"])
         self.assertTrue(observation["failed"])
         self.assertEqual(["/api/session/ses_test", "/api/session/ses_test/permission", "/api/session/ses_test/form"], routes)
+
+    def test_metadata_without_lifecycle_is_unknown_not_idle_or_healthy(self):
+        def request(path):
+            return {"time": {"created": 1, "updated": 1}} if path.endswith("ses_test") else []
+        native = watchdog.observe("ses_test", request)
+        self.assertIsNone(native["busy"])
+        self.assertIsNone(native["failed"])
+        self.assertEqual("status_unknown", watchdog.classify(task(checkpoint=200), native, 100))
+        self.assertEqual("checkpoint_expired", watchdog.classify(task(checkpoint=100), native, 101))
+
+    def test_unknown_and_failed_reads_have_separate_notification_incidents(self):
+        state = dict(tasks={"$16e": task(checkpoint=200)}, observations={}, alerts={})
+        sent = []
+        def deliver(config, incident, alerts, persist):
+            if incident["id"] not in alerts:
+                sent.append(incident["kind"])
+                alerts[incident["id"]] = "delivered"
+            return alerts[incident["id"]]
+        with patch.object(notify, "deliver", side_effect=deliver):
+            watchdog.check(state, lambda: None, observer=lambda _: {"status_unknown": True}, now=50)
+            watchdog.check(state, lambda: None, observer=lambda _: {"status_unknown": True, "unavailable": True}, now=50)
+        self.assertEqual(["status_unknown", "observation_unavailable"], sent)
+
+    def test_legacy_unavailable_alert_does_not_suppress_read_failure(self):
+        legacy = "$16e:ses_test:0:observation_unavailable"
+        state = dict(tasks={"$16e": task(checkpoint=200)}, observations={},
+                     alerts={legacy: "delivered"})
+        sent = []
+        def deliver(config, incident, alerts, persist):
+            if incident["id"] not in alerts:
+                sent.append(incident["id"])
+            return "delivered"
+        with patch.object(notify, "deliver", side_effect=deliver):
+            watchdog.check(state, lambda: None, observer=lambda _: {"unavailable": True}, now=50)
+        self.assertEqual(1, len(sent))
+        self.assertNotEqual(legacy, sent[0])
 
     def test_partial_observation_preserves_permission_and_failure(self):
         for info, permissions, expected in [
