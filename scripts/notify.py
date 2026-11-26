@@ -12,6 +12,7 @@ KINDS = {
     "question": ("Answer the native question?", "Inspect the targeted session form.", "Writer awaits an answer."),
     "failure": ("Investigate the failed session?", "Inspect locally; fence the old writer before recovery.", "Assigned work may be incomplete."),
     "observation_unavailable": ("Restore session visibility?", "Check the local service; do not replace the writer.", "Execution state is unknown."),
+    "status_unknown": ("Check the assigned writer?", "Inspect the existing writer; do not replace it based on metadata.", "Execution state is unknown."),
     "blocked": ("Resolve the recorded blocker?", "Read the private assignment and record a decision.", "Assigned work cannot proceed."),
     "checkpoint_expired": ("Request a fresh checkpoint?", "Check the existing writer; expiry is not failure.", "Progress has not been confirmed on time."),
     "wait_expired": ("Reconcile the expected wait?", "Check CI, command or external result and renew the checkpoint.", "The declared wait budget elapsed."),

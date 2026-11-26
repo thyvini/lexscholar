@@ -140,8 +140,21 @@ class StateTests(unittest.TestCase):
         native = watchdog.observe("ses_test", request)
         self.assertIsNone(native["busy"])
         self.assertIsNone(native["failed"])
-        self.assertEqual("observation_unavailable", watchdog.classify(task(checkpoint=200), native, 100))
+        self.assertEqual("status_unknown", watchdog.classify(task(checkpoint=200), native, 100))
         self.assertEqual("checkpoint_expired", watchdog.classify(task(checkpoint=100), native, 101))
+
+    def test_unknown_and_failed_reads_have_separate_notification_incidents(self):
+        state = dict(tasks={"$16e": task(checkpoint=200)}, observations={}, alerts={})
+        sent = []
+        def deliver(config, incident, alerts, persist):
+            if incident["id"] not in alerts:
+                sent.append(incident["kind"])
+                alerts[incident["id"]] = "delivered"
+            return alerts[incident["id"]]
+        with patch.object(notify, "deliver", side_effect=deliver):
+            watchdog.check(state, lambda: None, observer=lambda _: {"status_unknown": True}, now=50)
+            watchdog.check(state, lambda: None, observer=lambda _: {"status_unknown": True, "unavailable": True}, now=50)
+        self.assertEqual(["status_unknown", "observation_unavailable"], sent)
 
     def test_partial_observation_preserves_permission_and_failure(self):
         for info, permissions, expected in [

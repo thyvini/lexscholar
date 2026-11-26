@@ -27,7 +27,7 @@ def classify(task, native, now):
         return "expected_wait" if now < task["wait"]["until"] else "wait_expired"
     if now >= task["checkpoint"]:
         return "checkpoint_expired"
-    return "observation_unavailable" if native.get("status_unknown") else "healthy"
+    return "status_unknown" if native.get("status_unknown") else "healthy"
 
 
 def validate(state):
