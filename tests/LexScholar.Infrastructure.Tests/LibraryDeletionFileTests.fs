@@ -162,6 +162,54 @@ let ``symlinked originals directory is never followed`` () =
     Assert.ThrowsAny<IOException>(fun () -> DocumentStore.removeOriginal dir.Path key) |> ignore
     Assert.Equal("safe", File.ReadAllText(Path.Combine(elsewhere, key)))
 
+[<Fact; Trait("Task", "T005")>]
+let ``removal stays anchored when the originals pathname is replaced`` () =
+    use dir = new TemporaryDirectory()
+    let coordination, operation, document, path = seed dir.Path
+    let originals = DocumentStore.originalsDirectory dir.Path
+    let moved = Path.Combine(dir.Path, "opened-originals")
+    let key = document.ToString("N")
+    let other = Guid.NewGuid().ToString("N")
+    let outside = Path.Combine(dir.Path, "outside")
+    File.WriteAllText(Path.Combine(originals, other), "unrelated")
+    File.WriteAllText(outside, "outside")
+    Assert.Equal(Ok key, LibraryDeletionRepository.removeMetadata coordination dir.Path operation document)
+    let remove storage =
+        DocumentStore.removeOriginalWith (fun step ->
+            if step = DocumentStore.RemovalStep.BeforeUnlink then
+                Directory.Move(originals, moved)
+                Directory.CreateDirectory originals |> ignore
+                File.WriteAllText(path, "sentinel")
+                File.CreateSymbolicLink(Path.Combine(originals, other), outside) |> ignore
+            Assert.NotEqual<string>("deleted", (item dir.Path operation document).Status)) dir.Path storage
+    Assert.Equal(Ok (), LibraryDeletionRepository.finishOriginalWith ignore remove coordination dir.Path operation document)
+    Assert.False(File.Exists(Path.Combine(moved, key)))
+    Assert.Equal("sentinel", File.ReadAllText path)
+    Assert.Equal("unrelated", File.ReadAllText(Path.Combine(moved, other)))
+    Assert.Equal("outside", File.ReadAllText outside)
+    Assert.Equal("deleted", (item dir.Path operation document).Status)
+
+[<Fact; Trait("Task", "T005")>]
+let ``sync uses the opened directory when its pathname disappears`` () =
+    use dir = new TemporaryDirectory()
+    let coordination, operation, document, _ = seed dir.Path
+    let originals = DocumentStore.originalsDirectory dir.Path
+    let moved = Path.Combine(dir.Path, "opened-originals")
+    let key = document.ToString("N")
+    Assert.Equal(Ok key, LibraryDeletionRepository.removeMetadata coordination dir.Path operation document)
+    let mutable synced = false
+    let remove storage =
+        DocumentStore.removeOriginalWith (fun step ->
+            if step = DocumentStore.RemovalStep.BeforeSync then
+                Directory.Move(originals, moved)
+                Assert.False(Directory.Exists originals)
+            if step = DocumentStore.RemovalStep.AfterSync then synced <- true
+            Assert.NotEqual<string>("deleted", (item dir.Path operation document).Status)) dir.Path storage
+    Assert.Equal(Ok (), LibraryDeletionRepository.finishOriginalWith ignore remove coordination dir.Path operation document)
+    Assert.True synced
+    Assert.False(File.Exists(Path.Combine(moved, key)))
+    Assert.Equal("deleted", (item dir.Path operation document).Status)
+
 [<Fact; Trait("Task", "T013")>]
 let ``missing intent and corrupted retained key never authorize another file`` () =
     use dir = new TemporaryDirectory()
