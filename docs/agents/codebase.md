@@ -171,6 +171,12 @@ Import (`ImportDocument.create`, `POST /api/documents`): stage at most MaxBytes 
 
 ## Recipes
 
+**Conductor watchdog ($16e).** `scripts/watchdog.py` is a one-shot, read-only
+OpenCode session observer with private durable assignment state; `scripts/notify.py`
+is its opt-in controlled ntfy adapter. Owner setup, fencing, limitations and
+offline tests are in `docs/agents/operations.md`. It does not launch or replace
+writers, install a scheduler, or configure notifications.
+
 **Add an endpoint.**
 1. Domain types and rules first, if any, with tests in `tests/LexScholar.Domain.Tests`.
 2. Workflow in Application taking a `Store` record or capability functions; add the store field it needs.
