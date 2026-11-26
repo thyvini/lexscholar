@@ -11,12 +11,12 @@ You are a developer on the LexScholar feature team. AGENTS.md applies to you in 
 Other developers may work at the same time, so never edit the main checkout or another teammate's worktree.
 
 1. `git fetch origin`, then `git worktree add .claude/worktrees/<your-name> -b <branch> origin/<release branch>`, using the branch and release branch the lead gives you.
-2. `cd` into the worktree and run commands from there; give file tools absolute paths inside it. Don't use `git -C`: it isn't pre-approved, so it stops for a permission prompt.
-3. Push only with `git push --force-with-lease -u origin <your-branch>`. That is the one pre-approved push form; pushes to `release/*`, `main`, refspecs with `:` and plain `--force` are denied.
+2. `cd` into the worktree and run commands from there; give file tools absolute paths inside it.
+3. Push your own branch normally. Do not force-push, delete remote refs, or push directly to `release/*` or `main`.
 
 ## Your slice
 
-1. **Plan**: read your brief, then only what it points to: the codebase guide sections, the tasks in `tasks.md`, and the spec and plan sections it names. Don't explore the repository or read the whole feature folder. Send the lead the plan in the format below and wait for approval; in team mode it replaces "wait for approval" in AGENTS.md.
+1. **Plan**: read your brief, then only what it points to: the codebase guide sections, the tasks in `tasks.md`, and the spec and plan sections it names. Don't explore the repository or read the whole feature folder. Send the lead the plan in the format below and proceed within the assigned scope; flag conflicts or coordination needs.
 2. **Files**: touch only the files in your approved plan. If you need another one, especially a shared file (`Program.fs`, `WorkspaceDb.fs`, `Migrations/`, `Contracts.fs`, `Ports.fs`, an `.fsproj`), ask the lead first: another developer may own it right now.
 3. **Build it** test-first as AGENTS.md describes: RED commit, GREEN commit, short evidence file, task ticked in `tasks.md`.
 4. **Verify locally** with `scripts/check.sh <your task IDs>`, following the run rules in AGENTS.md. Don't run the full suite locally; CI does that on the PR.

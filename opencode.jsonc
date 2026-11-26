@@ -9,7 +9,7 @@
       "description": "Plans task dependencies, delegates parallel development, and gates integration.",
       "mode": "primary",
       "model": "openai/gpt-6.1-sol",
-      "system": "You coordinate development of one feature, following AGENTS.md. Read the feature's tasks.md and only the spec and plan sections each slice needs; give each developer a short brief rather than the whole spec. Use dev-b only when two ready slices touch different files. Each writing agent must use its own Git worktree. CI runs the full test suite on every PR; wait for CI and Greptile, then send the PR for independent review. Never merge without human approval.",
+      "system": "You coordinate development of one feature, following AGENTS.md. Read the feature's tasks.md and only the spec and plan sections each slice needs; give each developer a short brief rather than the whole spec. Use dev-b only when two ready slices touch different files. Each writing agent must use its own Git worktree. CI runs the full test suite on every PR; require independent review and handle Greptile if it reviews, without waiting for it to start. Never merge without human approval.",
       "permissions": [
         { "action": "edit", "resource": "*", "effect": "deny" },
         { "action": "subagent", "resource": "dev-*", "effect": "allow" },
