@@ -4,6 +4,7 @@ open System.Net
 open System.IO
 open System.Threading.Tasks
 open System.Threading
+open System.Diagnostics
 open System.Runtime.InteropServices
 open Microsoft.Win32.SafeHandles
 open LexScholar.Infrastructure
@@ -32,6 +33,72 @@ extern int private openLinuxObserver(string path, int flags)
 
 [<DllImport("libc", SetLastError = true, EntryPoint = "link")>]
 extern int private hardLink(string source, string target)
+
+[<DllImport("libc", SetLastError = true, EntryPoint = "dup")>]
+extern int private duplicateDescriptor(int descriptor)
+
+let private descriptorsFor path =
+    if System.OperatingSystem.IsLinux() then
+        Directory.EnumerateFiles("/proc/self/fd")
+        |> Seq.filter (fun descriptor -> FileInfo(descriptor).LinkTarget = path)
+        |> Seq.map (Path.GetFileName >> int)
+        |> Seq.toList
+    else
+        let info = ProcessStartInfo("/usr/sbin/lsof", UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true)
+        for argument in [ "-n"; "-P"; "-Ffn"; "-a"; "-p"; string System.Environment.ProcessId; path ] do
+            info.ArgumentList.Add(argument)
+        use child = Process.Start(info)
+        let output = child.StandardOutput.ReadToEnd()
+        let errors = child.StandardError.ReadToEnd()
+        child.WaitForExit()
+        Assert.True(child.ExitCode = 0, $"Descriptor observation failed: {errors}")
+        let mutable current = None
+        [ for line in output.Split('\n', System.StringSplitOptions.RemoveEmptyEntries) do
+            if line.StartsWith("f") then
+                match System.Int32.TryParse(line.Substring(1)) with
+                | true, descriptor -> current <- Some descriptor
+                | _ -> current <- None
+            elif line = "n" + path then
+                match current with
+                | Some descriptor -> yield descriptor
+                | None -> () ]
+
+[<Fact; Trait("Task", "T002"); Trait("Task", "T003"); Trait("Category", "NativeOwnership")>]
+let ``candidate explicitly releases ownership with its duplicated descriptor alive`` () =
+    use workspace = TemporaryWorkspace.Create()
+    let path = Path.Combine(workspace.Root, ".lexscholar.lock")
+    // Validate the observer with an independently opened descriptor first.
+    File.WriteAllText(path, "observer")
+    let observed = openLinuxObserver(path, 0)
+    Assert.True(observed >= 0, $"Observer open failed: {Marshal.GetLastPInvokeError()}")
+    use observedHandle = new SafeFileHandle(System.IntPtr(observed), true)
+    Assert.Contains(observed, descriptorsFor path)
+    observedHandle.Dispose()
+    for create in [ false; true ] do
+        if create then File.Delete(path)
+        let acquire () =
+            match DataDirectoryLock.acquire workspace.Root with
+            | Ok owner -> owner
+            | Error error -> failwithf "Unexpected contention: %A" error
+        use owner = acquire ()
+        let descriptor = descriptorsFor path |> List.exactlyOne
+        let duplicate = duplicateDescriptor(descriptor)
+        Assert.True(duplicate >= 0, $"Descriptor duplication failed: {Marshal.GetLastPInvokeError()}")
+        use inherited = new SafeFileHandle(System.IntPtr(duplicate), true)
+        Assert.Contains(duplicate, descriptorsFor path)
+        match DataDirectoryLock.acquire workspace.Root with
+        | Error (DirectoryAlreadyInUse _) -> ()
+        | Ok other ->
+            other.Dispose()
+            Assert.Fail("A live owner must exclude a contender.")
+        owner.Dispose()
+        use successor = acquire ()
+        owner.Dispose()
+        match DataDirectoryLock.acquire workspace.Root with
+        | Error (DirectoryAlreadyInUse _) -> ()
+        | Ok other ->
+            other.Dispose()
+            Assert.Fail("Repeated old-owner disposal released the successor.")
 
 [<Fact; Trait("Task", "T002"); Trait("Category", "NativeOwnership")>]
 let ``release and reacquisition retain the original lock inode`` () =
