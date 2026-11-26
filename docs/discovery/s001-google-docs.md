@@ -32,12 +32,31 @@ Revision `20261118`: among the Docs v1 document methods, only `get` accepted the
 
 ## Recommendation and live verification
 
-Use the pasted link only to extract the ID locally. Issue `GET https://docs.googleapis.com/v1/documents/{documentId}` for that exact ID on the user's read action. No Drive search/list, document writes or following links in the text. Explain the broader Google grant before consent. Reading into the local workspace is a separate decision from sending text to an AI service: name the text, recipient and purpose and obtain a separate opt-in before any send.
+Use the pasted link only to extract the ID locally. For a document-wide read, issue `GET https://docs.googleapis.com/v1/documents/{documentId}?includeTabsContent=true` for that exact ID. Read each `documentTab` in the returned [`tabs` and `childTabs` tree](https://developers.google.com/workspace/docs/api/how-tos/tabs); a bare GET returns content from the first tab only. No Drive search/list, document writes or following links in the text.
 
-**Owner input needed:** authorize an owner-operated test with one disposable Google account, a dedicated **External / Testing** Cloud project (Docs API enabled, Desktop OAuth client, account listed as a test user), and one Restricted, native Google Doc containing a harmless marker visible to that account. Enter the client configuration and exact link **locally**. Approve the single scope, retaining the test grant for a week, and revoking a fresh grant in that isolated project. No passwords, codes, tokens, client configuration, links or document text in chat, logs or Git.
+Explain the broader Google grant before consent. Reading the linked Doc into the local workspace is a separate decision from sending its text to an AI service: identify which text would leave, the recipient and the purpose, and obtain a separate opt-in before any send.
 
-1. Record consent time in UTC and confirm the returned scope is exactly `documents.readonly` (full URI above). GET the fixture; check HTTP 200, matching ID and marker locally. After the reported access-token lifetime, verify that the old bearer no longer reads it, refresh, and repeat the same successful GET.
-2. Leave the same Testing grant unrevoked, with no new consent or publishing-status change. Compare a successful refresh before day seven with a refresh after seven elapsed days. Record times and the sanitized outcome. Moving a local clock does not test Google's expiry.
-3. After that run, consent afresh and confirm the fixture reads. Revoke this second grant, then check that refresh and the old bearer read are rejected after propagation. Stop local use and discard the tokens. Record only times, scope, statuses/error codes and marker match yes/no.
+### Sustainable authorization
 
-**Status: open.** Private access, refresh across access-token expiry, revocation enforcement and seven-day Testing expiry all await the owner-run experiment.
+Google documents the seven-day limit for External / Testing grants; reproducing it is not a delivery prerequisite. For a personal Google account, investigate an External **Published** desktop client: Google's [publishing-status guidance](https://developers.google.com/identity/protocols/oauth2/production-readiness/overview) describes an unverified-app warning and a lifetime 100-user cap for sensitive scopes, and strongly discourages unverified public apps. A verified client avoids that warning but requires Google's approval and may take longer. Do not assume either configuration or an exemption is approved or works for this account. If the researcher has an eligible Workspace organization, an **Internal** client is another documented option, restricted to that organization and subject to administrator policy. Testing with reauthorization every seven days is a short-term fallback, not a sustainable silent background grant. All configurations still require handling revocation and other [refresh-token invalidation](https://developers.google.com/identity/protocols/oauth2#expiration). Do not publish or alter an OAuth project without owner authorization.
+
+### Owner-operated experiment
+
+Use a **dedicated disposable project**: revocation removes the user's grants for every client in that project. The script is an experiment, not production OAuth or secure long-term token storage. It keeps credentials and document content in memory and never writes a token file; it prints only sanitized results. Run it in a private local terminal, not an agent session or recorded shell.
+
+1. In Google Cloud, create a separate project; enable the Google Docs API. Under Google Auth Platform configure an External consent screen in Testing, add the test account as a test user, add the `https://www.googleapis.com/auth/documents.readonly` data scope, and create a **Desktop app** OAuth client. Download its JSON to a private directory outside this repository. This scope grants read access to **all** the account's Google Docs, though the script requests only the specified document.
+2. Create a private native Google Doc with Restricted sharing, readable by the test account. Create two top-level tabs and one nested child tab. Put distinct harmless markers `S001_TOP_ONE`, `S001_TOP_TWO` and `S001_CHILD` in their respective bodies. Do not use research content. Copy its document ID (the part between `/document/d/` and the next `/`) locally.
+3. In a private terminal, with Python 3 and network access:
+
+   ```sh
+   mkdir -p "$HOME/s001-private"
+   chmod 700 "$HOME/s001-private"
+   python3 -m venv "$HOME/s001-private/venv"
+   "$HOME/s001-private/venv/bin/pip" install google-auth-oauthlib requests
+   "$HOME/s001-private/venv/bin/python" scripts/spikes/s001-google-docs.py
+   ```
+
+   Enter the absolute client JSON path and document ID at the prompts, not in shell history or chat. The script opens the browser and uses Google's loopback flow. Consent as the authorized test account. It fetches only that ID, recursively visits child tabs, checks each marker in its expected position, refreshes immediately and repeats the read, then asks for explicit confirmation before revocation. It checks refresh rejection after revocation; a still-working token or network error is **inconclusive**, not a pass.
+4. Share only the printed PASS/FAIL/INCONCLUSIVE lines and provider error category, with no account names, IDs, document content, credentials or browser URLs. Remove the downloaded client JSON and virtual environment when finished; revoke the test project grant in [Google account permissions](https://myaccount.google.com/permissions) if the script did not confirm revocation. A successful refresh is not proof of behavior after access-token expiry.
+
+**Status: open.** Private access, recursive tab content, immediate refresh and revocation enforcement await the owner-run experiment. Seven-day expiration is documented provider behavior, not live evidence. No live Google account or Doc has been accessed.
