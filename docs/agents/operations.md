@@ -207,40 +207,70 @@ Other errors, including a generic 429, are not usage-limit signals. A later
 assistant message can hide an earlier failure before a check runs; unassigned
 and done sessions are not monitored. No scheduler is installed by these steps.
 
-1. Configure the owner-approved private ntfy topic as above. This is not email;
-   no recipient or topic is selected by default and no notification is sent
-   without an explicitly approved configuration.
-2. With assignments already in the private state, establish a baseline:
+1. Choose an owner-approved SMTP-over-TLS service and explicitly confirm exactly
+   one recipient. Create a send-only SMTP credential, if the provider supports
+   that restriction; no mailbox read access is needed. Outside all Git checkouts,
+   create a private 0700 directory and an owner-only 0600 `mail.json` containing:
+
+   ```json
+   {
+     "host": "smtp.example.org",
+     "port": 465,
+     "username": "FILL_LOCALLY",
+     "password": "FILL_LOCALLY",
+     "sender": "sender@example.org",
+     "recipient": "OWNER_CONFIRMED@example.org",
+     "recipient_confirmed": true
+   }
+   ```
+
+   Replace all placeholders locally. Never place credentials in chat, shell
+   arguments, or the repository. The recipient flag is the owner's explicit
+   confirmation, not a default. TLS is implicit from connection start with
+   certificate validation; there is no plaintext or STARTTLS fallback.
+2. With assignments already in the private state and all assigned sessions
+   stopped, establish a baseline:
 
    ```sh
    python3 -B scripts/watchdog.py --state "$STATE" quota-reset
    ```
 
-   This reads current latest assistant IDs and sends nothing. If any read fails,
-   the baseline is not changed. Run this again after adding an assignment if
+   This baselines only current recognized errors and sends nothing. It rejects
+   active assigned sessions; if a read fails, the baseline is not changed. A
+   non-error message is never baselined, even if it subsequently gains an error
+   with the same ID. Run this again after adding an assignment if
    historical failures in that session must not be treated as new; doing so
    explicitly starts a new incident for all assigned sessions.
-3. At a checkpoint, run:
+3. Arrange the existing one-shot deterministic automation to invoke the
+   following after the monitored GPT execution stops, or run it manually:
 
    ```sh
-   python3 -B scripts/watchdog.py --state "$STATE" quota-check --notify-config /absolute/private/ntfy.json
+   python3 -B scripts/watchdog.py --state "$STATE" quota-check --email-config /absolute/private/mail.json
    ```
 
    `reset_required` means no baseline was established. `unconfigured` means no
    send and no dedup marker. `unavailable` means the read or configuration failed,
-   not that usage is healthy. A recognized newer error emits a fixed alert using
-   the existing ntfy sender. The private alert ledger deduplicates globally across
+   not that usage is healthy. `running` means the shared OpenCode service still
+   reports the affected session active, so no send was attempted; schedule
+   another one-shot check after it stops. The activity read is a snapshot, not
+   a process lease, and cannot establish the status of detached processes.
+   A recognized newer error on a session not reported active emits a fixed
+   email. The private alert ledger deduplicates globally across
    assigned sessions: an uncertain send is recorded before network I/O and is
-   never automatically retried. HTTP acknowledgement is not proof of reading.
+   never automatically retried. SMTP acceptance is not proof of inbox delivery
+   or reading. SMTP errors and response details are never logged.
 4. After inspecting the incident and deciding a new incident is appropriate,
    explicitly run `quota-reset` again. It increments the incident epoch and
    baselines current messages, without deleting the ledger. There is no automatic
    reset or inferred window. Resetting can permit a duplicate after an uncertain
    earlier delivery; make that decision deliberately.
 
-Offline RED: `python3 -B -m unittest discover -s tests/tooling -p test_watchdog.py`
-had two assertion failures against no-op quota functions. GREEN: the same command
-passes using fake transport; it does not establish end-to-end ntfy delivery.
+No automation is installed by this change; if no independent one-shot runner is
+arranged, notifications are not automatic and may never be sent after a GPT
+failure. Owner configuration and a confirmed recipient are still required. Offline
+tests use fake SMTP; no actual email or end-to-end delivery is claimed. Automatic
+post-stop triggering remains [follow-up #205](https://github.com/thyvini/lexscholar/issues/205);
+the one-shot command and activity check do not themselves subscribe to completion.
 
 ## Verification ($16e)
 

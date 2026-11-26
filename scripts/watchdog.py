@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import time
 import notify
+import quota_mail
 
 FIELDS = set("card task role session worktree branch pr dependencies decisions state progress checkpoint blockers attempts wait alert_epoch".split())
 
@@ -29,9 +30,7 @@ def quota_notify(state, persist, config, card, session, message_id, transport=No
     quota = state.get("quota", {"epoch": 0, "baseline": {}})
     if quota["baseline"].get(session) == message_id:
         return "baseline"
-    incident = {"id": f'quota:{quota["epoch"]}', "kind": "quota_limit",
-                "card": card, "pr": state["tasks"][card]["pr"]}
-    return notify.deliver(config, incident, state["alerts"], persist, transport)
+    return quota_mail.deliver(config, f'quota:{quota["epoch"]}', state["alerts"], persist, transport)
 
 
 def quota_latest(session, request=None):
@@ -48,7 +47,14 @@ def quota_latest(session, request=None):
     return message["id"], quota_limit(message)
 
 
-def quota_check(state, persist, config, latest=quota_latest):
+def active_sessions():
+    active = api("/api/session/active")
+    if not isinstance(active, dict):
+        raise ValueError("invalid active sessions")
+    return active
+
+
+def quota_check(state, persist, config, latest=quota_latest, active=active_sessions):
     if "quota" not in state:
         return {"quota": "reset_required"}
     results = {}
@@ -57,19 +63,29 @@ def quota_check(state, persist, config, latest=quota_latest):
             continue
         try:
             message_id, limited = latest(task["session"])
-            results[card] = quota_notify(state, persist, config, card, task["session"], message_id) if limited else "no_signal"
+            if not limited:
+                results[card] = "no_signal"
+            elif task["session"] in active():
+                results[card] = "running"
+            else:
+                results[card] = quota_notify(state, persist, config, card, task["session"], message_id)
         except (ValueError, OSError, KeyError, TypeError, subprocess.SubprocessError):
             results[card] = "unavailable"
     return results
 
 
-def quota_reset(state, persist, latest=quota_latest):
+def quota_reset(state, persist, latest=quota_latest, active=active_sessions):
     baseline = {}
+    running = active()
     for task in state["tasks"].values():
         if task["state"] != "done":
-            message_id, _ = latest(task["session"])
-            if message_id:
+            if task["session"] in running:
+                raise ValueError("cannot reset while an assigned session is running")
+            message_id, limited = latest(task["session"])
+            if message_id and limited:
                 baseline[task["session"]] = message_id
+    if any(t["session"] in active() for t in state["tasks"].values() if t["state"] != "done"):
+        raise ValueError("cannot reset while an assigned session is running")
     current = state.get("quota", {"epoch": 0})
     state["quota"] = {"epoch": current["epoch"] + 1, "baseline": baseline}
     persist()
@@ -234,7 +250,7 @@ def main():
     run = sub.add_parser("check")
     run.add_argument("--notify-config")
     quota = sub.add_parser("quota-check", help="check latest assigned assistant errors for the known usage-limit code")
-    quota.add_argument("--notify-config")
+    quota.add_argument("--email-config")
     sub.add_parser("quota-reset", help="explicitly start a new quota incident after recording current message baselines")
     args = parser.parse_args()
     with locked(args.state) as (state, persist):
@@ -253,7 +269,7 @@ def main():
         elif args.command == "check":
             print(json.dumps(check(state, persist, args.notify_config), sort_keys=True))
         elif args.command == "quota-check":
-            print(json.dumps(quota_check(state, persist, args.notify_config), sort_keys=True))
+            print(json.dumps(quota_check(state, persist, args.email_config), sort_keys=True))
         elif args.command == "quota-reset":
             quota_reset(state, persist)
             print(json.dumps({"quota": "reset"}))

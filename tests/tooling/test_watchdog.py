@@ -13,6 +13,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 import watchdog
 import notify
+import quota_mail
 
 
 def task(**changes):
@@ -43,6 +44,76 @@ class ClassificationTests(unittest.TestCase):
 
 
 class NotifyTests(unittest.TestCase):
+    def test_quota_email_requires_owner_confirmed_private_config(self):
+        with tempfile.TemporaryDirectory(prefix="quota-email-") as directory:
+            path = pathlib.Path(directory) / "mail.json"
+            config = dict(host="smtp.example.org", port=465, username="sender",
+                          password="secret", sender="sender@example.org",
+                          recipient="owner@example.org", recipient_confirmed=True)
+            path.write_text(json.dumps(config))
+            os.chmod(path, 0o600)
+            self.assertEqual(config, quota_mail.configuration(path))
+            config["recipient_confirmed"] = False
+            path.write_text(json.dumps(config))
+            with self.assertRaises(ValueError):
+                quota_mail.configuration(path)
+            config["recipient_confirmed"] = True
+            path.write_text(json.dumps(config))
+            os.chmod(path, 0o644)
+            with self.assertRaises(ValueError):
+                quota_mail.configuration(path)
+
+    def test_smtp_transport_sends_only_fixed_text_to_one_recipient(self):
+        config = dict(host="smtp.example.org", port=465, username="sender", password="secret",
+                      sender="sender@example.org", recipient="owner@example.org")
+        with patch.object(quota_mail.smtplib, "SMTP_SSL") as smtp:
+            connection = smtp.return_value.__enter__.return_value
+            connection.send_message.return_value = {}
+            quota_mail.send(config, quota_mail.TEXT)
+            connection.login.assert_called_once_with("sender", "secret")
+            _, kwargs = connection.send_message.call_args
+            self.assertEqual(["owner@example.org"], kwargs["to_addrs"])
+            message = connection.send_message.call_args.args[0]
+            self.assertEqual(quota_mail.TEXT, message.get_content())
+            self.assertNotIn("secret", message.as_string())
+
+    def test_quota_check_fails_closed_if_activity_unavailable(self):
+        state = dict(tasks={"$16e": task()}, observations={}, alerts={},
+                     quota={"epoch": 1, "baseline": {}})
+        def unavailable():
+            raise TimeoutError()
+        with patch.object(quota_mail, "deliver") as send:
+            self.assertEqual({"$16e": "unavailable"}, watchdog.quota_check(
+                state, lambda: None, "config", latest=lambda _: ("msg_new", True),
+                active=unavailable))
+            send.assert_not_called()
+
+    def test_quota_email_dedup_records_uncertain_before_fake_transport(self):
+        alerts, sent, saved = {}, [], []
+        def sender(config, message):
+            self.assertEqual("send_uncertain", saved[-1]["quota:1"])
+            sent.append(message)
+            raise TimeoutError()
+        with patch.object(quota_mail, "configuration", return_value={}):
+            for _ in range(2):
+                self.assertEqual("send_uncertain", quota_mail.deliver(
+                    "config", "quota:1", alerts, lambda: saved.append(alerts.copy()), sender))
+        self.assertEqual(1, len(sent))
+        self.assertNotIn("5%", sent[0])
+
+    def test_quota_check_does_not_notify_until_session_stops(self):
+        state = dict(tasks={"$16e": task()}, observations={}, alerts={},
+                     quota={"epoch": 1, "baseline": {}})
+        with patch.object(quota_mail, "deliver", return_value="delivered") as send:
+            result = watchdog.quota_check(state, lambda: None, "config",
+                        latest=lambda _: ("msg_new", True), active=lambda: {"ses_test": {}})
+            self.assertEqual({"$16e": "running"}, result)
+            send.assert_not_called()
+            result = watchdog.quota_check(state, lambda: None, "config",
+                        latest=lambda _: ("msg_new", True), active=lambda: {})
+            self.assertEqual({"$16e": "delivered"}, result)
+            send.assert_called_once()
+
     def test_quota_signal_recognizes_only_exact_structured_openai_code(self):
         message = {"type": "assistant", "model": {"providerID": "openai"},
                    "error": {"status": 200, "response": {"body": json.dumps({"error": {
@@ -59,7 +130,7 @@ class NotifyTests(unittest.TestCase):
     def test_quota_incident_deduplicates_across_sessions_and_uncertain_send(self):
         state = dict(tasks={"$16e": task()}, observations={}, alerts={})
         sends = []
-        with patch.object(notify, "configuration", return_value={}):
+        with patch.object(quota_mail, "configuration", return_value={}):
             for session in ("ses_one", "ses_two"):
                 result = watchdog.quota_notify(state, lambda: None, "config", "$16e",
                                                 session, "msg_" + session, lambda c, m: sends.append(m))
@@ -74,11 +145,11 @@ class NotifyTests(unittest.TestCase):
         def send(config, message):
             sends.append(message)
             raise TimeoutError()
-        with patch.object(notify, "configuration", return_value={}):
+        with patch.object(quota_mail, "configuration", return_value={}):
             for _ in range(2):
                 self.assertEqual("send_uncertain", watchdog.quota_notify(state, lambda: None,
                                  "config", "$16e", "ses_test", "msg_old", send))
-            watchdog.quota_reset(state, lambda: None, latest=lambda _: ("msg_old", True))
+            watchdog.quota_reset(state, lambda: None, latest=lambda _: ("msg_old", True), active=lambda: {})
             self.assertEqual("baseline", watchdog.quota_notify(state, lambda: None,
                              "config", "$16e", "ses_test", "msg_old", send))
             self.assertEqual("send_uncertain", watchdog.quota_notify(state, lambda: None,
@@ -102,18 +173,37 @@ class NotifyTests(unittest.TestCase):
         def failed(_):
             raise TimeoutError()
         with self.assertRaises(TimeoutError):
-            watchdog.quota_reset(state, lambda: self.fail("must not persist"), latest=failed)
+            watchdog.quota_reset(state, lambda: self.fail("must not persist"), latest=failed, active=lambda: {})
         self.assertNotIn("quota", state)
 
     def test_quota_check_requires_baseline_and_only_uses_projection(self):
         state = dict(tasks={"$16e": task()}, alerts={}, observations={})
         self.assertEqual({"quota": "reset_required"}, watchdog.quota_check(state, lambda: None, None))
-        watchdog.quota_reset(state, lambda: None, latest=lambda _: ("msg_old", True))
+        watchdog.quota_reset(state, lambda: None, latest=lambda _: ("msg_old", True), active=lambda: {})
         self.assertEqual({"$16e": "baseline"}, watchdog.quota_check(
-            state, lambda: None, None, latest=lambda _: ("msg_old", True)))
+            state, lambda: None, None, latest=lambda _: ("msg_old", True), active=lambda: {}))
         self.assertEqual({"$16e": "unconfigured"}, watchdog.quota_check(
-            state, lambda: None, None, latest=lambda _: ("msg_new", True)))
+            state, lambda: None, None, latest=lambda _: ("msg_new", True), active=lambda: {}))
         self.assertEqual({}, state["alerts"])
+
+    def test_reset_does_not_baseline_nonerror_message_that_later_fails(self):
+        state = dict(tasks={"$16e": task()}, observations={}, alerts={})
+        watchdog.quota_reset(state, lambda: None, latest=lambda _: ("msg_same", False), active=lambda: {})
+        self.assertEqual({}, state["quota"]["baseline"])
+        self.assertEqual({"$16e": "unconfigured"}, watchdog.quota_check(
+            state, lambda: None, None, latest=lambda _: ("msg_same", True), active=lambda: {}))
+
+    def test_reset_rejects_running_and_failed_activity_read(self):
+        state = dict(tasks={"$16e": task()}, observations={}, alerts={})
+        with self.assertRaises(ValueError):
+            watchdog.quota_reset(state, lambda: self.fail("must not persist"),
+                                 latest=lambda _: ("msg_same", False), active=lambda: {"ses_test": {}})
+        def unavailable():
+            raise TimeoutError()
+        with self.assertRaises(TimeoutError):
+            watchdog.quota_reset(state, lambda: self.fail("must not persist"),
+                                 latest=lambda _: ("msg_same", False), active=unavailable)
+        self.assertNotIn("quota", state)
 
     def test_unconfigured_is_not_delivery(self):
         alerts = {}
