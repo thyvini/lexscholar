@@ -71,10 +71,14 @@ Routine developer tests, inspection and ordinary branch pushes are permitted by
 the project rules within an approved feature. Shell patterns are not an argument
 parser or a security boundary: their push deny patterns do not cover every
 spelling or indirect invocation. Never use force, delete remote refs, push
-directly to release or main, or bypass the review and CI gates. Shell and
-external-directory access are allowed by default for ordinary roles, so agents
-must not use destructive or bypass commands. Broader user, managed or harness
-policy can still prompt or deny any action.
+directly to release or main, or bypass the review and CI gates. Unmatched shell
+commands and external directories ask for approval; `/tmp/opencode/*` is
+allowed for worktrees and trusted Bridge tooling. Sentinel's role still denies
+external access. These patterns match command text, not parsed arguments: even
+an allowed Git command or script can have side effects, and shell directory
+inference is best effort. They are not filesystem or network isolation. Saved
+approvals and higher-priority configuration can change effective behavior;
+broader managed or harness policy can also prompt or deny actions.
 
 See
 [team acceptance evidence](team-acceptance-16f.md) for observed limitations;
@@ -108,6 +112,9 @@ complete workflows were not tested.
 
 ### Routine-default probe
 
+This historical probe predates the narrower project defaults above; its Lambda
+observations no longer describe the current policy.
+
 On OpenCode v2.4.2, isolated archived sessions without `--auto` ran Lambda's
 `python3 --version` and external `/etc/hostname` read, Conductor's watchdog
 `--help`, and Bridge's trusted-copy `--help`. Lambda's force-push help and
@@ -115,3 +122,13 @@ trusted-copy help were denied; Sentinel had no shell tool. These harmless probes
 do not exercise a real push, integration, scheduled action, or every command
 spelling. Automation permissions cannot restrict the payload: Conductor must use
 only the documented one-shot action, never an arbitrary or recurring action.
+
+For the narrowed defaults, `python3 tests/test_opencode_permissions.py` checks
+representative project rule matches, not OpenCode's shell scanner. On v2.4.2,
+`opencode debug agents` showed the later role rules: Sentinel denies shell,
+edit and external access, Conductor denies an unrelated shell command and
+allows its watchdog pattern, and Bridge allows its review pattern but denies
+PR merge. Lambda's unmatched shell and `/etc/*` external rules resolve to ask,
+while its status command and `/tmp/opencode/bridge/*` resolve to allow.
+This inspection does not test saved approvals, actual tool execution, scanner
+coverage or every deployment's configuration.
