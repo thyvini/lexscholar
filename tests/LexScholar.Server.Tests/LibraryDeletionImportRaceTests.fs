@@ -98,6 +98,7 @@ let ``intent before lookup or during byte comparison cannot reuse selected ident
     Assert.Equal(Ok (), removed)
     Assert.False(File.Exists(Path.Combine(DocumentStore.originalsDirectory host.Root, original.Document.StorageKey)))
     Assert.True(File.Exists(Path.Combine(DocumentStore.originalsDirectory host.Root, imported.Document.StorageKey)))
+    Assert.Equal<byte>(bytes (), File.ReadAllBytes(Path.Combine(DocumentStore.originalsDirectory host.Root, imported.Document.StorageKey)))
 }
 
 [<Fact; Trait("Task", "T015")>]
