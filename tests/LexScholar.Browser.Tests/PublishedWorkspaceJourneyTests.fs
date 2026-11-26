@@ -70,9 +70,69 @@ type PublishedWorkspace(archive: string, root: string) =
                 child.Dispose()
 
 [<Fact; Trait("Task", "T001")>]
-let ``package builder forces a clean rebuild`` () =
-    let script = File.ReadAllText(Path.Combine(repo, "scripts/package-workspace.sh"))
-    Assert.Contains("dotnet clean ", script)
+let ``package clean and publish use the same isolated source without checkout outputs`` () =
+    let root = Path.Combine(Path.GetTempPath(), "lexscholar-package-test-" + Guid.NewGuid().ToString("N"))
+    let checkout = Path.Combine(root, "checkout")
+    let scripts = Path.Combine(checkout, "scripts")
+    let server = Path.Combine(checkout, "src", "LexScholar.Server")
+    let tools = Path.Combine(root, "tools")
+    let log = Path.Combine(root, "calls")
+    let scriptPath = Path.Combine(scripts, "package-workspace.sh")
+    Directory.CreateDirectory(scripts) |> ignore
+    Directory.CreateDirectory(tools) |> ignore
+    Directory.CreateDirectory(Path.Combine(server, "bin")) |> ignore
+    Directory.CreateDirectory(Path.Combine(server, "obj")) |> ignore
+    try
+        for name in [ "global.json"; "Directory.Build.props"; "Directory.Packages.props" ] do
+            File.WriteAllText(Path.Combine(checkout, name), "fixture")
+        File.WriteAllText(Path.Combine(server, "LexScholar.Server.fsproj"), "source marker")
+        File.WriteAllText(Path.Combine(server, "bin", "stale"), "stale")
+        File.WriteAllText(Path.Combine(server, "obj", "stale"), "stale")
+        let fakeDotnet = Path.Combine(tools, "dotnet")
+        File.WriteAllText(fakeDotnet, String.concat "\n" [
+            "#!/usr/bin/env bash"
+            "set -eu"
+            "project=\"$2\""
+            "dir=\"$(dirname \"$project\")\""
+            "source=missing; bin=absent; obj=absent"
+            "[ ! -f \"$project\" ] || source=\"$(cat \"$project\")\""
+            "[ ! -e \"$dir/bin/stale\" ] || bin=present"
+            "[ ! -e \"$dir/obj/stale\" ] || obj=present"
+            "printf '%s|%s|%s|%s|%s\\n' \"$1\" \"$project\" \"$source\" \"$bin\" \"$obj\" >> \"$CALL_LOG\""
+            "" ])
+        File.SetUnixFileMode(fakeDotnet, UnixFileMode.UserRead ||| UnixFileMode.UserWrite ||| UnixFileMode.UserExecute)
+        let original = File.ReadAllText(Path.Combine(repo, "scripts/package-workspace.sh"))
+        let exercise (script: string) =
+            File.WriteAllText(scriptPath, script)
+            if File.Exists(log) then File.Delete(log)
+            let info = ProcessStartInfo("bash", WorkingDirectory = checkout, UseShellExecute = false)
+            info.ArgumentList.Add(scriptPath)
+            info.ArgumentList.Add(Path.Combine(root, "candidate.tar.gz"))
+            info.Environment["PATH"] <- tools + ":" + Environment.GetEnvironmentVariable("PATH")
+            info.Environment["CALL_LOG"] <- log
+            info.Environment["TMPDIR"] <- root
+            use child = Process.Start(info)
+            Assert.True(child.WaitForExit(30_000), "Package builder must finish")
+            Assert.Equal(0, child.ExitCode)
+            let calls = File.ReadAllLines(log) |> Array.map (fun line -> line.Split('|'))
+            Assert.Equal(2, calls.Length)
+            Assert.Equal("clean", calls[0][0])
+            Assert.Equal("publish", calls[1][0])
+            Assert.Equal(calls[0][1], calls[1][1])
+            for call in calls do
+                Assert.False(call[1].StartsWith(checkout + "/", StringComparison.Ordinal), "Build must not target checkout")
+                Assert.Equal("source marker", call[2])
+                Assert.Equal("absent", call[3])
+                Assert.Equal("absent", call[4])
+        exercise original
+        // Sensitivity: independently redirect each command back to the checkout.
+        for command in [ "clean"; "publish" ] do
+            let needle = $"dotnet {command} \"$build/source/"
+            Assert.Contains(needle, original)
+            let mutated = original.Replace(needle, $"dotnet {command} \"$root/")
+            Assert.ThrowsAny<Exception>(fun () -> exercise mutated) |> ignore
+    finally
+        Directory.Delete(root, true)
 
 [<Fact; Trait("Task", "T001")>]
 let ``explicitly missing candidate is rejected rather than rebuilt`` () =
