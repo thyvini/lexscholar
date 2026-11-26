@@ -90,14 +90,17 @@ extern int private unlinkAt(SafeFileHandle directory, [<MarshalAs(UnmanagedType.
 [<DllImport("libc", SetLastError = true, EntryPoint = "fsync")>]
 extern int private syncDirectory(SafeFileHandle directory)
 
-/// Linux only. Anchor both unlink and fsync to the same opened directory, never
+/// Anchor both unlink and fsync to the same opened directory, never
 /// follow an originals-directory symlink, and accept ONLY ENOENT as missing.
 /// File.Exists cannot distinguish missing from inaccessible storage.
 let removeOriginalWith (checkpoint: RemovalStep -> unit) directory key =
     if not (isStorageKey key) then invalidArg (nameof key) "Invalid managed storage key."
-    if not (OperatingSystem.IsLinux()) then raise (PlatformNotSupportedException())
     // O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW
-    let descriptor = openDirectory(originalsDirectory directory, 0x10000 ||| 0x80000 ||| 0x20000)
+    let flags =
+        if OperatingSystem.IsLinux() then 0x10000 ||| 0x80000 ||| 0x20000
+        elif OperatingSystem.IsMacOS() then 0x100000 ||| 0x1000000 ||| 0x100
+        else raise (PlatformNotSupportedException())
+    let descriptor = openDirectory(originalsDirectory directory, flags)
     if descriptor < 0 then raise (IOException("Managed originals directory unavailable."))
     use handle = new SafeFileHandle(IntPtr(descriptor), true)
     checkpoint RemovalStep.BeforeUnlink
