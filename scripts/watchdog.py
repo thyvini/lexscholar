@@ -15,6 +15,66 @@ import notify
 FIELDS = set("card task role session worktree branch pr dependencies decisions state progress checkpoint blockers attempts wait alert_epoch".split())
 
 
+def quota_limit(message):
+    try:
+        if message["type"] != "assistant" or message["model"]["providerID"] != "openai":
+            return False
+        body = json.loads(message["error"]["response"]["body"])
+        return isinstance(body, dict) and isinstance(body.get("error"), dict) and body["error"].get("code") == "subscription_sharing_usage_limit_exceeded"
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+def quota_notify(state, persist, config, card, session, message_id, transport=None):
+    quota = state.get("quota", {"epoch": 0, "baseline": {}})
+    if quota["baseline"].get(session) == message_id:
+        return "baseline"
+    incident = {"id": f'quota:{quota["epoch"]}', "kind": "quota_limit",
+                "card": card, "pr": state["tasks"][card]["pr"]}
+    return notify.deliver(config, incident, state["alerts"], persist, transport)
+
+
+def quota_latest(session, request=None):
+    # Assigned sessions only. Do not persist or return content or response bodies.
+    request = request or api
+    messages = request("/api/session/" + session + "/message?type=assistant&order=desc&limit=1")
+    if not isinstance(messages, list) or len(messages) > 1:
+        raise ValueError("invalid message page")
+    if not messages:
+        return None, False
+    message = messages[0]
+    if not isinstance(message, dict) or not isinstance(message.get("id"), str) or not re.fullmatch(r"msg_[A-Za-z0-9]+", message["id"]):
+        raise ValueError("invalid message identity")
+    return message["id"], quota_limit(message)
+
+
+def quota_check(state, persist, config, latest=quota_latest):
+    if "quota" not in state:
+        return {"quota": "reset_required"}
+    results = {}
+    for card, task in state["tasks"].items():
+        if task["state"] == "done":
+            continue
+        try:
+            message_id, limited = latest(task["session"])
+            results[card] = quota_notify(state, persist, config, card, task["session"], message_id) if limited else "no_signal"
+        except (ValueError, OSError, KeyError, TypeError, subprocess.SubprocessError):
+            results[card] = "unavailable"
+    return results
+
+
+def quota_reset(state, persist, latest=quota_latest):
+    baseline = {}
+    for task in state["tasks"].values():
+        if task["state"] != "done":
+            message_id, _ = latest(task["session"])
+            if message_id:
+                baseline[task["session"]] = message_id
+    current = state.get("quota", {"epoch": 0})
+    state["quota"] = {"epoch": current["epoch"] + 1, "baseline": baseline}
+    persist()
+
+
 def classify(task, native, now):
     if task["state"] == "done":
         return "done"
@@ -173,6 +233,9 @@ def main():
     sub.add_parser("show")
     run = sub.add_parser("check")
     run.add_argument("--notify-config")
+    quota = sub.add_parser("quota-check", help="check latest assigned assistant errors for the known usage-limit code")
+    quota.add_argument("--notify-config")
+    sub.add_parser("quota-reset", help="explicitly start a new quota incident after recording current message baselines")
     args = parser.parse_args()
     with locked(args.state) as (state, persist):
         if args.command == "put":
@@ -189,6 +252,11 @@ def main():
             print(json.dumps({"revision": state["revision"]}))
         elif args.command == "check":
             print(json.dumps(check(state, persist, args.notify_config), sort_keys=True))
+        elif args.command == "quota-check":
+            print(json.dumps(quota_check(state, persist, args.notify_config), sort_keys=True))
+        elif args.command == "quota-reset":
+            quota_reset(state, persist)
+            print(json.dumps({"quota": "reset"}))
         else:
             print(json.dumps(state, indent=2))
 
@@ -196,5 +264,5 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (ValueError, OSError, KeyError, TypeError):
+    except (ValueError, OSError, KeyError, TypeError, subprocess.SubprocessError):
         raise SystemExit("Watchdog stopped: invalid/inaccessible state or configuration; inspect locally.")

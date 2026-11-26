@@ -191,6 +191,57 @@ records the decision and increments `alert_epoch` via `put`; this may duplicate
 an earlier uncertain send and must be an explicit choice. Do not delete the
 alerts ledger. Invalid config reports `configuration_error`, never delivered.
 
+## ChatGPT usage-limit fallback
+
+This is not a 5% warning. OpenCode's usage-limits endpoint returned `data:
+null` on the installed service. Two owner-identified prior failure sessions
+contained the exact structured Responses error code
+`subscription_sharing_usage_limit_exceeded`. [OpenAI's recovery guidance](https://developers.openai.com/siwc/token-sharing-open-source/errors-and-recovery)
+identifies this as a usage limit which can be app-specific; it does not prove
+the whole plan is empty, identify a remaining percentage, or provide a reset.
+
+The opt-in one-shot check reads **only the latest assistant message** of each
+non-done assigned session and projects its OpenAI provider and exact JSON error
+code; it does not save or send the message, response body, or provider prose.
+Other errors, including a generic 429, are not usage-limit signals. A later
+assistant message can hide an earlier failure before a check runs; unassigned
+and done sessions are not monitored. No scheduler is installed by these steps.
+
+1. Configure the owner-approved private ntfy topic as above. This is not email;
+   no recipient or topic is selected by default and no notification is sent
+   without an explicitly approved configuration.
+2. With assignments already in the private state, establish a baseline:
+
+   ```sh
+   python3 -B scripts/watchdog.py --state "$STATE" quota-reset
+   ```
+
+   This reads current latest assistant IDs and sends nothing. If any read fails,
+   the baseline is not changed. Run this again after adding an assignment if
+   historical failures in that session must not be treated as new; doing so
+   explicitly starts a new incident for all assigned sessions.
+3. At a checkpoint, run:
+
+   ```sh
+   python3 -B scripts/watchdog.py --state "$STATE" quota-check --notify-config /absolute/private/ntfy.json
+   ```
+
+   `reset_required` means no baseline was established. `unconfigured` means no
+   send and no dedup marker. `unavailable` means the read or configuration failed,
+   not that usage is healthy. A recognized newer error emits a fixed alert using
+   the existing ntfy sender. The private alert ledger deduplicates globally across
+   assigned sessions: an uncertain send is recorded before network I/O and is
+   never automatically retried. HTTP acknowledgement is not proof of reading.
+4. After inspecting the incident and deciding a new incident is appropriate,
+   explicitly run `quota-reset` again. It increments the incident epoch and
+   baselines current messages, without deleting the ledger. There is no automatic
+   reset or inferred window. Resetting can permit a duplicate after an uncertain
+   earlier delivery; make that decision deliberately.
+
+Offline RED: `python3 -B -m unittest discover -s tests/tooling -p test_watchdog.py`
+had two assertion failures against no-op quota functions. GREEN: the same command
+passes using fake transport; it does not establish end-to-end ntfy delivery.
+
 ## Verification ($16e)
 
 - RED: `python3 -B -m unittest discover -s tests/tooling -v`: 5 tests,

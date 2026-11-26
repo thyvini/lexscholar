@@ -43,6 +43,78 @@ class ClassificationTests(unittest.TestCase):
 
 
 class NotifyTests(unittest.TestCase):
+    def test_quota_signal_recognizes_only_exact_structured_openai_code(self):
+        message = {"type": "assistant", "model": {"providerID": "openai"},
+                   "error": {"status": 200, "response": {"body": json.dumps({"error": {
+                       "code": "subscription_sharing_usage_limit_exceeded"}})}}}
+        self.assertTrue(watchdog.quota_limit(message))
+        for changed in [
+            dict(message, model={"providerID": "other"}),
+            dict(message, error={"status": 429}),
+            dict(message, error={"response": {"body": '{"error":{"code":"rate_limit_exceeded"}}'}}),
+            dict(message, error={"response": {"body": "not json"}}),
+        ]:
+            self.assertFalse(watchdog.quota_limit(changed))
+
+    def test_quota_incident_deduplicates_across_sessions_and_uncertain_send(self):
+        state = dict(tasks={"$16e": task()}, observations={}, alerts={})
+        sends = []
+        with patch.object(notify, "configuration", return_value={}):
+            for session in ("ses_one", "ses_two"):
+                result = watchdog.quota_notify(state, lambda: None, "config", "$16e",
+                                                session, "msg_" + session, lambda c, m: sends.append(m))
+                self.assertEqual("delivered", result)
+        self.assertEqual(1, len(sends))
+        self.assertNotIn("ses_one", sends[0])
+        self.assertNotIn("5%", sends[0])
+
+    def test_quota_reset_baselines_old_error_and_preserves_uncertain_ledger(self):
+        state = dict(tasks={"$16e": task()}, alerts={}, observations={})
+        sends = []
+        def send(config, message):
+            sends.append(message)
+            raise TimeoutError()
+        with patch.object(notify, "configuration", return_value={}):
+            for _ in range(2):
+                self.assertEqual("send_uncertain", watchdog.quota_notify(state, lambda: None,
+                                 "config", "$16e", "ses_test", "msg_old", send))
+            watchdog.quota_reset(state, lambda: None, latest=lambda _: ("msg_old", True))
+            self.assertEqual("baseline", watchdog.quota_notify(state, lambda: None,
+                             "config", "$16e", "ses_test", "msg_old", send))
+            self.assertEqual("send_uncertain", watchdog.quota_notify(state, lambda: None,
+                             "config", "$16e", "ses_test", "msg_new", send))
+        self.assertEqual(2, len(sends))
+        self.assertEqual({"quota:0", "quota:1"}, set(state["alerts"]))
+
+    def test_quota_projection_never_returns_body_and_rejects_bad_pages(self):
+        routes = []
+        def request(path):
+            routes.append(path)
+            return [{"id": "msg_abc", "type": "assistant", "model": {"providerID": "openai"},
+                     "error": {"response": {"body": '{"error":{"code":"subscription_sharing_usage_limit_exceeded","message":"secret"}}'}}}]
+        self.assertEqual(("msg_abc", True), watchdog.quota_latest("ses_test", request))
+        self.assertEqual(["/api/session/ses_test/message?type=assistant&order=desc&limit=1"], routes)
+        with self.assertRaises(ValueError):
+            watchdog.quota_latest("ses_test", lambda _: [{}, {}])
+
+    def test_quota_reset_is_atomic_if_observation_fails(self):
+        state = dict(tasks={"$16e": task()}, alerts={}, observations={})
+        def failed(_):
+            raise TimeoutError()
+        with self.assertRaises(TimeoutError):
+            watchdog.quota_reset(state, lambda: self.fail("must not persist"), latest=failed)
+        self.assertNotIn("quota", state)
+
+    def test_quota_check_requires_baseline_and_only_uses_projection(self):
+        state = dict(tasks={"$16e": task()}, alerts={}, observations={})
+        self.assertEqual({"quota": "reset_required"}, watchdog.quota_check(state, lambda: None, None))
+        watchdog.quota_reset(state, lambda: None, latest=lambda _: ("msg_old", True))
+        self.assertEqual({"$16e": "baseline"}, watchdog.quota_check(
+            state, lambda: None, None, latest=lambda _: ("msg_old", True)))
+        self.assertEqual({"$16e": "unconfigured"}, watchdog.quota_check(
+            state, lambda: None, None, latest=lambda _: ("msg_new", True)))
+        self.assertEqual({}, state["alerts"])
+
     def test_unconfigured_is_not_delivery(self):
         alerts = {}
         self.assertEqual("unconfigured", notify.deliver(None, {"id": "x"}, alerts, lambda: None))

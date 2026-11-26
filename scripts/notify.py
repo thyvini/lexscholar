@@ -16,6 +16,7 @@ KINDS = {
     "blocked": ("Resolve the recorded blocker?", "Read the private assignment and record a decision.", "Assigned work cannot proceed."),
     "checkpoint_expired": ("Request a fresh checkpoint?", "Check the existing writer; expiry is not failure.", "Progress has not been confirmed on time."),
     "wait_expired": ("Reconcile the expected wait?", "Check CI, command or external result and renew the checkpoint.", "The declared wait budget elapsed."),
+    "quota_limit": ("Check ChatGPT usage?", "Inspect ChatGPT Settings > Usage before retrying plan requests.", "A ChatGPT plan or app-specific usage limit blocked a request; the reset time is unknown."),
 }
 
 
