@@ -29,5 +29,6 @@ jobs:
           umask 077
           fixture="$(mktemp -d "${RUNNER_TEMP}/darwin-probe.XXXXXX")"
           clang -std=c11 -Wall -Wextra -Werror probes/darwin-arm64/constants.c -o "$fixture/constants"
+          clang -dynamiclib -Wall -Wextra -Werror probes/darwin-arm64/shim.c -o "$fixture/libdarwinprobe.dylib"
           "$fixture/constants" | tee "$fixture/constants.txt"
-          dotnet fsi probes/darwin-arm64/probe.fsx "$fixture" "$fixture/constants.txt"
+          DYLD_LIBRARY_PATH="$fixture" dotnet fsi probes/darwin-arm64/probe.fsx "$fixture" "$fixture/constants.txt"
