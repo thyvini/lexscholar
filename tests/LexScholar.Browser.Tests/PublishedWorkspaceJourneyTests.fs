@@ -70,6 +70,11 @@ type PublishedWorkspace(archive: string, root: string) =
                 child.Dispose()
 
 [<Fact; Trait("Task", "T001")>]
+let ``package builder forces a clean rebuild`` () =
+    let script = File.ReadAllText(Path.Combine(repo, "scripts/package-workspace.sh"))
+    Assert.Contains("dotnet clean ", script)
+
+[<Fact; Trait("Task", "T001")>]
 let ``explicitly missing candidate is rejected rather than rebuilt`` () =
     let missing = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString(), "missing.tar.gz")
     let error = Assert.ThrowsAny<Exception>(fun () -> candidate (Some missing) missing |> ignore)
