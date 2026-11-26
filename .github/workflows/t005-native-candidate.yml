@@ -1,0 +1,72 @@
+name: T005 native candidate (isolated)
+on:
+  pull_request:
+    branches: [feat/f012-darwin-deletion]
+permissions:
+  contents: read
+jobs:
+  native:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - name: Record native environment and SDK flags
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          sw_vers
+          uname -a
+          dotnet --info
+          df "$RUNNER_TEMP"
+          mount
+          printf '#include <fcntl.h>\n#include <stdio.h>\nint main(void){printf("O_DIRECTORY=%%x O_CLOEXEC=%%x O_NOFOLLOW=%%x\\n", O_DIRECTORY, O_CLOEXEC, O_NOFOLLOW);}\n' > "$RUNNER_TEMP/flags.c"
+          clang -Wall -Wextra -Werror "$RUNNER_TEMP/flags.c" -o "$RUNNER_TEMP/flags"
+          "$RUNNER_TEMP/flags"
+          git rev-parse HEAD
+          git rev-parse HEAD:src/LexScholar.Infrastructure/DocumentStore.fs
+      - name: Demonstrate anchored-unlink and directory-sync sensitivity
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          file=src/LexScholar.Infrastructure/DocumentStore.fs
+          for mutation in unlink sync; do
+            MUTATION="$mutation" python3 - <<'PY'
+          import os
+          from pathlib import Path
+          p = Path("src/LexScholar.Infrastructure/DocumentStore.fs")
+          text = p.read_text()
+          if os.environ["MUTATION"] == "unlink":
+              old = "    if unlinkAt(handle, key, 0) <> 0 then"
+              new = "    use replacement = new SafeFileHandle(IntPtr(-2), false)\n    if unlinkAt(replacement, Path.Combine(originalsDirectory directory, key), 0) <> 0 then"
+          else:
+              old = "    if syncDirectory handle <> 0 then raise (IOException(\"Managed originals directory sync failed.\"))"
+              new = "    let reopened = openDirectory(originalsDirectory directory, flags)\n    if reopened < 0 then raise (IOException(\"Managed originals directory unavailable.\"))\n    use replacement = new SafeFileHandle(IntPtr(reopened), true)\n    if syncDirectory replacement <> 0 then raise (IOException(\"Managed originals directory sync failed.\"))"
+          assert text.count(old) == 1
+          p.write_text(text.replace(old, new))
+          PY
+            if dotnet test --project tests/LexScholar.Infrastructure.Tests/LexScholar.Infrastructure.Tests.fsproj -c Release --filter-trait 'Task=T005' > "$RUNNER_TEMP/$mutation.log" 2>&1; then
+              cat "$RUNNER_TEMP/$mutation.log"
+              exit 1
+            fi
+            cat "$RUNNER_TEMP/$mutation.log"
+            if [ "$mutation" = unlink ]; then expected='removal stays anchored when the originals pathname is replaced'; else expected='sync uses the opened directory when its pathname disappears'; fi
+            grep -F "$expected" "$RUNNER_TEMP/$mutation.log"
+            git show "HEAD:$file" > "$file"
+          done
+      - name: Native storage and managed reimport tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          for project in tests/LexScholar.Infrastructure.Tests/LexScholar.Infrastructure.Tests.fsproj tests/LexScholar.Server.Tests/LexScholar.Server.Tests.fsproj; do
+            dotnet test --project "$project" -c Release --filter-trait 'Task=T005' --filter-trait 'Task=T013' --filter-trait 'Task=T015' 2>&1 | tee "$RUNNER_TEMP/$(basename "$project").log"
+            sed -E 's/\x1B\[[0-9;?]*[A-Za-z]//g' "$RUNNER_TEMP/$(basename "$project").log" |
+              awk '/^[[:space:]]+total: [0-9]+/ { t += $2 } /^[[:space:]]+skipped: [0-9]+/ { s += $2 } END { if (!t || s) exit 1 }'
+          done
