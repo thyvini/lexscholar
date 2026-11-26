@@ -70,6 +70,14 @@ invocation, with its scope and gates. External-directory checks may require
 separate approval. Other shell commands remain denied for these roles. If
 approval or a trusted copy is unavailable, report the affected workflow blocked.
 
+Routine developer tests, inspection and ordinary branch pushes are permitted by
+the project rules within an approved feature. Shell patterns are not an argument
+parser or a security boundary: their push deny patterns do not cover every
+spelling or indirect invocation. Never use force, delete remote refs, push
+directly to release or main, or bypass the review and CI gates. Other shell
+commands and external-directory access may still require approval; broader
+user, managed or harness policy can further restrict any action.
+
 See
 [team acceptance evidence](team-acceptance-16f.md) for observed limitations;
 merged tooling does not itself prove end-to-end team operation.
