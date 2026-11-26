@@ -75,8 +75,9 @@ Only these targeted GETs are used, via `opencode api` (native discovery/auth):
 
 No session listing, message/history/log reading, auth dump, global permission
 listing or execution mutation. Permissions/forms are observed, never answered
-or approved. Each observation makes at most two immediate read attempts, each
-subprocess limited to 10 seconds (at most 60 seconds per assignment). Output and
+or approved. Each targeted read makes at most two immediate attempts; successful
+signals are retained if another read fails. Each subprocess is limited to 10
+seconds (at most 60 seconds per assignment). Output and
 errors from OpenCode stay captured and are not relayed to ntfy.
 
 Classification prioritizes native permission, question, explicit failed outcome,
@@ -185,6 +186,9 @@ alerts ledger. Invalid config reports `configuration_error`, never delivered.
   duplicate writers, dependency cycles, private HTTPS, redirects and
   uncertain/success dedup). Entirely offline, fake transport; no ntfy sent.
 - `scripts/check.sh`: Release solution build with `-warnaserror` passed.
+- Review regressions: two assertion failures before the fixes, then 18 offline
+  tests passed; classification uses the time after each assignment's observation,
+  and partial reads preserve known permission, question and failure signals.
 - Native smoke: only this developer's session metadata, forms and permissions
   queried; verified `data` envelope and zero pending forms/permissions. No
   messages, credentials or unrelated session contents inspected.

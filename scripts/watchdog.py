@@ -112,34 +112,40 @@ def api(path):
 
 
 def observe(session, request=api):
-    """Two read-only attempts, targeted routes only; never reads messages/logs."""
-    for attempt in range(2):
-        try:
-            info = request("/api/session/" + session)
-            permissions = request("/api/session/" + session + "/permission")
-            forms = request("/api/session/" + session + "/form")
-            timing = info["time"]
-            return dict(permission=bool(permissions), form=bool(forms),
-                        failed=info.get("outcome") == "failed",
-                        busy=timing.get("busy", 0) > timing.get("idle", 0),
-                        read_attempts=attempt + 1)
-        except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
-            pass
-    return {"unavailable": True, "read_attempts": 2}
+    """Retry each targeted read once, preserving independently observed signals."""
+    result = {}
+    root = "/api/session/" + session
+    for suffix in ("", "/permission", "/form"):
+        for attempt in range(2):
+            try:
+                value = request(root + suffix)
+                if suffix == "":
+                    timing = value["time"]
+                    result["failed"] = value.get("outcome") == "failed"
+                    result["busy"] = timing.get("busy", 0) > timing.get("idle", 0)
+                elif suffix == "/permission":
+                    result["permission"] = bool(value)
+                else:
+                    result["form"] = bool(value)
+                break
+            except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+                if attempt == 1:
+                    result["unavailable"] = True
+    return result
 
 
 def check(state, persist, config=None, observer=observe, now=None):
-    now = time.time() if now is None else now
     results = {}
     for card, task in state["tasks"].items():
         if task["state"] == "done":
             results[card] = {"kind": "done"}
             continue
         native = observer(task["session"])
-        kind = classify(task, native, now)
+        observed_at = time.time() if now is None else now
+        kind = classify(task, native, observed_at)
         if kind == "healthy" and any(state["tasks"][d]["state"] != "done" for d in task["dependencies"]):
             kind = "dependency_wait"
-        state["observations"][card] = {"kind": kind, "at": now, **native}
+        state["observations"][card] = {"kind": kind, "at": observed_at, **native}
         results[card] = {"kind": kind}
         persist()
         if kind in notify.KINDS:

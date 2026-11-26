@@ -120,8 +120,9 @@ class StateTests(unittest.TestCase):
         def request(path):
             calls.append(path)
             raise TimeoutError()
-        self.assertEqual({"unavailable": True, "read_attempts": 2}, watchdog.observe("ses_test", request))
-        self.assertEqual(["/api/session/ses_test"] * 2, calls)
+        self.assertEqual({"unavailable": True}, watchdog.observe("ses_test", request))
+        self.assertEqual([route for suffix in ("", "/permission", "/form")
+                          for route in ["/api/session/ses_test" + suffix] * 2], calls)
 
     def test_observation_uses_native_v2_envelope_projection(self):
         routes = []
@@ -132,6 +133,37 @@ class StateTests(unittest.TestCase):
         self.assertTrue(observation["busy"])
         self.assertTrue(observation["failed"])
         self.assertEqual(["/api/session/ses_test", "/api/session/ses_test/permission", "/api/session/ses_test/form"], routes)
+
+    def test_partial_observation_preserves_permission_and_failure(self):
+        for info, permissions, expected in [
+            ({"time": {}, "outcome": None}, [object()], "permission"),
+            ({"time": {}, "outcome": "failed"}, [], "failure"),
+        ]:
+            def request(path):
+                if path.endswith("/form"):
+                    raise TimeoutError()
+                return permissions if path.endswith("/permission") else info
+            native = watchdog.observe("ses_test", request)
+            self.assertTrue(native["unavailable"])
+            self.assertEqual(expected, watchdog.classify(task(), native, 50))
+
+        def missing_permission(path):
+            if path.endswith("/permission"):
+                raise TimeoutError()
+            return [object()] if path.endswith("/form") else {"time": {}}
+        native = watchdog.observe("ses_test", missing_permission)
+        self.assertTrue(native["unavailable"])
+        self.assertEqual("question", watchdog.classify(task(), native, 50))
+
+    def test_later_assignment_uses_time_after_earlier_observation(self):
+        first = task(checkpoint=200)
+        second = task(card="$16f", session="ses_other", worktree="/tmp/opencode/other",
+                      branch="chore/other", checkpoint=105)
+        state = dict(tasks={"$16e": first, "$16f": second}, observations={}, alerts={})
+        with patch.object(watchdog.time, "time", side_effect=[100, 110]):
+            result = watchdog.check(state, lambda: None, observer=lambda s: {})
+        self.assertEqual("healthy", result["$16e"]["kind"])
+        self.assertEqual("checkpoint_expired", result["$16f"]["kind"])
 
     def test_independent_work_continues_past_blocker(self):
         first = task(blockers=["owner decision"])
