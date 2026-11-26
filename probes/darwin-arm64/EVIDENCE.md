@@ -15,8 +15,15 @@
   `O_DIRECTORY=1048576`, `F_DUPFD=0`, `F_DUPFD_CLOEXEC=67`,
   `F_GETFD=1`, `FD_CLOEXEC=1`. Direct F# fixed-signature `fcntl` returned
   `EINVAL` (22) for `F_DUPFD_CLOEXEC`; the run stopped before directory fsync.
-  A follow-up tests a C variadic-call shim as a control and records direct open
-  mode separately. Its result is pending.
+  The [follow-up run](https://github.com/thyvini/lexscholar/actions/runs/45891884260)
+  passed on the same reported platform: direct fixed-signature F# `open` with
+  `O_CREAT` and requested mode `0600` produced `UserRead` (`0400`), and direct
+  fixed-signature `fcntl` again returned errno 22. A fixed-signature F# call to
+  a C shim that invokes the variadic functions correctly created mode `0600`,
+  duplicated the descriptor with `FD_CLOEXEC`, and read/wrote through the
+  duplicate after closing the original. Directory `fsync` returned success.
+  The direct calls are not validated for production; their results illustrate
+  the ABI hazard on this runner, not a portable fallback.
 - The probe prints constants from the installed SDK headers, checks the runtime
   architecture, exercises `open` with `O_CREAT` and mode, tests a close-on-exec
   `fcntl` duplicate after closing the original, and attempts directory `fsync`.
