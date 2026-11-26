@@ -1,0 +1,22 @@
+{
+  "pr": {
+    "number": 180,
+    "state": "open",
+    "draft": false,
+    "merged": false,
+    "mergeable": true,
+    "mergeable_state": "clean",
+    "title": "chore: deterministic integration ($16c)",
+    "head": {"sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "ref": "chore/bridge-integration", "repo": {"full_name": "thyvini/lexscholar"}},
+    "base": {"sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "ref": "release/0.5.3", "repo": {"full_name": "thyvini/lexscholar"}}
+  },
+  "files": [{"filename": "scripts/integrate-pr.py", "status": "added"}],
+  "checks": [
+    {"id": 1, "name": "build-and-test", "app": {"id": 15368}, "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "status": "completed", "conclusion": "success", "started_at": "2026-11-26T10:00:00Z", "completed_at": "2026-11-26T10:10:00Z"},
+    {"id": 2, "name": "gpt-review", "app": {"id": 5758986}, "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "status": "completed", "conclusion": "success", "started_at": "2026-11-26T10:00:00Z", "completed_at": "2026-11-26T10:10:00Z"}
+  ],
+  "head_date": "2026-11-26T09:00:00Z",
+  "reviews": [],
+  "comments": [],
+  "threads": []
+}
