@@ -50,14 +50,41 @@ the skill tool. Configured models, effective permissions, child-session
 handoffs and tracker access must be verified in the actual deployment; a
 profile alone does not establish that a model or integration is available.
 Integration ([PR #182](https://github.com/thyvini/lexscholar/pull/182)) and
-watchdog ([PR #181](https://github.com/thyvini/lexscholar/pull/181)) are
-separate, unmerged deliverables. The integration proposal uses
-`scripts/integrate-pr.py`, not `scripts/integrate-pr.sh`; its trusted-release
-bootstrap and final invocation must be reconciled with Bridge's permissions
-after review. No `scripts/team-branch.sh` is supplied here. Until applicable
-tooling is reviewed and available on the release branch, use operator-prepared
-worktrees and manual checkpoints; Bridge reports integration blocked. Do not
-substitute an unreviewed command or rely on candidate-PR tooling.
+watchdog ([PR #181](https://github.com/thyvini/lexscholar/pull/181)) have landed
+on `release/0.5.3`. They are separate release tooling, documented in
+[`integration.md`](integration.md) and [`operations.md`](operations.md).
+The integration script is `scripts/integrate-pr.py`, not `scripts/integrate-pr.sh`.
+No `scripts/team-branch.sh` is supplied; Conductor prepares persistent worktrees.
+Conductor can run the documented watchdog commands and one-shot automation.
+Bridge prepares and runs the documented persistent trusted-copy command
+and verified as described in `integration.md`. Do not substitute candidate-PR
+tooling.
+
+These permissions are **not unattended enforcement**: `automation_create`
+accepts arbitrary actions, the shell rules match text rather than Python
+arguments or script content, and a writable script can change after inspection.
+Use only the documented one-shot watchdog action or the intended trusted Bridge
+invocation, with its scope and gates. Conductor's shell allowlist also permits
+repository inspection, worktree preparation and private checkpoint setup; it
+does not assign application implementation to itself. If a trusted copy is
+unavailable, report the workflow blocked.
+
+Routine developer tests, inspection and ordinary branch pushes are permitted by
+the project rules within an approved feature. Shell patterns are not an argument
+parser or a security boundary: their push deny patterns do not cover every
+spelling or indirect invocation. Never use force, delete remote refs, push
+directly to release or main, or bypass the review and CI gates. Unmatched shell
+commands and external directories ask for approval; `/tmp/opencode/*` is
+allowed for worktrees and trusted Bridge tooling. Sentinel's role still denies
+external access. These patterns match command text, not parsed arguments: even
+an allowed Git command or script can have side effects, and shell directory
+inference is best effort. They are not filesystem or network isolation. Saved
+approvals and higher-priority configuration can change effective behavior;
+broader managed or harness policy can also prompt or deny actions.
+
+See
+[team acceptance evidence](team-acceptance-16f.md) for observed limitations;
+merged tooling does not itself prove end-to-end team operation.
 
 ### Local verification (2026-11-26)
 
@@ -72,3 +99,56 @@ Subagent handoffs, every configured model, other permission paths, effective
 external-directory approvals, Codecks mutation, integration and watchdog
 operation remain unverified. Recheck after the separate tooling lands or the
 effective global/project configuration changes.
+
+Follow-up on the merged release: OpenCode v2.4.2 initially denied Conductor's
+`python3 -B scripts/watchdog.py --help` and Bridge's
+`python3 /tmp/opencode/bridge/integrate-pr.py --help`. With these profile
+changes, isolated archived `opencode run --auto` probes ran those harmless
+`--help` commands; the Bridge file was copied from the fetched release.
+An unrelated Conductor `python3 --version` remained denied even with `--auto`.
+`opencode debug agents` reported `ask` for both command patterns and for
+Conductor's automation create/delete. `--auto` was used only for these
+non-mutating probes, not for operation. No automation was created, no
+integration or notification executed, and interactive approval behavior and
+complete workflows were not tested.
+
+### Persistent-operation repair probe
+
+On OpenCode v2.4.2, isolated archived sessions without `--auto` exercised the
+candidate configuration: Conductor created a private assignment, wrote a
+separate watchdog state at revision 1, and delegated a read-only title check to
+Sentinel, which returned the result. Lambda ran `dotnet build --help` and
+committed a staged disposable repository. Lambda's attempted force-push to
+`main` was denied; Sentinel had neither shell nor edit tools. The separate
+probe assignment was subsequently marked done. These checks do not establish
+that every command is allowed or that text patterns isolate the filesystem.
+
+The persistent Bridge copy and manifest lifecycle still require a live Bridge
+validation after this configuration is bootstrapped onto the trusted release.
+The candidate checkout is not a trusted release checkout, and the existing
+release role does not permit the new persistent invocation. A developer
+session's attempted invocation from the clean release checkout was denied.
+Do not describe this as a verified integration or bypass the trusted bootstrap.
+
+### Routine-default probe
+
+This historical probe predates the narrower project defaults above; its Lambda
+observations no longer describe the current policy.
+
+On OpenCode v2.4.2, isolated archived sessions without `--auto` ran Lambda's
+`python3 --version` and external `/etc/hostname` read, Conductor's watchdog
+`--help`, and Bridge's trusted-copy `--help`. Lambda's force-push help and
+trusted-copy help were denied; Sentinel had no shell tool. These harmless probes
+do not exercise a real push, integration, scheduled action, or every command
+spelling. Automation permissions cannot restrict the payload: Conductor must use
+only the documented one-shot action, never an arbitrary or recurring action.
+
+For the narrowed defaults, `python3 tests/test_opencode_permissions.py` checks
+representative project rule matches, not OpenCode's shell scanner. On v2.4.2,
+`opencode debug agents` showed the later role rules: Sentinel denies shell,
+edit and external access, Conductor denies an unrelated shell command and
+allows its watchdog pattern, and Bridge allows its review pattern but denies
+PR merge. Lambda's unmatched shell and `/etc/*` external rules resolve to ask,
+while its status command and `/tmp/opencode/bridge/*` resolve to allow.
+This inspection does not test saved approvals, actual tool execution, scanner
+coverage or every deployment's configuration.

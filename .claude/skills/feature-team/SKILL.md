@@ -43,7 +43,7 @@ Group the open tasks into slices of about one PR, following the dependencies in 
    ```
 
    Set the card to started.
-2. **Plan**: approve it if it stays within the slice. If it flags over-specification, a contradiction, or a needed change to spec.md, plan.md, research.md, data-model.md or a contract, ask the user and keep any other developer moving. Never approve constitution edits.
+2. **Plan**: check it stays within the slice without holding routine work for approval. If it flags over-specification, a contradiction, or a needed change to spec.md, plan.md, research.md, data-model.md or a contract, ask the user and keep any other developer moving. Never approve constitution edits.
 3. **Ready**: the developer opens the PR, waits for CI, runs the GPT review (`/pr-review <pr>`), fixes CI failures and P0/P1 findings, then reports `ready`. Check the gate fields yourself: the conclusions of `build-and-test` and `gpt-review` on the reported head commit (`gh pr view <pr> --json headRefOid,statusCheckRollup`); don't re-read the diff or the review.
 4. **Answered findings**: if the developer answered a P0/P1 instead of fixing it, `gpt-review` stays failed. Send the user the finding and the answer in two lines and wait for their decision; keep any other developer moving. If Codex or the reviewer app isn't available, ask the user instead of skipping the review.
 5. **Merge gate** (AGENTS.md), then
