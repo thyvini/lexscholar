@@ -69,6 +69,11 @@ admin override, auto-merge, branch deletion, or Codecks API call exists.
   A later ordinary review comment does not clear a changes-requested review.
 - A changed head or release snapshot invalidates the attempt. A fresh full
   snapshot is checked immediately before mutation.
+- GitHub may report the PR's older base snapshot after the release advances.
+  Bridge accepts it only if Git proves it is an ancestor of the current
+  independently fetched release; authorization, actual diff, merge tree and
+  receipt still use that current release. A non-ancestor or unverifiable base
+  blocks. This does not waive head, review, scope or check requirements.
 
 Owner exceptions belong in the **trusted release manifest**, with exact
 `pr`, `head`, `kind` (`review`, `thread`, `comment`), `id`, and nonblank `reason`.

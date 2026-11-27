@@ -3,6 +3,7 @@ import copy
 import datetime as dt
 import importlib.util
 import json
+import subprocess
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -137,6 +138,18 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(result["status"], "validated-only")
         self.assertNotIn("receipt", result)
         request.assert_not_called()
+
+    def test_stale_pr_base_is_accepted_only_when_verified_ancestor(self):
+        stale = copy.deepcopy(self.snapshot)
+        stale["pr"]["base"]["sha"] = "d" * 40
+        with patch.object(bridge, "run") as git:
+            result, request = self.orchestration(snapshots=[stale])
+            self.assertEqual(result["base"], "b" * 40)
+            git.assert_any_call("git", "merge-base", "--is-ancestor", "d" * 40, "b" * 40)
+            request.assert_not_called()
+        with patch.object(bridge, "run", side_effect=subprocess.CalledProcessError(1, "git")):
+            with self.assertRaises(bridge.Blocked):
+                self.orchestration(snapshots=[stale])
 
     def test_documented_receipt_matches_json_output(self):
         documentation = (ROOT / "docs/agents/integration.md").read_text()
