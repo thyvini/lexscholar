@@ -12,6 +12,9 @@
     "docs/spike-google-docs": {"card": "$16g", "files": ["docs/discovery/s001*"]},
     "docs/spike-legal-retrieval": {"card": "$16h", "files": ["docs/discovery/s002*"]},
     "docs/spike-reading-email": {"card": "$16i", "files": ["docs/discovery/s003*"]},
-    "test/team-acceptance": {"card": "$16f", "files": ["docs/agents/*acceptance*", ".github/workflows/ci.yml", "tests/tooling/*acceptance*"]}
+    "test/team-acceptance": {"card": "$16f", "files": ["docs/agents/*acceptance*", ".github/workflows/ci.yml", "tests/tooling/*acceptance*"]},
+    "docs/f012-evidence-reconciliation": {"card": "$16j", "files": ["specs/012-extend-platform-support/tasks.md", "specs/012-extend-platform-support/evidence/t004-db-descriptors.md", "specs/012-extend-platform-support/evidence/t006-linux-recovery.md"]},
+    "feat/f012-native-locking": {"card": "$16j", "files": ["src/LexScholar.Infrastructure/DataDirectoryLock.fs", "tests/LexScholar.Server.Tests/ProcessLockTests.fs", "specs/012-extend-platform-support/evidence/t002-workspace-ownership.md"]},
+    "feat/f012-darwin-deletion": {"card": "$16j", "files": ["src/LexScholar.Infrastructure/DocumentStore.fs", "tests/LexScholar.Infrastructure.Tests/LibraryDeletionFileTests.fs", "specs/012-extend-platform-support/evidence/t005-linux-deletion-safety.md"]}
   }
 }
