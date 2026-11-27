@@ -54,9 +54,9 @@ watchdog ([PR #181](https://github.com/thyvini/lexscholar/pull/181)) have landed
 on `release/0.5.3`. They are separate release tooling, documented in
 [`integration.md`](integration.md) and [`operations.md`](operations.md).
 The integration script is `scripts/integrate-pr.py`, not `scripts/integrate-pr.sh`.
-No `scripts/team-branch.sh` is supplied; use operator-prepared worktrees.
+No `scripts/team-branch.sh` is supplied; Conductor prepares persistent worktrees.
 Conductor can run the documented watchdog commands and one-shot automation.
-Bridge can run the documented trusted-copy command after that copy is prepared
+Bridge prepares and runs the documented persistent trusted-copy command
 and verified as described in `integration.md`. Do not substitute candidate-PR
 tooling.
 
@@ -64,8 +64,10 @@ These permissions are **not unattended enforcement**: `automation_create`
 accepts arbitrary actions, the shell rules match text rather than Python
 arguments or script content, and a writable script can change after inspection.
 Use only the documented one-shot watchdog action or the intended trusted Bridge
-invocation, with its scope and gates. Other shell commands remain denied for
-these roles. If a trusted copy is unavailable, report the workflow blocked.
+invocation, with its scope and gates. Conductor's shell allowlist also permits
+repository inspection, worktree preparation and private checkpoint setup; it
+does not assign application implementation to itself. If a trusted copy is
+unavailable, report the workflow blocked.
 
 Routine developer tests, inspection and ordinary branch pushes are permitted by
 the project rules within an approved feature. Shell patterns are not an argument
@@ -109,6 +111,24 @@ Conductor's automation create/delete. `--auto` was used only for these
 non-mutating probes, not for operation. No automation was created, no
 integration or notification executed, and interactive approval behavior and
 complete workflows were not tested.
+
+### Persistent-operation repair probe
+
+On OpenCode v2.4.2, isolated archived sessions without `--auto` exercised the
+candidate configuration: Conductor created a private assignment, wrote a
+separate watchdog state at revision 1, and delegated a read-only title check to
+Sentinel, which returned the result. Lambda ran `dotnet build --help` and
+committed a staged disposable repository. Lambda's attempted force-push to
+`main` was denied; Sentinel had neither shell nor edit tools. The separate
+probe assignment was subsequently marked done. These checks do not establish
+that every command is allowed or that text patterns isolate the filesystem.
+
+The persistent Bridge copy and manifest lifecycle still require a live Bridge
+validation after this configuration is bootstrapped onto the trusted release.
+The candidate checkout is not a trusted release checkout, and the existing
+release role does not permit the new persistent invocation. A developer
+session's attempted invocation from the clean release checkout was denied.
+Do not describe this as a verified integration or bypass the trusted bootstrap.
 
 ### Routine-default probe
 

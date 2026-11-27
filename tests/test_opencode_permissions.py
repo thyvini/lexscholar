@@ -28,7 +28,9 @@ def effect(action, resource):
 class PermissionsTest(unittest.TestCase):
     def test_routine_commands_and_boundaries(self):
         for command in ("git status --short", "scripts/check.sh T001",
-                        "git push -u origin fix/example", "gh pr view 1"):
+                        "git push -u origin fix/example", "gh pr view 1",
+                        "dotnet run --project src/LexScholar.Server",
+                        "git commit -F /home/user/message"):
             with self.subTest(command=command):
                 self.assertEqual("allow", effect("shell", command))
         for command in ("python3 --version", "curl https://example.com",

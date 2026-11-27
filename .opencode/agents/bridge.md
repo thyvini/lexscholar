@@ -8,8 +8,13 @@ permissions:
   - { action: shell, resource: "git status --porcelain", effect: allow }
   - { action: shell, resource: "git rev-parse HEAD", effect: allow }
   - { action: shell, resource: "git ls-remote origin refs/heads/release/*", effect: allow }
+  - { action: shell, resource: "git fetch *", effect: allow }
+  - { action: shell, resource: "git show *", effect: allow }
+  - { action: shell, resource: "gh api repos/thyvini/lexscholar/git/ref/heads/release/0.5.3 *", effect: allow }
+  - { action: shell, resource: "mkdir -p *", effect: allow }
+  - { action: shell, resource: "chmod 700 *", effect: allow }
   - { action: shell, resource: "scripts/gpt-review.sh * --post", effect: allow }
-  - { action: shell, resource: "python3 /tmp/opencode/bridge/integrate-pr.py *", effect: allow }
+  - { action: shell, resource: "python3 */lexscholar-team/bridge/integrate-pr.py *", effect: allow }
   - { action: codecks_update_card, resource: "*", effect: allow }
   - { action: codecks_create_card, resource: "*", effect: allow }
   - { action: codecks_add_comment, resource: "*", effect: allow }

@@ -7,6 +7,15 @@ mapping. Labels, PR bodies, and policy edits on a PR head grant no authority.
 No additional helper-script patterns are implicitly approved. Wildcards match
 within one path component only, never across directory boundaries.
 
+For later approved slices, submit a separate authorization PR on the already
+authorized `chore/bridge-integration` branch, changing only the trusted
+manifest. List each exact task branch, card and owned paths. Bridge validates
+that PR against the *previous* release manifest; the added entry cannot authorize
+that PR or any candidate until the authorization PR has passed the normal gates
+and been integrated. Reuse the branch without force-pushing. Changes that the
+current manifest cannot authorize require the documented human-reviewed
+bootstrap, with the same CI and review gates; never load policy from a candidate.
+
 ## Bootstrap and invocation
 
 Python 3, Git (with `merge-tree --write-tree`) and authenticated `gh` are required.
@@ -18,15 +27,16 @@ Run a trusted copy, **not code from the candidate PR**:
 
 ```sh
 git fetch --no-write-fetch-head origin release/0.5.3
-# Obtain the current release SHA independently from GitHub:
-base=$(gh api repos/thyvini/lexscholar/git/ref/heads/release/0.5.3 --jq .object.sha)
-git fetch --no-write-fetch-head origin "$base"
-mkdir -p /tmp/opencode/bridge
-git show "$base:scripts/integrate-pr.py" > /tmp/opencode/bridge/integrate-pr.py
-python3 /tmp/opencode/bridge/integrate-pr.py 123 --wait 600
+gh api repos/thyvini/lexscholar/git/ref/heads/release/0.5.3 --jq .object.sha
+# Replace <BASE> below with the independently returned full SHA.
+git fetch --no-write-fetch-head origin <BASE>
+mkdir -p ~/.local/state/lexscholar-team/bridge
+chmod 700 ~/.local/state/lexscholar-team/bridge
+git show <BASE>:scripts/integrate-pr.py > ~/.local/state/lexscholar-team/bridge/integrate-pr.py
+python3 ~/.local/state/lexscholar-team/bridge/integrate-pr.py 123 --wait 600
 # Only after integration is authorized:
-python3 /tmp/opencode/bridge/integrate-pr.py 123 --wait 600 --execute \
-  2> /tmp/opencode/bridge/pr-123.log
+python3 ~/.local/state/lexscholar-team/bridge/integrate-pr.py 123 --wait 600 --execute \
+  2> ~/.local/state/lexscholar-team/bridge/pr-123.log
 ```
 
 Use a canonical repository checkout as cwd. The script checks its own contents
@@ -92,7 +102,7 @@ If transport is uncertain, **do not retry the merge blindly**. Extract the JSON
 after `MERGE_INTENT ` into an intent file and use read-only reconciliation:
 
 ```sh
-python3 /tmp/opencode/bridge/integrate-pr.py --recover /tmp/opencode/bridge/intent.json
+python3 ~/.local/state/lexscholar-team/bridge/integrate-pr.py --recover ~/.local/state/lexscholar-team/bridge/intent.json
 ```
 
 Recovery independently revalidates release ancestry/policy, PR source/head/files,
