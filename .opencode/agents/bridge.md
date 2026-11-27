@@ -8,6 +8,8 @@ permissions:
   - { action: shell, resource: "git status --porcelain", effect: allow }
   - { action: shell, resource: "git rev-parse HEAD", effect: allow }
   - { action: shell, resource: "git ls-remote origin refs/heads/release/*", effect: allow }
+  - { action: shell, resource: "gh pr view *", effect: allow }
+  - { action: shell, resource: "gh pr checks *", effect: allow }
   - { action: shell, resource: "git fetch *", effect: allow }
   - { action: shell, resource: "git show *", effect: allow }
   - { action: shell, resource: "gh api repos/thyvini/lexscholar/git/ref/heads/release/0.5.3 *", effect: allow }
