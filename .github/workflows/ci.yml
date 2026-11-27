@@ -23,6 +23,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: OpenCode permission regression
+        run: python3 tests/test_opencode_permissions.py
+
       - uses: actions/setup-dotnet@v5
         with:
           global-json-file: global.json

@@ -29,7 +29,7 @@ session/path/checkpoint with the actual assignment; timestamps are Unix seconds)
   "task": "Deliver team watchdog",
   "role": "developer",
   "session": "ses_REPLACE",
-  "worktree": "/tmp/opencode/ls053-watchdog",
+  "worktree": "/home/USER/.local/share/opencode/worktree/PROJECT/ls053-watchdog",
   "branch": "chore/team-watchdog",
   "pr": null,
   "dependencies": [],
