@@ -14,9 +14,10 @@
   selection: 176 passed, 0 failed, 0 skipped.
 - PR #198 head `93a0c54` restores explicit unlock for native GREEN; its result
   remains pending. The production branch keeps the Darwin fail-closed guard.
-- A provider safety rejection was reported for earlier work; it was not
-  retried or circumvented. A separate `dev-a` launch failed because the agent
-  was not found; that failure was not a provider safety rejection.
+- The prior instruction referred to a provider safety rejection, but did not
+  identify the rejected operation or give its details. No retry was attempted
+  in this session. A separate `dev-a` launch was reported to have failed
+  because the agent was not found; it was not a provider safety rejection.
 
 Original test and sensitivity base: `607c545` (`docs/platform-expansion-phase3`).
 Integrated onto `598dd97` (release baseline after #190). This is partial T002
