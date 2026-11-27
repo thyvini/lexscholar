@@ -13,14 +13,17 @@ replacement cards. Only Conductor owns assignments; workers report checkpoints
 to Conductor, rather than independently editing this file.
 
 ```sh
-umask 077
 mkdir -p "$HOME/.local/state/lexscholar-team"
 chmod 700 "$HOME/.local/state/lexscholar-team"
-STATE="$HOME/.local/state/lexscholar-team/state.json"
-python3 -B scripts/watchdog.py --state "$STATE" show
+python3 -B scripts/watchdog.py --state "$HOME/.local/state/lexscholar-team/state.json" show
 ```
 
-Create an owner-only `assignment.json` in that directory. Example (replace the
+Create an owner-only `assignment.json` in that already-private directory, then
+set its mode to 600 before using it. OpenCode shell calls run in separate
+processes: a standalone `umask` or shell variable assignment does not affect
+later tool calls. Pass the full state path in each watchdog invocation.
+For the pre-dispatch reservation and actual child-session handoff see
+`docs/agents/team.md` ("Writer handoff"). Example (replace the
 session/path/checkpoint with the actual assignment; timestamps are Unix seconds):
 
 ```json
@@ -45,9 +48,9 @@ session/path/checkpoint with the actual assignment; timestamps are Unix seconds)
 ```
 
 ```sh
-python3 -B scripts/watchdog.py --state "$STATE" put --revision 0 \
+python3 -B scripts/watchdog.py --state "$HOME/.local/state/lexscholar-team/state.json" put --revision 0 \
   --assignment "$HOME/.local/state/lexscholar-team/assignment.json"
-python3 -B scripts/watchdog.py --state "$STATE" check
+python3 -B scripts/watchdog.py --state "$HOME/.local/state/lexscholar-team/state.json" check
 ```
 
 For each subsequent update, first `show`, then supply its current `revision`
