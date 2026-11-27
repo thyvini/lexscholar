@@ -1,54 +1,86 @@
-// OpenCode V2 configuration (https://opencode.ai/docs/agents).
-// V1 uses agent/prompt/permission instead; verify your installed version with `opencode --version`.
+// Native OpenCode 2.x. Role prompts and narrower permissions: .opencode/agents/.
 {
   "$schema": "https://opencode.ai/config.json",
-  "default_agent": "orchestrator",
-
-  "agents": {
-    "orchestrator": {
-      "description": "Plans task dependencies, delegates parallel development, and gates integration.",
-      "mode": "primary",
-      "model": "openai/gpt-6.1-sol",
-      "system": "You coordinate development of one feature, following AGENTS.md. Read the feature's tasks.md and only the spec and plan sections each slice needs; give each developer a short brief rather than the whole spec. Use dev-b only when two ready slices touch different files. Each writing agent must use its own Git worktree. CI runs the full test suite on every PR; wait for CI and Greptile, then send the PR for independent review. Never merge without human approval.",
-      "permissions": [
-        { "action": "edit", "resource": "*", "effect": "deny" },
-        { "action": "subagent", "resource": "dev-*", "effect": "allow" },
-        { "action": "subagent", "resource": "reviewer", "effect": "allow" },
-        { "action": "shell", "resource": "gh pr merge *", "effect": "deny" }
-      ]
-    },
-
-    "dev-a": {
-      "description": "Implements one scoped task in an isolated Git worktree.",
-      "mode": "all",
-      "model": "openai/gpt-6.1-sol",
-      "system": "You are Developer A. Implement only your assigned slice in your own worktree, following AGENTS.md: test first, build with -warnaserror and run your task's tests; CI runs the full suite on the PR. Report commit, files, test results and blockers. Never merge."
-    },
-
-    "dev-b": {
-      "description": "Implements another independent task in an isolated Git worktree.",
-      "mode": "all",
-      "model": "openai/gpt-6.1-sol",
-      "system": "You are Developer B. Implement only your assigned independent slice in your own worktree, following AGENTS.md: test first, build with -warnaserror and run your task's tests; CI runs the full suite on the PR. Report commit, files, test results and blockers. Never merge."
-    },
-
-    "reviewer": {
-      "description": "Reviews changes adversarially without modifying source files.",
-      "mode": "subagent",
-      "model": "openai/gpt-6.1-sol",
-      "system": "Perform independent adversarial code review. Challenge architecture, concurrency, security, contracts and assumptions. Report findings by severity with concrete file references. Never implement fixes.",
-      "permissions": [
-        { "action": "edit", "resource": "*", "effect": "deny" },
-        { "action": "shell", "resource": "*", "effect": "deny" }
-      ]
+  "default_agent": "conductor",
+  "commands": {
+    "feature": {
+      "description": "Give Sage product intent; Conductor coordinates the bounded feature",
+      "agent": "conductor",
+      "subagent": false,
+      "template": "Take this owner's intent to Sage verbatim. Follow docs/agents/team.md through acceptance; establish the approved boundary before planning or implementation. Intent: $ARGUMENTS"
     }
   },
+  "permissions": [
+    { "action": "execute", "resource": "*", "effect": "deny" },
+    { "action": "automation_*", "resource": "*", "effect": "deny" },
+    { "action": "codecks_*", "resource": "*", "effect": "deny" },
+    { "action": "codecks_get_context", "resource": "*", "effect": "allow" },
+    { "action": "codecks_get_card", "resource": "*", "effect": "allow" },
+    { "action": "codecks_search_cards", "resource": "*", "effect": "allow" },
+    { "action": "subagent", "resource": "*", "effect": "deny" },
+    { "action": "external_directory", "resource": "*", "effect": "ask" },
+    { "action": "external_directory", "resource": "/tmp/opencode/*", "effect": "allow" },
+    { "action": "external_directory", "resource": "$HOME/.local/share/opencode/worktree/*", "effect": "allow" },
+    { "action": "external_directory", "resource": "$HOME/.local/state/lexscholar-team/*", "effect": "allow" },
+    { "action": "skill", "resource": "speckit-constitution", "effect": "deny" },
+    { "action": "edit", "resource": ".specify/memory/constitution.md", "effect": "deny" },
+    { "action": "shell", "resource": "*", "effect": "ask" },
+    { "action": "shell", "resource": "git status *", "effect": "allow" },
+    { "action": "shell", "resource": "git branch --show-current", "effect": "allow" },
+    { "action": "shell", "resource": "git rev-parse --show-toplevel", "effect": "allow" },
+    { "action": "shell", "resource": "git diff --check", "effect": "allow" },
+    { "action": "shell", "resource": "git worktree list *", "effect": "allow" },
+    { "action": "shell", "resource": "git fetch *", "effect": "allow" },
+    { "action": "shell", "resource": "git log *", "effect": "allow" },
+    { "action": "shell", "resource": "git show *", "effect": "allow" },
+    { "action": "shell", "resource": "git diff *", "effect": "allow" },
+    { "action": "shell", "resource": "git add *", "effect": "allow" },
+    { "action": "shell", "resource": "git commit *", "effect": "allow" },
+    { "action": "shell", "resource": "dotnet run *", "effect": "allow" },
+    { "action": "shell", "resource": "dotnet restore *", "effect": "allow" },
+    { "action": "shell", "resource": "dotnet build *", "effect": "allow" },
+    { "action": "shell", "resource": "dotnet test *", "effect": "allow" },
+    { "action": "shell", "resource": "dotnet publish *", "effect": "allow" },
+    { "action": "shell", "resource": "scripts/check.sh *", "effect": "allow" },
+    { "action": "shell", "resource": "gh pr create --base release/*", "effect": "allow" },
+    { "action": "shell", "resource": "gh pr view *", "effect": "allow" },
+    { "action": "shell", "resource": "gh pr checks *", "effect": "allow" },
+    { "action": "shell", "resource": "git push -u origin feat/*", "effect": "allow" },
+    { "action": "shell", "resource": "git push -u origin fix/*", "effect": "allow" },
+    { "action": "shell", "resource": "git push -u origin test/*", "effect": "allow" },
+    { "action": "shell", "resource": "git push -u origin docs/*", "effect": "allow" },
+    { "action": "shell", "resource": "git push -u origin chore/*", "effect": "allow" },
+    { "action": "shell", "resource": "git push -u origin ci/*", "effect": "allow" },
+    { "action": "shell", "resource": "git push origin feat/*", "effect": "allow" },
+    { "action": "shell", "resource": "git push origin fix/*", "effect": "allow" },
+    { "action": "shell", "resource": "git push origin test/*", "effect": "allow" },
+    { "action": "shell", "resource": "git push origin docs/*", "effect": "allow" },
+    { "action": "shell", "resource": "git push origin chore/*", "effect": "allow" },
+    { "action": "shell", "resource": "git push origin ci/*", "effect": "allow" },
+    { "action": "shell", "resource": "git push *--delete*", "effect": "deny" },
+    { "action": "shell", "resource": "git push *--force*", "effect": "deny" },
+    { "action": "shell", "resource": "git push *--mirror*", "effect": "deny" },
+    { "action": "shell", "resource": "git push *--prune*", "effect": "deny" },
+    { "action": "shell", "resource": "git push *--all*", "effect": "deny" },
+    { "action": "shell", "resource": "git push *--tags*", "effect": "deny" },
+    { "action": "shell", "resource": "git push * -d*", "effect": "deny" },
+    { "action": "shell", "resource": "git push * -f*", "effect": "deny" },
+    { "action": "shell", "resource": "git push *:*", "effect": "deny" },
+    { "action": "shell", "resource": "git push * release/*", "effect": "deny" },
+    { "action": "shell", "resource": "git push * main*", "effect": "deny" },
+    { "action": "shell", "resource": "git push * HEAD*", "effect": "deny" },
+    { "action": "shell", "resource": "git push", "effect": "deny" },
+    { "action": "shell", "resource": "git push origin", "effect": "deny" },
+    { "action": "shell", "resource": "git tag *", "effect": "deny" },
+    { "action": "shell", "resource": "gh release *", "effect": "deny" },
+    { "action": "shell", "resource": "gh pr merge *", "effect": "deny" },
+    { "action": "shell", "resource": "scripts/integrate-pr*", "effect": "deny" },
+    { "action": "shell", "resource": "python3 */integrate-pr.py *", "effect": "deny" },
+    { "action": "shell", "resource": "scripts/gpt-review.sh *", "effect": "deny" }
+  ],
   "mcp": {
     "servers": {
-      "codecks": {
-        "type": "remote",
-        "url": "https://mcp.codecks.io/mcp"
-      }
+      "codecks": { "type": "remote", "url": "https://mcp.codecks.io/mcp" }
     }
   }
 }

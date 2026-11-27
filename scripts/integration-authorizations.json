@@ -10,6 +10,7 @@
     "docs/spike-google-docs": {"card": "$16g", "files": ["docs/discovery/s001*"]},
     "docs/spike-legal-retrieval": {"card": "$16h", "files": ["docs/discovery/s002*"]},
     "docs/spike-reading-email": {"card": "$16i", "files": ["docs/discovery/s003*"]},
-    "test/team-acceptance": {"card": "$16f", "files": ["docs/agents/*acceptance*", ".github/workflows/ci.yml", "tests/tooling/*acceptance*"]}
+    "test/team-acceptance": {"card": "$16f", "files": ["docs/agents/*acceptance*", ".github/workflows/ci.yml", "tests/tooling/*acceptance*"]},
+    "docs/f012-evidence-reconciliation": {"card": "$16j", "files": ["specs/012-extend-platform-support/tasks.md", "specs/012-extend-platform-support/evidence/t004-db-descriptors.md", "specs/012-extend-platform-support/evidence/t006-linux-recovery.md"]}
   }
 }
