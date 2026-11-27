@@ -38,7 +38,8 @@ temp/
 .claude/worktrees/
 CLAUDE.local.md
 .cursor/
-.opencode/
+.opencode/*
+!.opencode/agents/
 .aider*
 AGENTS.local.md
 

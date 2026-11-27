@@ -13,14 +13,17 @@ replacement cards. Only Conductor owns assignments; workers report checkpoints
 to Conductor, rather than independently editing this file.
 
 ```sh
-umask 077
 mkdir -p "$HOME/.local/state/lexscholar-team"
 chmod 700 "$HOME/.local/state/lexscholar-team"
 STATE="$HOME/.local/state/lexscholar-team/state.json"
 python3 -B scripts/watchdog.py --state "$STATE" show
 ```
 
-Create an owner-only `assignment.json` in that directory. Example (replace the
+Create an owner-only `assignment.json` in that already-private directory, then
+set its mode to 600 before using it. OpenCode shell calls run in separate
+processes: a standalone `umask` command does not protect later tool calls.
+For the pre-dispatch reservation and actual child-session handoff see
+`docs/agents/team.md` ("Writer handoff"). Example (replace the
 session/path/checkpoint with the actual assignment; timestamps are Unix seconds):
 
 ```json
@@ -29,7 +32,7 @@ session/path/checkpoint with the actual assignment; timestamps are Unix seconds)
   "task": "Deliver team watchdog",
   "role": "developer",
   "session": "ses_REPLACE",
-  "worktree": "/tmp/opencode/ls053-watchdog",
+  "worktree": "/home/USER/.local/share/opencode/worktree/PROJECT/ls053-watchdog",
   "branch": "chore/team-watchdog",
   "pr": null,
   "dependencies": [],
@@ -69,7 +72,8 @@ The installed OpenCode **v2.4.2** was checked against the official
 [V2 API](https://opencode.ai/docs/api) and the installed `/openapi.json`.
 Only these targeted GETs are used, via `opencode api` (native discovery/auth):
 
-- `/api/session/{sessionID}`: unwrap `data`, project `outcome` and `time.busy/idle`.
+- `/api/session/{sessionID}`: unwrap `data` and report an explicit failed outcome
+  if present; missing outcome is unknown, not a successful outcome.
 - `/api/session/{sessionID}/permission`: pending native permission count.
 - `/api/session/{sessionID}/form`: pending native question count.
 
@@ -81,9 +85,20 @@ seconds (at most 60 seconds per assignment). Output and
 errors from OpenCode stay captured and are not relayed to ntfy.
 
 Classification prioritizes native permission, question, explicit failed outcome,
-then observation unavailable, recorded blocker, expected wait and checkpoint.
-A checkpoint expiry is **not** a failed session. Native busy/idle is separately
-recorded; idle is not proof of task completion or permission to replace a writer.
+then read failure, recorded blocker, expected wait and checkpoint. When none
+applies, execution status is unknown and classified `status_unknown`,
+not healthy. `busy: null` means unknown; session metadata timestamps do not
+establish current activity. A checkpoint expiry is **not** a failed session.
+The distinct `observation_unavailable` incident means a native read failed,
+so notification deduplication does not suppress it after `status_unknown`.
+Read-failure incidents use a new dedup identity to avoid suppression by old
+ledger entries. Upgrading can therefore send one additional read-failure alert
+for an already reported incident; existing ledger entries remain intact.
+An expected wait is a recorded expectation, not proof of an active command.
+The v2.4.2 `/api/session/active` reports running agents in its server process,
+not detached processes; this watchdog does not query it or infer writer safety
+from absence. Even native idle is not proof of task completion or permission to
+replace a writer.
 Success never marks the assignment done automatically. There is no portable
 native CI/command/external-wait inference: declare a bounded wait explicitly:
 
@@ -111,24 +126,26 @@ This is a human fencing protocol, not an OpenCode distributed execution lease.
 Prefer the existing native session completion/permission/form notifications for
 immediate attention. Add an explicit **one-shot** native automation at the next
 checkpoint so silence is noticed too. With the automation connector available,
-Conductor calls `tools.automation.create` through Code Mode:
+Conductor requests the directly exposed `automation_create` tool (Code Mode
+is denied in this project's configuration):
 
 ```js
-return await tools.automation.create({
+{
   name: "LexScholar checkpoint (one shot)",
   trigger: {type: "at", at: "in 10 minutes"},
   action: {
     type: "shell",
     command: "cd /ABSOLUTE/TOOLING/CHECKOUT && python3 -B scripts/watchdog.py --state /ABSOLUTE/PRIVATE/state.json check"
   }
-});
+}
 ```
 
 Replace the three absolute paths before submitting; quote shell paths if needed.
 Use `--notify-config /ABSOLUTE/PRIVATE/ntfy.json` only after the setup below.
 Save the returned automation ID in Conductor's durable decisions. Arm the next
 one-shot only after reconciling this checkpoint; cancel obsolete IDs with
-`tools.automation.delete({id: "aut_..."})`. Do not create an unbounded repeating
+`automation_delete` with the ID. Check the complete payload and use only this
+documented one-shot action. Do not create an unbounded repeating
 job or run a permanent shell loop. No automation was installed by this change.
 Without the connector, run the one-shot command manually at the declared
 checkpoint and report scheduling as **unconfigured**, not monitored.
@@ -189,6 +206,12 @@ alerts ledger. Invalid config reports `configuration_error`, never delivered.
 - Review regressions: two assertion failures before the fixes, then 18 offline
   tests passed; classification uses the time after each assignment's observation,
   and partial reads preserve known permission, question and failure signals.
+- Synthetic recovery follow-up: a FIFO-held writer's metadata had no busy,
+  idle or outcome fields but the previous watchdog recorded `busy: false`.
+  Regression tests now require unknown status and preserve deadline alerts.
+  On installed v2.4.2, `/api/session/active` returned `running` for the
+  developer's current session; the held writer's native active state was not
+  captured, and that endpoint does not establish detached-process state.
 - Native smoke: only this developer's session metadata, forms and permissions
   queried; verified `data` envelope and zero pending forms/permissions. No
   messages, credentials or unrelated session contents inspected.
