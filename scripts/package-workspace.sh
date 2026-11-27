@@ -6,8 +6,12 @@ if [ "$#" -ne 1 ]; then
   exit 2
 fi
 root="$(cd "$(dirname "$0")/.." && pwd)"
-archive="$(realpath -m "$1")"
+case "$1" in
+  /*) archive="$1" ;;
+  *) archive="$PWD/$1" ;;
+esac
 mkdir -p "$(dirname "$archive")"
+archive="$(cd "$(dirname "$archive")" && pwd -P)/$(basename "$archive")"
 build="$(mktemp -d "${TMPDIR:-/tmp}/lexscholar-publish.XXXXXX")"
 trap 'rm -rf "$build"' EXIT
 mkdir -p "$build/source" "$build/publish"
