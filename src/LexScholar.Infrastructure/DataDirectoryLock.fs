@@ -68,7 +68,7 @@ module DataDirectoryLock =
                                     // A concurrent fork inherits this open file description
                                     // until exec, even with O_CLOEXEC. Closing only our descriptor
                                     // can therefore leave ownership behind after host shutdown.
-                                    if handle.IsClosed && flock(handle, 8) <> 0 then // sensitivity: omit unlock
+                                    if flock(handle, 8) <> 0 then // LOCK_UN
                                         let error = Marshal.GetLastPInvokeError()
                                         raise (IOException($"Unable to release the data-directory lock: {directory}", Win32Exception(error)))
                                 finally
