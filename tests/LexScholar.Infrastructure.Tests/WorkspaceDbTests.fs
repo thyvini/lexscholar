@@ -3,6 +3,8 @@ module LexScholar.Infrastructure.Tests.WorkspaceDbTests
 open System
 open System.Globalization
 open System.IO
+open System.Diagnostics
+open System.Runtime.InteropServices
 open Microsoft.Data.Sqlite
 open Microsoft.EntityFrameworkCore
 open Microsoft.EntityFrameworkCore.Infrastructure
@@ -94,18 +96,54 @@ let private applied directory =
 
 let private currentMigrations = [ "20261108000000_Initial"; "20261110000000_Projects"; "20261111000000_Documents"; "20261112000000_DocumentSummaries"; "20261123000000_LibraryDeletions" ]
 
+[<DllImport("libc", EntryPoint = "realpath", SetLastError = true)>]
+extern nativeint private realPath(string path, nativeint resolved)
+
+[<DllImport("libc", EntryPoint = "free")>]
+extern void private freePath(nativeint resolved)
+
 let private databaseHandles databasePath =
-    Directory.EnumerateFiles("/proc/self/fd")
-    |> Seq.choose (fun fd ->
-        try
-            let target = FileInfo(fd).ResolveLinkTarget(false)
-            if isNull target then None else Some target.FullName
-        with
-        | :? IOException
-        | :? UnauthorizedAccessException
-        | :? ArgumentException -> None)
-    |> Seq.filter (fun target -> target.StartsWith(databasePath, StringComparison.Ordinal))
-    |> Seq.toList
+    if OperatingSystem.IsLinux() then
+        Directory.EnumerateFiles("/proc/self/fd")
+        |> Seq.choose (fun fd ->
+            try
+                let target = FileInfo(fd).ResolveLinkTarget(false)
+                if isNull target then None else Some target.FullName
+            with
+            | :? IOException
+            | :? UnauthorizedAccessException
+            | :? ArgumentException -> None)
+        |> Seq.filter (fun target -> target.StartsWith(databasePath, StringComparison.Ordinal))
+        |> Seq.toList
+    elif OperatingSystem.IsMacOS() then
+        let resolved = realPath(Path.GetDirectoryName(databasePath), nativeint 0)
+        Assert.True(resolved <> nativeint 0, $"realpath failed: {Marshal.GetLastPInvokeError()}")
+        let directory =
+            try Marshal.PtrToStringUTF8(resolved)
+            finally freePath(resolved)
+        let canonical = Path.Combine(directory, Path.GetFileName(databasePath))
+        let info = ProcessStartInfo("/usr/sbin/lsof", UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true)
+        for argument in [ "-n"; "-P"; "-Ffn"; "-p"; string Environment.ProcessId ] do
+            info.ArgumentList.Add(argument)
+        use child = Process.Start(info)
+        let output = child.StandardOutput.ReadToEndAsync()
+        let errors = child.StandardError.ReadToEndAsync()
+        child.WaitForExit()
+        Assert.True(child.ExitCode = 0, $"Descriptor observation failed: {errors.Result}")
+        let mutable descriptor = false
+        output.Result.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+        |> Array.choose (fun line ->
+            if line.StartsWith("f", StringComparison.Ordinal) then
+                descriptor <- match Int32.TryParse(line.Substring(1)) with | true, _ -> true | _ -> false
+                None
+            elif descriptor && line.StartsWith("n", StringComparison.Ordinal) then
+                let path = line.Substring(1)
+                if path = canonical || path = canonical + "-wal" || path = canonical + "-shm" || path = canonical + "-journal" then Some path
+                else None
+            else None)
+        |> Array.toList
+    else
+        raise (PlatformNotSupportedException("Database descriptor observation requires Linux or macOS."))
 
 [<Fact; Trait("Task", "T010")>]
 let ``fresh database applies a migration and records its history`` () =
@@ -303,11 +341,14 @@ let ``ambiguous unspecified timestamps are not silently persisted`` () =
     use connection = openConnection directory.Path
     Assert.Equal(0L, unbox<int64> (scalar connection "SELECT count(*) FROM sample_child"))
 
-[<Fact; Trait("Task", "T010")>]
+[<Fact; Trait("Task", "T010"); Trait("Task", "T004"); Trait("Category", "NativeDatabase")>]
 let ``initialization failure closes database handles and permits retry`` () =
     use directory = new TemporaryDirectory()
     let path = WorkspaceDb.databasePath directory.Path
     File.WriteAllText(path, "not a SQLite database")
+    do
+        use held = File.OpenRead(path)
+        Assert.NotEmpty(databaseHandles path)
     let error = Record.Exception(fun () -> WorkspaceDb.initialize directory.Path)
     Assert.NotNull(error)
     Assert.IsType<SqliteException>(error) |> ignore
