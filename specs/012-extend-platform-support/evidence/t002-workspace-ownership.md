@@ -1,6 +1,65 @@
-# T002 — workspace ownership, partial native candidate evidence
+# T002/T003 — exclusive workspace ownership and explicit release
 
-## Candidate duplicate sensitivity checkpoint
+## Native verification used to enable the candidate
+
+[PR #198 run 45936855919](https://github.com/thyvini/lexscholar/actions/runs/45936855919)
+tested macOS 15.8.2 (24H232), ARM64, SDK 10.0.114, `net10.0|arm64`.
+The [workflow and exact commands](https://github.com/thyvini/lexscholar/blob/c7362ea8151397a474321cfb093867dd7f4b1a97/.github/workflows/native-lock-candidate.yml)
+set `TMPDIR` for the test workspaces and ran `statfs` there: **apfs**, mounted at
+`/System/Volumes/Data`. This supersedes the missing-filesystem and
+candidate-descriptor flags caveats in the historical checkpoints below.
+
+Git blobs at the actual PR merge checkouts, not just the branch heads:
+
+| #198 native run | Checkout | `DataDirectoryLock.fs` | `ProcessLockTests.fs` |
+|---|---|---|---|
+| [Omit unlock: RED](https://github.com/thyvini/lexscholar/actions/runs/45934436496) | `f7d0c0e` | `9b01a9ad75a492369c7a864075698bc0637bb643` | `1b5147f3b7f64b3b1c9218f569273a5e002d680b` |
+| [Restore unlock: GREEN](https://github.com/thyvini/lexscholar/actions/runs/45935547367) | `592de224c9e7006d962538f4a6cfa91957053579` | `020661ef50fe5030c0ad6771fd283ef487312df9` | `1b5147f3b7f64b3b1c9218f569273a5e002d680b` |
+| Flags + ownership | `482e00d3e68563bd06b74e22d70cc9ab0e5841c0` | `020661ef50fe5030c0ad6771fd283ef487312df9` | `fbb29d152ff3c9f1e761714ec453ebf4ab591636` |
+
+- **Flags:** The compiler-built [SDK C reference](https://github.com/thyvini/lexscholar/blob/c7362ea8151397a474321cfb093867dd7f4b1a97/probes/darwin-arm64/lock-flags.c)
+  and test `fcntl(fd, F_GETFD)` inspected the *actual* owner and its observed
+  `dup`, for private creation and reopening. `FD_CLOEXEC`: owner **set**,
+  duplicate **clear**, matching `open(O_CLOEXEC)` + `dup` in C.
+  `Category=NativeFlagProbe`: requiring the opposite duplicate bit failed at
+  the specified assertion (1 failed); unmutated: 1 passed, 0 skipped.
+- **Ownership:** `Category=NativeOwnership`: deliberate omission of `LOCK_UN`
+  failed immediate reacquisition with `DirectoryAlreadyInUse` while the
+  observed duplicate remained open (10 passed, 1 failed). Restored: 11 passed,
+  0 skipped in both GREEN runs. This includes same-process and distinct-port
+  child contention; refusal of a third contender after old-owner redisposal;
+  clean exit and termination; persistent inode and 0600 lock/0700 directory;
+  rejection of both existing-target and dangling symlinks without changing the
+  target; and throwing `IOException` for an invalid directory or unopenable
+  lock rather than returning contention. The [earlier C mode control](darwin-arm64-abi-discovery.md)
+  independently observed 0600.
+- **What #200 retains:** the production file is the exact GREEN blob above.
+  The test file is **not** the disposable test blob: it retains the 11
+  ownership cases and checks the two descriptor flags in the duplicate test
+  without depending on the probe dylib. Its Linux paths additionally run the
+  original `/proc` inode and `F_DUPFD_CLOEXEC` assertions; Darwin does not use
+  `/proc`. The C control, opposite-bit mutation and probe workflow remain on
+  #198. [#198 Ubuntu CI](https://github.com/thyvini/lexscholar/actions/runs/45936855921)
+  failed because the disposable flag test required `liblockflags` on Linux;
+  it is not #200 CI. No native run of #200's final test-file layout or full
+  macOS suite is claimed. These results concern workspace locking on the one
+  observed configuration, not support for the whole application.
+
+## Linux verification of the retained tests
+
+- **Sensitivity RED:** `scripts/check.sh T002 T003` with only `O_CLOEXEC`
+  temporarily removed from the Linux open: 175 total, 1 failed, 0 skipped.
+  The new assertion on the candidate owner descriptor expected `1`, got `0`.
+- **GREEN:** restored Linux flags, removed the Darwin guard and verified
+  `git hash-object src/LexScholar.Infrastructure/DataDirectoryLock.fs` equals
+  `020661ef50fe5030c0ad6771fd283ef487312df9`. `scripts/check.sh T002 T003 T006`:
+  238 passed, 0 failed, 0 skipped (Release, warnings as errors). Test blob
+  `ad2e174caa14063f8ef58fa3f47651866c7511f7`. The two Linux-specific checks
+  now run inside their corresponding ownership tests, not as separate facts.
+- Full Linux suite: [PR #200 head checks](https://github.com/thyvini/lexscholar/pull/200/checks).
+  The targeted run is not a substitute for that gate.
+
+## Historical checkpoint: candidate duplicate sensitivity (before the flags run)
 
 - [Native RED run 45934436496](https://github.com/thyvini/lexscholar/actions/runs/45934436496),
   PR #198 head `ba4b8fcb45391594c9ba92a67c3da235f16991cb`: 10 passed,

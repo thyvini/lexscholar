@@ -37,6 +37,10 @@ extern int private hardLink(string source, string target)
 [<DllImport("libc", SetLastError = true, EntryPoint = "dup")>]
 extern int private duplicateDescriptor(int descriptor)
 
+// F_GETFD takes no variadic argument on either tested platform.
+[<DllImport("libc", EntryPoint = "fcntl", SetLastError = true)>]
+extern int private getDescriptorFlags(int descriptor, int command)
+
 [<DllImport("libc", SetLastError = true, EntryPoint = "realpath")>]
 extern System.IntPtr private realPath(string path, System.IntPtr resolved)
 
@@ -77,8 +81,7 @@ let private descriptorsFor path =
         Assert.True(not descriptors.IsEmpty, $"No descriptor for {path}; lsof output: {output}")
         descriptors
 
-[<Fact; Trait("Task", "T002"); Trait("Task", "T003"); Trait("Category", "NativeOwnership")>]
-let ``candidate explicitly releases ownership with its duplicated descriptor alive`` () =
+let private assertReleaseWithLiveDuplicate () =
     use workspace = TemporaryWorkspace.Create()
     let path = Path.Combine(workspace.Root, ".lexscholar.lock")
     // Validate the observer with an independently opened descriptor first.
@@ -100,6 +103,11 @@ let ``candidate explicitly releases ownership with its duplicated descriptor ali
         Assert.True(duplicate >= 0, $"Descriptor duplication failed: {Marshal.GetLastPInvokeError()}")
         use inherited = new SafeFileHandle(System.IntPtr(duplicate), true)
         Assert.Contains(duplicate, descriptorsFor path)
+        let ownerFlags = getDescriptorFlags(descriptor, 1) // F_GETFD
+        let duplicateFlags = getDescriptorFlags(duplicate, 1)
+        Assert.True(ownerFlags >= 0 && duplicateFlags >= 0, "F_GETFD failed")
+        Assert.Equal(1, ownerFlags &&& 1) // FD_CLOEXEC on the actual owning descriptor
+        Assert.Equal(0, duplicateFlags &&& 1) // plain dup clears FD_CLOEXEC
         match DataDirectoryLock.acquire workspace.Root with
         | Error (DirectoryAlreadyInUse _) -> ()
         | Ok other ->
@@ -114,8 +122,7 @@ let ``candidate explicitly releases ownership with its duplicated descriptor ali
             other.Dispose()
             Assert.Fail("Repeated old-owner disposal released the successor.")
 
-[<Fact; Trait("Task", "T002"); Trait("Category", "NativeOwnership")>]
-let ``release and reacquisition retain the original lock inode`` () =
+let private assertPersistentLockInode () =
     use workspace = TemporaryWorkspace.Create()
     let path = Path.Combine(workspace.Root, ".lexscholar.lock")
     File.WriteAllText(path, "initial")
@@ -176,8 +183,7 @@ let ``concurrent first acquisitions leave one owner and a private persistent fil
     | Ok next -> next.Dispose()
     | Error error -> Assert.Fail($"Reacquisition failed: {error}")
 
-[<Fact; Trait("Task", "T006")>]
-let ``release permits immediate reacquisition even while an inherited descriptor remains open`` () =
+let private assertLinuxReleaseWithInheritedDescriptor () =
     use workspace = TemporaryWorkspace.Create()
     let owner =
         match DataDirectoryLock.acquire workspace.Root with
@@ -212,6 +218,11 @@ let ``release permits immediate reacquisition even while an inherited descriptor
         | Ok other ->
             other.Dispose()
             Assert.Fail("Repeated old-owner disposal released its successor.")
+
+[<Fact; Trait("Task", "T002"); Trait("Task", "T003"); Trait("Task", "T006"); Trait("Category", "NativeOwnership")>]
+let ``candidate explicitly releases ownership with its duplicated descriptor alive`` () =
+    assertReleaseWithLiveDuplicate ()
+    if System.OperatingSystem.IsLinux() then assertLinuxReleaseWithInheritedDescriptor ()
 
 [<Fact; Trait("Task", "T006"); Trait("Task", "T002"); Trait("Category", "NativeOwnership")>]
 let ``a second operating system process cannot own the same directory`` () =
@@ -332,8 +343,7 @@ let ``new directory and lock file use private permissions and persist after rele
         | Ok next -> next.Dispose()
         | Error error -> Assert.Fail($"Released lock could not be reacquired: {error}")
 
-[<Fact; Trait("Task", "T002")>]
-let ``Linux lock inode remains linked across release and reacquisition`` () =
+let private assertLinuxInodeRemainsLinked () =
     use workspace = TemporaryWorkspace.Create()
     let path = Path.Combine(workspace.Root, ".lexscholar.lock")
     // Keep a reference independent of the owner's descriptor. If release
@@ -373,6 +383,11 @@ let ``Linux lock inode remains linked across release and reacquisition`` () =
         Assert.Fail("A repeated old-owner disposal must not release the successor.")
     successor.Dispose()
     assertStillLinked ()
+
+[<Fact; Trait("Task", "T002"); Trait("Category", "NativeOwnership")>]
+let ``release and reacquisition retain the original lock inode`` () =
+    assertPersistentLockInode ()
+    if System.OperatingSystem.IsLinux() then assertLinuxInodeRemainsLinked ()
 
 [<Fact; Trait("Task", "T006"); Trait("Task", "T002")>]
 let ``disposing a constructed but unstarted host releases ownership`` () =
