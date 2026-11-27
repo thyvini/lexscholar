@@ -37,6 +37,12 @@ extern int private hardLink(string source, string target)
 [<DllImport("libc", SetLastError = true, EntryPoint = "dup")>]
 extern int private duplicateDescriptor(int descriptor)
 
+[<DllImport("libc", SetLastError = true, EntryPoint = "realpath")>]
+extern System.IntPtr private realPath(string path, System.IntPtr resolved)
+
+[<DllImport("libc", EntryPoint = "free")>]
+extern void private freePath(System.IntPtr resolved)
+
 let private descriptorsFor path =
     if System.OperatingSystem.IsLinux() then
         Directory.EnumerateFiles("/proc/self/fd")
@@ -44,6 +50,11 @@ let private descriptorsFor path =
         |> Seq.map (Path.GetFileName >> int)
         |> Seq.toList
     else
+        let resolved = realPath(path, System.IntPtr.Zero)
+        Assert.True(resolved <> System.IntPtr.Zero, $"realpath failed: {Marshal.GetLastPInvokeError()}")
+        let canonical =
+            try Marshal.PtrToStringUTF8(resolved)
+            finally freePath(resolved)
         let info = ProcessStartInfo("/usr/sbin/lsof", UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true)
         for argument in [ "-n"; "-P"; "-Ffn"; "-a"; "-p"; string System.Environment.ProcessId; path ] do
             info.ArgumentList.Add(argument)
@@ -59,7 +70,7 @@ let private descriptorsFor path =
                 match System.Int32.TryParse(line.Substring(1)) with
                 | true, descriptor -> current <- Some descriptor
                 | _ -> current <- None
-            elif line = "n" + path then
+            elif line = "n" + canonical then
                 match current with
                 | Some descriptor -> yield descriptor
                 | None -> () ]
