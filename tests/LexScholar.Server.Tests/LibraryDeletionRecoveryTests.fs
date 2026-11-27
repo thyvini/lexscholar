@@ -97,10 +97,13 @@ let runCrashChild (args: string array) =
   InlineData("intent");
   InlineData("metadata-AssociationsRemoved"); InlineData("metadata-BeforeCommit"); InlineData("metadata-AfterCommit");
   InlineData("file-BeforeUnlink"); InlineData("file-AfterUnlink"); InlineData("file-BeforeSync"); InlineData("file-AfterSync");
-  InlineData("completion-BeforeCommit"); InlineData("completion-AfterCommit"); Trait("Task", "T014")>]
+  InlineData("completion-BeforeCommit"); InlineData("completion-AfterCommit"); Trait("Task", "T014"); Trait("Task", "T006")>]
 let ``abrupt process exit at each durable boundary recovers on same workspace`` stage = task {
     use workspace = TemporaryWorkspace.Create()
     let _, operation, document, key = seed workspace.Root true
+    let _, _, untouched, untouchedKey = seed workspace.Root false
+    let untouchedPath = Path.Combine(DocumentStore.originalsDirectory workspace.Root, untouchedKey)
+    let untouchedBytes = File.ReadAllBytes untouchedPath
     let info = ProcessStartInfo("dotnet", UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true)
     for arg in [typeof<TemporaryWorkspace>.Assembly.Location; "--deletion-crash"; workspace.Root; string operation; string document; stage] do
         info.ArgumentList.Add arg
@@ -129,12 +132,48 @@ let ``abrupt process exit at each durable boundary recovers on same workspace`` 
         Assert.False(File.Exists(Path.Combine(DocumentStore.originalsDirectory workspace.Root, key)))
         Assert.False(File.Exists(Path.Combine(DocumentStore.quarantineDirectory workspace.Root, key)))
         use db = WorkspaceDb.create workspace.Root
-        Assert.Empty(db.Set<LibraryDocumentRow>())
-        Assert.Empty(db.Set<ProjectDocumentRow>())
-        Assert.Empty(db.Set<DocumentSummaryRow>())
+        Assert.Equal(untouched, (Assert.Single(db.Set<LibraryDocumentRow>())).Id)
+        Assert.Equal(2, db.Set<ProjectDocumentRow>() |> Seq.length)
+        Assert.All(db.Set<ProjectDocumentRow>(), fun row -> Assert.Equal(untouched, row.DocumentId))
+        Assert.Equal(2, db.Set<DocumentSummaryRow>() |> Seq.length)
+        Assert.All(db.Set<DocumentSummaryRow>(), fun row -> Assert.Equal(untouched, row.DocumentId))
+        Assert.Equal<byte>(untouchedBytes, File.ReadAllBytes untouchedPath)
     use restarted = TestHarness.Start(workspace = workspace, deletionRecovery = recovery())
     Assert.Equal("deleted", (item workspace.Root operation document).Status)
+    Assert.Equal<byte>(untouchedBytes, File.ReadAllBytes untouchedPath)
 }
+
+[<Fact; Trait("Task", "T006")>]
+let ``recovery sync failure remains incomplete until a later startup retries`` () =
+    use workspace = TemporaryWorkspace.Create()
+    let coordination, operation, document, key = seed workspace.Root true
+    let _, _, _, untouchedKey = seed workspace.Root false
+    let untouchedPath = Path.Combine(DocumentStore.originalsDirectory workspace.Root, untouchedKey)
+    let untouchedBytes = File.ReadAllBytes untouchedPath
+    let seam =
+        LibraryDeletionRecovery.StartupForTests(fun root ->
+            let remove storageKey =
+                DocumentStore.removeOriginalWith
+                    (fun step ->
+                        if step = DocumentStore.RemovalStep.BeforeSync then
+                            raise (IOException("injected sync failure"))) root storageKey
+            LibraryDeletionRecovery.runWith
+                (LibraryDeletionRepository.removeMetadata coordination root)
+                (LibraryDeletionRepository.finishOriginalWith ignore remove coordination root) root)
+    do
+        use host = TestHarness.Start(workspace = workspace, deletionRecovery = seam)
+        let retained = item workspace.Root operation document
+        Assert.Equal("incomplete", retained.Status)
+        Assert.Equal("storage_error", retained.Reason)
+        Assert.False(File.Exists(Path.Combine(DocumentStore.originalsDirectory workspace.Root, key)))
+        Assert.Equal<byte>(untouchedBytes, File.ReadAllBytes untouchedPath)
+    do
+        use host = TestHarness.Start(workspace = workspace)
+        Assert.Equal("deleted", (item workspace.Root operation document).Status)
+        Assert.Equal<byte>(untouchedBytes, File.ReadAllBytes untouchedPath)
+    use restarted = TestHarness.Start(workspace = workspace)
+    Assert.Equal("deleted", (item workspace.Root operation document).Status)
+    Assert.Equal<byte>(untouchedBytes, File.ReadAllBytes untouchedPath)
 
 [<Fact; Trait("Task", "T014")>]
 let ``restart before intent never authorizes deletion`` () =

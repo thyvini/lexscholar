@@ -67,6 +67,29 @@ let private observe (client: HttpClient) =
             id, Convert.ToHexStringLower(SHA256.HashData(client.GetByteArrayAsync($"/api/documents/{id}/content").GetAwaiter().GetResult())) ]
     active, projectList, documents, associations, contentHashes
 
+[<Fact; Trait("Task", "T006")>]
+let ``confirmed project and imported bytes survive forced process termination`` () =
+    use workspace = TemporaryWorkspace.Create()
+    let expected =
+        use host = ProcessHarness.HostProcess.Start(workspace.Root, [])
+        Assert.Equal("ready", host.Startup.Kind)
+        use client = ProcessHarness.client host
+        use projectResponse = send client HttpMethod.Post "/api/projects" (Some """{"name":"Terminated workspace"}""")
+        let project = created projectResponse
+        let document = upload client "valid.pdf"
+        use association = send client HttpMethod.Post $"/api/projects/{project}/documents"
+                                (Some $"""{{"documentId":"{document}","role":"FocusedSource"}}""")
+        expect HttpStatusCode.Created association |> ignore
+        use selection = send client HttpMethod.Put $"/api/projects/{project}/active" None
+        expect HttpStatusCode.NoContent selection |> ignore
+        let snapshot = observe client
+        host.Terminate()
+        snapshot
+    use restarted = ProcessHarness.HostProcess.Start(workspace.Root, [])
+    Assert.Equal("ready", restarted.Startup.Kind)
+    use client = ProcessHarness.client restarted
+    Assert.True((expected = observe client), "Confirmed workspace changed after process termination.")
+
 [<Fact; Trait("Task", "T041")>]
 let ``100 consecutive restarts keep every project, document, association and the active project`` () =
     use workspace = TemporaryWorkspace.Create()
