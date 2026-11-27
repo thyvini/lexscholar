@@ -37,6 +37,12 @@ extern int private hardLink(string source, string target)
 [<DllImport("libc", SetLastError = true, EntryPoint = "dup")>]
 extern int private duplicateDescriptor(int descriptor)
 
+[<DllImport("libc", SetLastError = true, EntryPoint = "realpath")>]
+extern System.IntPtr private realPath(string path, System.IntPtr resolved)
+
+[<DllImport("libc", EntryPoint = "free")>]
+extern void private freePath(System.IntPtr resolved)
+
 let private descriptorsFor path =
     if System.OperatingSystem.IsLinux() then
         Directory.EnumerateFiles("/proc/self/fd")
@@ -44,6 +50,11 @@ let private descriptorsFor path =
         |> Seq.map (Path.GetFileName >> int)
         |> Seq.toList
     else
+        let resolved = realPath(path, System.IntPtr.Zero)
+        Assert.True(resolved <> System.IntPtr.Zero, $"realpath failed: {Marshal.GetLastPInvokeError()}")
+        let canonical =
+            try Marshal.PtrToStringUTF8(resolved)
+            finally freePath(resolved)
         let info = ProcessStartInfo("/usr/sbin/lsof", UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true)
         for argument in [ "-n"; "-P"; "-Ffn"; "-a"; "-p"; string System.Environment.ProcessId; path ] do
             info.ArgumentList.Add(argument)
@@ -53,15 +64,18 @@ let private descriptorsFor path =
         child.WaitForExit()
         Assert.True(child.ExitCode = 0, $"Descriptor observation failed: {errors}")
         let mutable current = None
-        [ for line in output.Split('\n', System.StringSplitOptions.RemoveEmptyEntries) do
+        let descriptors =
+          [ for line in output.Split('\n', System.StringSplitOptions.RemoveEmptyEntries) do
             if line.StartsWith("f") then
                 match System.Int32.TryParse(line.Substring(1)) with
                 | true, descriptor -> current <- Some descriptor
                 | _ -> current <- None
-            elif line = "n" + path then
+            elif line = "n" + canonical then
                 match current with
                 | Some descriptor -> yield descriptor
                 | None -> () ]
+        Assert.True(not descriptors.IsEmpty, $"No descriptor for {path}; lsof output: {output}")
+        descriptors
 
 [<Fact; Trait("Task", "T002"); Trait("Task", "T003"); Trait("Category", "NativeOwnership")>]
 let ``candidate explicitly releases ownership with its duplicated descriptor alive`` () =

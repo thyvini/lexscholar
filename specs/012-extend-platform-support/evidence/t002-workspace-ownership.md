@@ -1,5 +1,23 @@
 # T002 — workspace ownership, partial native candidate evidence
 
+## Candidate duplicate sensitivity checkpoint
+
+- [Native RED run 45934436496](https://github.com/thyvini/lexscholar/actions/runs/45934436496),
+  PR #198 head `ba4b8fcb45391594c9ba92a67c3da235f16991cb`: 10 passed,
+  1 failed, 0 skipped on macOS 15.8.2 ARM64, .NET SDK 10.0.114.
+  The disposable candidate deliberately omitted `LOCK_UN`; the corrected
+  canonical-path observer found the candidate descriptor and its duplicate.
+  Reacquisition failed with `DirectoryAlreadyInUse` while that duplicate was
+  alive, demonstrating sensitivity to omitted explicit unlock. This is RED,
+  not a failure of the unmutated candidate or native GREEN evidence.
+- The same observer correction passed the previously run Linux targeted
+  selection: 176 passed, 0 failed, 0 skipped.
+- PR #198 head `93a0c54` restores explicit unlock for native GREEN; its result
+  remains pending. The production branch keeps the Darwin fail-closed guard.
+- A provider safety rejection was reported for earlier work; it was not
+  retried or circumvented. A separate `dev-a` launch failed because the agent
+  was not found; that failure was not a provider safety rejection.
+
 Original test and sensitivity base: `607c545` (`docs/platform-expansion-phase3`).
 Integrated onto `598dd97` (release baseline after #190). This is partial T002
 evidence, not completion of the task or a macOS support claim.
