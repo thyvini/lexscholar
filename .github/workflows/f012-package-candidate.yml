@@ -1,0 +1,59 @@
+name: F012 package candidate (isolated)
+on:
+  pull_request:
+    branches: [fix/f012-package-portability]
+permissions:
+  contents: read
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - name: Record candidate and native environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          uname -a
+          if [ "$(uname -s)" = Darwin ]; then test "$(uname -m)" = arm64; sw_vers; else test "$(uname -m)" = x86_64; fi
+          bash --version
+          dotnet --info
+          git rev-parse HEAD
+          git rev-parse HEAD:scripts/package-workspace.sh
+          git rev-parse HEAD:tests/scripts/package-workspace-tests.sh
+      - name: RED baseline then GREEN candidate path tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          file=scripts/package-workspace.sh
+          trap 'git show "HEAD:$file" > "$file"' EXIT
+          git show d758f01:scripts/package-workspace.sh > "$file"
+          if bash tests/scripts/package-workspace-tests.sh > "$RUNNER_TEMP/package-red.log" 2>&1; then
+            cat "$RUNNER_TEMP/package-red.log"
+            echo "Baseline unexpectedly passed" >&2
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/package-red.log"
+          grep -F 'FAIL: packaging rejected output path' "$RUNNER_TEMP/package-red.log"
+          git show "HEAD:$file" > "$file"
+          bash tests/scripts/package-workspace-tests.sh
+      - name: Build real native archive through the candidate script
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$(bash scripts/package-workspace.sh "$RUNNER_TEMP/missing parent/nested/candidate.tar.gz")"
+          test "$archive" = "$RUNNER_TEMP/missing parent/nested/candidate.tar.gz"
+          tar -tzf "$archive" > "$RUNNER_TEMP/package-entries.txt"
+          grep -Fx './LexScholar.Server.dll' "$RUNNER_TEMP/package-entries.txt"
+          grep -E '^\./wwwroot/_framework/.+' "$RUNNER_TEMP/package-entries.txt" > /dev/null
+          shasum -a 256 "$archive"
