@@ -43,6 +43,15 @@ extern System.IntPtr private realPath(string path, System.IntPtr resolved)
 [<DllImport("libc", EntryPoint = "free")>]
 extern void private freePath(System.IntPtr resolved)
 
+[<DllImport("lockflags", EntryPoint = "probe_cloexec", SetLastError = true)>]
+extern int private cCloseOnExec(int descriptor)
+
+[<DllImport("lockflags", EntryPoint = "probe_reference", SetLastError = true)>]
+extern int private cReference(string path)
+
+[<DllImport("libc", EntryPoint = "fcntl", SetLastError = true)>]
+extern int private getDescriptorFlags(int descriptor, int command)
+
 let private descriptorsFor path =
     if System.OperatingSystem.IsLinux() then
         Directory.EnumerateFiles("/proc/self/fd")
@@ -76,6 +85,37 @@ let private descriptorsFor path =
                 | None -> () ]
         Assert.True(not descriptors.IsEmpty, $"No descriptor for {path}; lsof output: {output}")
         descriptors
+
+[<Fact; Trait("Task", "T002"); Trait("Task", "T003"); Trait("Category", "NativeFlagProbe")>]
+let ``candidate and duplicate descriptor flags match C reference`` () =
+    use workspace = TemporaryWorkspace.Create()
+    let reference = cReference(Path.Combine(workspace.Root, "reference"))
+    Assert.Equal(2, reference)
+    let path = Path.Combine(workspace.Root, ".lexscholar.lock")
+    for create in [ true; false ] do
+        if create && File.Exists(path) then File.Delete(path)
+        use owner =
+            match DataDirectoryLock.acquire workspace.Root with
+            | Ok value -> value
+            | Error error -> failwithf "Unexpected contention: %A" error
+        let descriptor = descriptorsFor path |> List.exactlyOne
+        let duplicate = duplicateDescriptor descriptor
+        Assert.True(duplicate >= 0, $"dup failed: {Marshal.GetLastPInvokeError()}")
+        use held = new SafeFileHandle(System.IntPtr(duplicate), true)
+        Assert.Contains(duplicate, descriptorsFor path)
+        let ownerC = cCloseOnExec descriptor
+        let duplicateC = cCloseOnExec duplicate
+        Assert.Equal(1, ownerC)
+        Assert.Equal(0, duplicateC)
+        Assert.Equal(reference, ownerC * 2 + duplicateC)
+        // Darwin SDK F_GETFD=1, FD_CLOEXEC=1; compare with C's header-based call.
+        let ownerFlags = getDescriptorFlags(descriptor, 1)
+        let duplicateFlags = getDescriptorFlags(duplicate, 1)
+        Assert.True(ownerFlags >= 0 && duplicateFlags >= 0, "F_GETFD failed")
+        Assert.Equal(ownerC, ownerFlags &&& 1)
+        Assert.Equal(duplicateC, duplicateFlags &&& 1)
+        if System.Environment.GetEnvironmentVariable("LOCK_FLAGS_SENSITIVITY") = "1" then
+            Assert.True((duplicateC = 1), "sensitivity: dup must not have FD_CLOEXEC")
 
 [<Fact; Trait("Task", "T002"); Trait("Task", "T003"); Trait("Category", "NativeOwnership")>]
 let ``candidate explicitly releases ownership with its duplicated descriptor alive`` () =
