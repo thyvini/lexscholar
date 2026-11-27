@@ -105,6 +105,8 @@ an unknown child is not permission to start a replacement.
 For separate tool calls, create the private state directory and set mode 700
 before writing files; create reservation/assignment JSON there with the file
 tool and set mode 600. A standalone `umask` call does not affect later calls.
+Likewise, shell variables do not persist across calls: pass the full state path
+to every watchdog command, even where an older operations example uses `STATE`.
 
 ### Local verification (2026-11-26)
 
