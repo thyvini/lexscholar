@@ -12,8 +12,20 @@
   not a failure of the unmutated candidate or native GREEN evidence.
 - The same observer correction passed the previously run Linux targeted
   selection: 176 passed, 0 failed, 0 skipped.
-- PR #198 head `93a0c54` restores explicit unlock for native GREEN; its result
-  remains pending. The production branch keeps the Darwin fail-closed guard.
+- **Native GREEN:** [run 45935547367](https://github.com/thyvini/lexscholar/actions/runs/45935547367),
+  PR #198 head `93a0c54e73e109a242d820ce2e36943ab27d7e9c`, checked-out
+  merge `592de224c9e7006d962538f4a6cfa91957053579`: the same
+  `Category=NativeOwnership` command with explicit unlock restored passed
+  11 tests, 0 failed, 0 skipped. The candidate lock source matches this branch
+  apart from this branch's Darwin fail-closed guard; the test source matches.
+  Runner: macOS 15.8.2 build 24H232, ARM64, SDK 10.0.114; test process
+  `net10.0|arm64`. The command did not capture the temporary filesystem type.
+- Research's candidate probe gate remains open: that run did not record the
+  filesystem type, and the separate C control's `F_DUPFD_CLOEXEC` result is
+  not a comparison of close-on-exec behavior for the actual candidate's
+  observed descriptor and test `dup`. The test demonstrates the live-duplicate
+  unlock behavior, not that missing comparison. The Darwin fail-closed guard
+  remains in place; neither T002 nor T003 is claimed complete.
 - The prior instruction referred to a provider safety rejection, but did not
   identify the rejected operation or give its details. No retry was attempted
   in this session. A separate `dev-a` launch was reported to have failed
@@ -119,9 +131,10 @@ test executable reported `net10.0|arm64`. The runner's temporary filesystem
 type was not captured; these results do not establish behavior on other
 filesystems or machines, and are not a macOS support claim. Concurrent-start
 coverage does not force a particular interleaving of creation and reopening.
-The probe demonstrates explicit unlock with a live duplicate for individual
-operations, but does not observe a duplicate of the candidate's own descriptor;
-T003 owns that sensitive candidate-level check. The native test selection is
+The earlier probe demonstrated explicit unlock with a live duplicate for
+individual operations, but did not observe a duplicate of the candidate's own
+descriptor; the later candidate-level RED and GREEN are recorded above.
+The native test selection is
 not the full solution or the eventual required two-platform CI gate.
 
 As on Linux, an actor able to replace the lock pathname in the workspace can
