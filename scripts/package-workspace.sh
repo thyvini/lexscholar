@@ -12,7 +12,9 @@ case "$1" in
 esac
 mkdir -p "$(dirname "$archive")"
 archive="$(cd "$(dirname "$archive")" && pwd -P)/$(basename "$archive")"
-build="$(mktemp -d "${TMPDIR:-/tmp}/lexscholar-publish.XXXXXX")"
+# Give MSBuild the physical path even when TMPDIR is a symlink (e.g. /var on macOS).
+temp_parent="$(cd "${TMPDIR:-/tmp}" && pwd -P)"
+build="$(mktemp -d "$temp_parent/lexscholar-publish.XXXXXX")"
 trap 'rm -rf "$build"' EXIT
 mkdir -p "$build/source" "$build/publish"
 # Keep the candidate independent of checkout outputs and of other running tests.

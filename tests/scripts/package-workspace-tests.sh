@@ -6,7 +6,8 @@ root="$(cd "$(dirname "$0")/../.." && pwd -P)"
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/lexscholar-package-test.XXXXXX")"
 trap 'rm -rf "$fixture"' EXIT
 mkdir -p "$fixture/tools" "$fixture/caller" "$fixture/temporary"
-export TMPDIR="$fixture/temporary"
+ln -s temporary "$fixture/temp alias"
+export TMPDIR="$fixture/temp alias"
 export PACKAGE_TEST_CALLS="$fixture/calls"
 cat > "$fixture/tools/dotnet" <<'SH'
 #!/usr/bin/env bash
@@ -14,12 +15,17 @@ set -euo pipefail
 printf '%s\n' "$*" >> "$PACKAGE_TEST_CALLS"
 test "$3" = -c
 test "$4" = Release
-case "$2" in "$TMPDIR"/lexscholar-publish.*/source/src/LexScholar.Server/LexScholar.Server.fsproj) ;; *) exit 41 ;; esac
+physical_temp="$(cd "$TMPDIR" && pwd -P)"
+case "$2" in
+  "$physical_temp"/lexscholar-publish.*/source/src/LexScholar.Server/LexScholar.Server.fsproj) ;;
+  *) echo "FAIL: $1 project is not under the physical temporary directory: $2" >&2; exit 41 ;;
+esac
 if [ "$1" = clean ]; then
   test "$5" = -warnaserror
 else
   test "$1" = publish
   test "$5" = -o
+  test "$6" = "${2%/source/src/LexScholar.Server/LexScholar.Server.fsproj}/publish"
   test "$7" = -warnaserror
   printf 'published fixture\n' > "$6/marker"
 fi
