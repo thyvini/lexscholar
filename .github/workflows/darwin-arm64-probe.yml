@@ -1,0 +1,35 @@
+name: Disposable Darwin ARM64 probe
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/darwin-arm64-probe.yml
+      - probes/darwin-arm64/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-probe:
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.114
+      - name: Check native architecture, headers, and P/Invoke
+        run: |
+          set -euo pipefail
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
+          sysctl -n machdep.cpu.brand_string
+          dotnet --info
+          umask 077
+          fixture="$(mktemp -d "${RUNNER_TEMP}/darwin-probe.XXXXXX")"
+          clang -std=c11 -Wall -Wextra -Werror probes/darwin-arm64/constants.c -o "$fixture/constants"
+          clang -dynamiclib -Wall -Wextra -Werror probes/darwin-arm64/shim.c -o "$fixture/libdarwinprobe.dylib"
+          "$fixture/constants" | tee "$fixture/constants.txt"
+          DYLD_LIBRARY_PATH="$fixture" dotnet fsi probes/darwin-arm64/probe.fsx "$fixture" "$fixture/constants.txt"
+          dotnet fsi probes/darwin-arm64/managed-lock.fsx "$fixture" "$fixture/constants.txt"

@@ -1,0 +1,39 @@
+name: Native lock candidate
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-lock:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Native T002 ownership
+        run: |
+          set -euo pipefail
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
+          sw_vers
+          uname -m
+          fixture="$(mktemp -d "${RUNNER_TEMP}/lock-flags.XXXXXX")"
+          mkdir "$fixture/workspace"
+          export TMPDIR="$fixture/workspace/"
+          export DYLD_LIBRARY_PATH="$fixture"
+          clang -std=c11 -Wall -Wextra -Werror probes/darwin-arm64/workspace-fs.c -o "$fixture/workspace-fs"
+          "$fixture/workspace-fs" "$TMPDIR"
+          clang -dynamiclib -Wall -Wextra -Werror probes/darwin-arm64/lock-flags.c -o "$fixture/liblockflags.dylib"
+          dotnet --info
+          if LOCK_FLAGS_SENSITIVITY=1 dotnet test --project tests/LexScholar.Server.Tests/LexScholar.Server.Tests.fsproj -c Release --filter-trait Category=NativeFlagProbe > "$fixture/red.log" 2>&1; then
+            cat "$fixture/red.log"
+            echo "Sensitivity unexpectedly passed"
+            exit 1
+          fi
+          cat "$fixture/red.log"
+          grep -F "sensitivity: dup must not have FD_CLOEXEC" "$fixture/red.log"
+          dotnet test --project tests/LexScholar.Server.Tests/LexScholar.Server.Tests.fsproj -c Release --filter-trait Category=NativeFlagProbe
+          dotnet test --project tests/LexScholar.Server.Tests/LexScholar.Server.Tests.fsproj -c Release --filter-trait Category=NativeOwnership

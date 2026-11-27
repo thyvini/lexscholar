@@ -3,6 +3,8 @@ module LexScholar.Server.Tests.ProcessLockTests
 open System.Net
 open System.IO
 open System.Threading.Tasks
+open System.Threading
+open System.Diagnostics
 open System.Runtime.InteropServices
 open Microsoft.Win32.SafeHandles
 open LexScholar.Infrastructure
@@ -28,6 +30,191 @@ extern int private duplicateCloseOnExec(int descriptor, int command, int minimum
 
 [<DllImport("libc", SetLastError = true, EntryPoint = "open")>]
 extern int private openLinuxObserver(string path, int flags)
+
+[<DllImport("libc", SetLastError = true, EntryPoint = "link")>]
+extern int private hardLink(string source, string target)
+
+[<DllImport("libc", SetLastError = true, EntryPoint = "dup")>]
+extern int private duplicateDescriptor(int descriptor)
+
+[<DllImport("libc", SetLastError = true, EntryPoint = "realpath")>]
+extern System.IntPtr private realPath(string path, System.IntPtr resolved)
+
+[<DllImport("libc", EntryPoint = "free")>]
+extern void private freePath(System.IntPtr resolved)
+
+[<DllImport("lockflags", EntryPoint = "probe_cloexec", SetLastError = true)>]
+extern int private cCloseOnExec(int descriptor)
+
+[<DllImport("lockflags", EntryPoint = "probe_reference", SetLastError = true)>]
+extern int private cReference(string path)
+
+[<DllImport("libc", EntryPoint = "fcntl", SetLastError = true)>]
+extern int private getDescriptorFlags(int descriptor, int command)
+
+let private descriptorsFor path =
+    if System.OperatingSystem.IsLinux() then
+        Directory.EnumerateFiles("/proc/self/fd")
+        |> Seq.filter (fun descriptor -> FileInfo(descriptor).LinkTarget = path)
+        |> Seq.map (Path.GetFileName >> int)
+        |> Seq.toList
+    else
+        let resolved = realPath(path, System.IntPtr.Zero)
+        Assert.True(resolved <> System.IntPtr.Zero, $"realpath failed: {Marshal.GetLastPInvokeError()}")
+        let canonical =
+            try Marshal.PtrToStringUTF8(resolved)
+            finally freePath(resolved)
+        let info = ProcessStartInfo("/usr/sbin/lsof", UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true)
+        for argument in [ "-n"; "-P"; "-Ffn"; "-a"; "-p"; string System.Environment.ProcessId; path ] do
+            info.ArgumentList.Add(argument)
+        use child = Process.Start(info)
+        let output = child.StandardOutput.ReadToEnd()
+        let errors = child.StandardError.ReadToEnd()
+        child.WaitForExit()
+        Assert.True(child.ExitCode = 0, $"Descriptor observation failed: {errors}")
+        let mutable current = None
+        let descriptors =
+          [ for line in output.Split('\n', System.StringSplitOptions.RemoveEmptyEntries) do
+            if line.StartsWith("f") then
+                match System.Int32.TryParse(line.Substring(1)) with
+                | true, descriptor -> current <- Some descriptor
+                | _ -> current <- None
+            elif line = "n" + canonical then
+                match current with
+                | Some descriptor -> yield descriptor
+                | None -> () ]
+        Assert.True(not descriptors.IsEmpty, $"No descriptor for {path}; lsof output: {output}")
+        descriptors
+
+[<Fact; Trait("Task", "T002"); Trait("Task", "T003"); Trait("Category", "NativeFlagProbe")>]
+let ``candidate and duplicate descriptor flags match C reference`` () =
+    use workspace = TemporaryWorkspace.Create()
+    let reference = cReference(Path.Combine(workspace.Root, "reference"))
+    Assert.Equal(2, reference)
+    let path = Path.Combine(workspace.Root, ".lexscholar.lock")
+    for create in [ true; false ] do
+        if create && File.Exists(path) then File.Delete(path)
+        use owner =
+            match DataDirectoryLock.acquire workspace.Root with
+            | Ok value -> value
+            | Error error -> failwithf "Unexpected contention: %A" error
+        let descriptor = descriptorsFor path |> List.exactlyOne
+        let duplicate = duplicateDescriptor descriptor
+        Assert.True(duplicate >= 0, $"dup failed: {Marshal.GetLastPInvokeError()}")
+        use held = new SafeFileHandle(System.IntPtr(duplicate), true)
+        Assert.Contains(duplicate, descriptorsFor path)
+        let ownerC = cCloseOnExec descriptor
+        let duplicateC = cCloseOnExec duplicate
+        Assert.Equal(1, ownerC)
+        Assert.Equal(0, duplicateC)
+        Assert.Equal(reference, ownerC * 2 + duplicateC)
+        // Darwin SDK F_GETFD=1, FD_CLOEXEC=1; compare with C's header-based call.
+        let ownerFlags = getDescriptorFlags(descriptor, 1)
+        let duplicateFlags = getDescriptorFlags(duplicate, 1)
+        Assert.True(ownerFlags >= 0 && duplicateFlags >= 0, "F_GETFD failed")
+        Assert.Equal(ownerC, ownerFlags &&& 1)
+        Assert.Equal(duplicateC, duplicateFlags &&& 1)
+        if System.Environment.GetEnvironmentVariable("LOCK_FLAGS_SENSITIVITY") = "1" then
+            Assert.True((duplicateC = 1), "sensitivity: dup must not have FD_CLOEXEC")
+
+[<Fact; Trait("Task", "T002"); Trait("Task", "T003"); Trait("Category", "NativeOwnership")>]
+let ``candidate explicitly releases ownership with its duplicated descriptor alive`` () =
+    use workspace = TemporaryWorkspace.Create()
+    let path = Path.Combine(workspace.Root, ".lexscholar.lock")
+    // Validate the observer with an independently opened descriptor first.
+    File.WriteAllText(path, "observer")
+    let observed = openLinuxObserver(path, 0)
+    Assert.True(observed >= 0, $"Observer open failed: {Marshal.GetLastPInvokeError()}")
+    use observedHandle = new SafeFileHandle(System.IntPtr(observed), true)
+    Assert.Contains(observed, descriptorsFor path)
+    observedHandle.Dispose()
+    for create in [ false; true ] do
+        if create then File.Delete(path)
+        let acquire () =
+            match DataDirectoryLock.acquire workspace.Root with
+            | Ok owner -> owner
+            | Error error -> failwithf "Unexpected contention: %A" error
+        use owner = acquire ()
+        let descriptor = descriptorsFor path |> List.exactlyOne
+        let duplicate = duplicateDescriptor(descriptor)
+        Assert.True(duplicate >= 0, $"Descriptor duplication failed: {Marshal.GetLastPInvokeError()}")
+        use inherited = new SafeFileHandle(System.IntPtr(duplicate), true)
+        Assert.Contains(duplicate, descriptorsFor path)
+        match DataDirectoryLock.acquire workspace.Root with
+        | Error (DirectoryAlreadyInUse _) -> ()
+        | Ok other ->
+            other.Dispose()
+            Assert.Fail("A live owner must exclude a contender.")
+        owner.Dispose()
+        use successor = acquire ()
+        owner.Dispose()
+        match DataDirectoryLock.acquire workspace.Root with
+        | Error (DirectoryAlreadyInUse _) -> ()
+        | Ok other ->
+            other.Dispose()
+            Assert.Fail("Repeated old-owner disposal released the successor.")
+
+[<Fact; Trait("Task", "T002"); Trait("Category", "NativeOwnership")>]
+let ``release and reacquisition retain the original lock inode`` () =
+    use workspace = TemporaryWorkspace.Create()
+    let path = Path.Combine(workspace.Root, ".lexscholar.lock")
+    File.WriteAllText(path, "initial")
+    let witness = Path.Combine(workspace.Root, "witness")
+    Assert.Equal(0, hardLink(path, witness))
+    let take () =
+        match DataDirectoryLock.acquire workspace.Root with
+        | Ok owner -> owner
+        | Error error -> failwithf "Unexpected lock rejection: %A" error
+    let owner = take ()
+    owner.Dispose()
+    File.WriteAllText(witness, "after release")
+    Assert.Equal("after release", File.ReadAllText(path))
+    let successor = take ()
+    owner.Dispose()
+    match DataDirectoryLock.acquire workspace.Root with
+    | Error (DirectoryAlreadyInUse _) -> ()
+    | Ok other ->
+        other.Dispose()
+        Assert.Fail("Repeated disposal released the successor.")
+    successor.Dispose()
+    File.WriteAllText(witness, "after reacquisition")
+    Assert.Equal("after reacquisition", File.ReadAllText(path))
+
+[<Fact; Trait("Task", "T002"); Trait("Category", "NativeOwnership")>]
+let ``concurrent first acquisitions leave one owner and a private persistent file`` () =
+    use workspace = TemporaryWorkspace.Create()
+    let directory = Path.Combine(workspace.Root, "concurrent")
+    Directory.CreateDirectory(directory) |> ignore
+    use start = new Barrier(3)
+    use acquired = new Barrier(3)
+    let attempt () =
+        Task.Run(fun () ->
+            start.SignalAndWait() |> ignore
+            let result =
+                try Choice1Of2 (DataDirectoryLock.acquire directory)
+                with error -> Choice2Of2 error
+            acquired.SignalAndWait() |> ignore
+            result)
+    let first = attempt ()
+    let second = attempt ()
+    start.SignalAndWait() |> ignore
+    acquired.SignalAndWait() |> ignore
+    let attempts = [ first.GetAwaiter().GetResult(); second.GetAwaiter().GetResult() ]
+    let errors = attempts |> List.choose (function Choice2Of2 error -> Some error | _ -> None)
+    Assert.True(List.isEmpty errors, $"Concurrent acquisitions must not throw: {errors}")
+    let results = attempts |> List.choose (function Choice1Of2 result -> Some result | _ -> None)
+    let owners = results |> List.choose (function Ok owner -> Some owner | _ -> None)
+    try
+        Assert.Single(owners) |> ignore
+        Assert.Single(results |> List.choose (function Error (DirectoryAlreadyInUse _) -> Some () | _ -> None)) |> ignore
+        let path = Path.Combine(directory, ".lexscholar.lock")
+        Assert.Equal(UnixFileMode.UserRead ||| UnixFileMode.UserWrite, File.GetUnixFileMode(path))
+    finally
+        owners |> List.iter (fun owner -> owner.Dispose())
+    Assert.True(File.Exists(Path.Combine(directory, ".lexscholar.lock")))
+    match DataDirectoryLock.acquire directory with
+    | Ok next -> next.Dispose()
+    | Error error -> Assert.Fail($"Reacquisition failed: {error}")
 
 [<Fact; Trait("Task", "T006")>]
 let ``release permits immediate reacquisition even while an inherited descriptor remains open`` () =
@@ -66,7 +253,7 @@ let ``release permits immediate reacquisition even while an inherited descriptor
             other.Dispose()
             Assert.Fail("Repeated old-owner disposal released its successor.")
 
-[<Fact; Trait("Task", "T006"); Trait("Task", "T002")>]
+[<Fact; Trait("Task", "T006"); Trait("Task", "T002"); Trait("Category", "NativeOwnership")>]
 let ``a second operating system process cannot own the same directory`` () =
     use workspace = TemporaryWorkspace.Create()
     use owner = HostProcess.Start(workspace.Root, [])
@@ -98,7 +285,7 @@ let ``functional lock boundary reports only demonstrated contention`` () =
         Assert.Fail("T006: another process owns this data directory; acquire returned success.")
     | None -> Assert.Fail("T006: contention requires a typed lock error; acquire is unimplemented.")
 
-[<Fact; Trait("Task", "T006"); Trait("Task", "T002")>]
+[<Fact; Trait("Task", "T006"); Trait("Task", "T002"); Trait("Category", "NativeOwnership")>]
 let ``filesystem errors are not reported as lock contention`` () =
     use workspace = TemporaryWorkspace.Create()
     let file = Path.Combine(workspace.Root, "not-a-directory")
@@ -110,7 +297,7 @@ let ``filesystem errors are not reported as lock contention`` () =
     Assert.NotNull(error)
     Assert.True(error :? IOException, $"T006: expected unexpected filesystem IOException, got {error.GetType().FullName}.")
 
-[<Fact; Trait("Task", "T006"); Trait("Task", "T002")>]
+[<Fact; Trait("Task", "T006"); Trait("Task", "T002"); Trait("Category", "NativeOwnership")>]
 let ``an unopenable lock file is not reported as contention`` () =
     use workspace = TemporaryWorkspace.Create()
     Directory.CreateDirectory(Path.Combine(workspace.Root, ".lexscholar.lock")) |> ignore
@@ -132,22 +319,24 @@ let ``unexpected startup IO failure is not reported as lock contention`` () =
     Assert.Equal<string>(typeof<IOException>.FullName, host.Startup.ErrorType)
     Assert.NotEqual(0, host.ExitCode)
 
-[<Fact; Trait("Task", "T006"); Trait("Task", "T002")>]
+[<Fact; Trait("Task", "T006"); Trait("Task", "T002"); Trait("Category", "NativeOwnership")>]
 let ``lock file symlinks are rejected rather than followed or classified as contention`` () =
-    use workspace = TemporaryWorkspace.Create()
-    let target = Path.Combine(workspace.Root, "unrelated")
-    File.WriteAllText(target, "preserve")
-    File.CreateSymbolicLink(Path.Combine(workspace.Root, ".lexscholar.lock"), target) |> ignore
-    let error = Record.Exception(fun () ->
-        match DataDirectoryLock.acquire workspace.Root with
-        | Ok handle ->
-            handle.Dispose()
-            Assert.Fail("A lock-file symlink must not be followed.")
-        | Error lockError -> Assert.Fail($"Symlink open failure misclassified as contention: {lockError}"))
-    Assert.IsType<IOException>(error) |> ignore
-    Assert.Equal("preserve", File.ReadAllText(target))
+    for targetExists in [ true; false ] do
+        use workspace = TemporaryWorkspace.Create()
+        let target = Path.Combine(workspace.Root, "unrelated")
+        if targetExists then File.WriteAllText(target, "preserve")
+        File.CreateSymbolicLink(Path.Combine(workspace.Root, ".lexscholar.lock"), target) |> ignore
+        let error = Record.Exception(fun () ->
+            match DataDirectoryLock.acquire workspace.Root with
+            | Ok handle ->
+                handle.Dispose()
+                Assert.Fail("A lock-file symlink must not be followed.")
+            | Error lockError -> Assert.Fail($"Symlink open failure misclassified as contention: {lockError}"))
+        Assert.IsType<IOException>(error) |> ignore
+        if targetExists then Assert.Equal("preserve", File.ReadAllText(target))
+        else Assert.False(File.Exists(target))
 
-[<Fact; Trait("Task", "T006"); Trait("Task", "T002")>]
+[<Fact; Trait("Task", "T006"); Trait("Task", "T002"); Trait("Category", "NativeOwnership")>]
 let ``same-process attempts cannot release or bypass an existing lock`` () =
     use workspace = TemporaryWorkspace.Create()
     let first = DataDirectoryLock.acquire workspace.Root
@@ -165,7 +354,7 @@ let ``same-process attempts cannot release or bypass an existing lock`` () =
         use contender = HostProcess.Start(workspace.Root, [])
         assertRefused contender
 
-[<Fact; Trait("Task", "T006"); Trait("Task", "T002")>]
+[<Fact; Trait("Task", "T006"); Trait("Task", "T002"); Trait("Category", "NativeOwnership")>]
 let ``new directory and lock file use private permissions and persist after release`` () =
     use workspace = TemporaryWorkspace.Create()
     let directory = Path.Combine(workspace.Root, "new-private-directory")
@@ -239,7 +428,7 @@ let ``disposing a constructed but unstarted host releases ownership`` () =
         use successor = HostProcess.Start(workspace.Root, [])
         assertReady successor
 
-[<Fact; Trait("Task", "T006"); Trait("Task", "T002")>]
+[<Fact; Trait("Task", "T006"); Trait("Task", "T002"); Trait("Category", "NativeOwnership")>]
 let ``normal owner exit releases actual exclusive ownership`` () =
     use workspace = TemporaryWorkspace.Create()
     use owner = HostProcess.Start(workspace.Root, [])
@@ -254,7 +443,7 @@ let ``normal owner exit releases actual exclusive ownership`` () =
     assertReady successor
     assertRefused contender
 
-[<Fact; Trait("Task", "T006"); Trait("Task", "T002")>]
+[<Fact; Trait("Task", "T006"); Trait("Task", "T002"); Trait("Category", "NativeOwnership")>]
 let ``termination releases actual exclusive ownership without deleting lock artifacts`` () =
     use workspace = TemporaryWorkspace.Create()
     use owner = HostProcess.Start(workspace.Root, [])
