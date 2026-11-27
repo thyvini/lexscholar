@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Release-owned Bridge. No third-party Python dependencies."""
 import argparse
+import copy
 import datetime as dt
 import fnmatch
 import json
@@ -176,6 +177,21 @@ def verify_diff(snapshot, base):
     return run("git", "merge-tree", "--write-tree", base, head).splitlines()[0]
 
 
+def with_current_base(snapshot, base):
+    """Permit GitHub's older base snapshot only when it is release ancestry."""
+    reported = snapshot["pr"]["base"]["sha"]
+    if reported != base:
+        if not re.fullmatch(r"[0-9a-f]{40}", reported):
+            raise Blocked("invalid reported base")
+        try:
+            run("git", "merge-base", "--is-ancestor", reported, base)
+        except subprocess.SubprocessError as error:
+            raise Blocked("reported PR base is not an ancestor of release") from error
+    current = copy.deepcopy(snapshot)
+    current["pr"]["base"]["sha"] = base
+    return current
+
+
 def verify_merge(pr, decision, response_sha):
     p = api(f"repos/{REPO}/pulls/{pr}")
     sha = p["merge_commit_sha"]
@@ -203,8 +219,9 @@ def integrate(pr, execute=False, wait=0):
         if expected_head is not None and expected_head != head:
             raise Blocked("head changed; restart validation explicitly")
         expected_head = head
-        if release_sha() != base or snapshot["pr"]["base"]["sha"] != base:
+        if release_sha() != base:
             raise Blocked("release changed; restart validation explicitly")
+        snapshot = with_current_base(snapshot, base)
         try:
             decision = validate(snapshot, policy, dt.datetime.now(dt.timezone.utc))
             break
@@ -216,7 +233,7 @@ def integrate(pr, execute=False, wait=0):
     tree = verify_diff(snapshot, base)
     if not execute:
         return {"status": "validated-only", **decision}
-    fresh = read_snapshot(pr)
+    fresh = with_current_base(read_snapshot(pr), base)
     current = validate(fresh, policy, dt.datetime.now(dt.timezone.utc))
     if current != decision or release_sha() != base:
         raise Blocked("head/base/subject changed before merge")

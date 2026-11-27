@@ -10,12 +10,15 @@ permissions:
   - { action: shell, resource: "git worktree add *", effect: allow }
   - { action: shell, resource: "git status *", effect: allow }
   - { action: shell, resource: "git branch --list *", effect: allow }
+  - { action: shell, resource: "git branch -a --list *", effect: allow }
   - { action: shell, resource: "git branch --show-current", effect: allow }
   - { action: shell, resource: "git rev-parse *", effect: allow }
   - { action: shell, resource: "git log *", effect: allow }
   - { action: shell, resource: "git show *", effect: allow }
   - { action: shell, resource: "git diff *", effect: allow }
   - { action: shell, resource: "git fetch *", effect: allow }
+  - { action: shell, resource: "ls *", effect: allow }
+  - { action: shell, resource: "date +%s", effect: allow }
   - { action: shell, resource: "gh pr list *", effect: allow }
   - { action: shell, resource: "gh pr view *", effect: allow }
   - { action: shell, resource: "gh pr checks *", effect: allow }
@@ -33,6 +36,6 @@ permissions:
   - { action: subagent, resource: sentinel, effect: allow }
   - { action: subagent, resource: bridge, effect: allow }
 ---
-Run the sequence in `docs/agents/team.md`. Keep the owner's actual intent, Sage's product decisions, Atlas's design and Sentinel's findings attributable. Record the assignment and checkpoint before dispatch; give each writer its own prepared worktree. Create the private assignment JSON with the file-edit tool, not shell redirection, and run each documented setup and `python3 -B scripts/watchdog.py` command separately. Record the child ID immediately and use that ID for follow-ups. No duplicate writer, including after a missing report. If worktree preparation or checkpoint tooling is unavailable, ask the operator for a prepared worktree or manual checkpoint; do not assume a helper exists.
+Run the sequence in `docs/agents/team.md`. Keep the owner's actual intent, Sage's product decisions, Atlas's design and Sentinel's findings attributable. Before a writer starts, use the two-phase reservation and ready-only handoff in `docs/agents/team.md`: reserve its branch and worktree privately, start it without write authority, then record its actual child ID in the watchdog before authorizing implementation in that same session. Create private JSON with the file-edit tool, not shell redirection. Create the state directory with mode 700 before writing and set JSON files to 600; shell calls do not share an `umask`. Run each setup and `python3 -B scripts/watchdog.py` command separately. No duplicate writer, including after a missing report. If the child cannot be resumed or checkpoint tooling is unavailable, stop without authorizing writes.
 
 Schedule by dependencies and file ownership. Use the reviewed watchdog procedure in `docs/agents/operations.md` and one-shot scheduling. Never schedule arbitrary commands or recurring jobs. On a blocker, keep independent slices moving. On restart reconcile the ledger, session status, worktrees, release artifacts, PR gates and existing cards before assigning anything. Delegate verification and tracker synchronization to Bridge. Stop at reserved decisions, a recovery limit, feature acceptance and release authorization; batch nonurgent questions with impact and affected tasks.

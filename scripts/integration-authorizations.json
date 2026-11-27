@@ -2,7 +2,9 @@
   "repository": "thyvini/lexscholar",
   "release": "release/0.5.3",
   "max_gate_age_seconds": 86400,
-  "exceptions": [],
+  "exceptions": [
+    {"pr": 212, "head": "5c66d58d5c26b0040b3d2182922253afab809571", "kind": "comment", "id": 7225386516, "reason": "Owner confirmed the finding was inapplicable: the current PR diff contains only the authorized manifest."}
+  ],
   "slices": {
     "chore/engineering-team": {"card": "$16a", "files": ["opencode.jsonc", ".opencode/agents/*", ".agents/skills/*/SKILL.md", ".claude/skills/*/SKILL.md", ".claude/agents/*", ".claude/team-settings.json", "AGENTS.md", "CLAUDE.md", "docs/agents/codebase.md", "docs/agents/team.md", "docs/product/*", "docs/specification-index.md"]},
     "chore/bridge-integration": {"card": "$16c", "files": ["scripts/integrate-pr.py", "scripts/integration-authorizations.json", "tests/tooling/test_integration.py", "tests/tooling/fixtures/integration/*", "docs/agents/integration.md"]},
@@ -10,6 +12,9 @@
     "docs/spike-google-docs": {"card": "$16g", "files": ["docs/discovery/s001*"]},
     "docs/spike-legal-retrieval": {"card": "$16h", "files": ["docs/discovery/s002*"]},
     "docs/spike-reading-email": {"card": "$16i", "files": ["docs/discovery/s003*"]},
-    "test/team-acceptance": {"card": "$16f", "files": ["docs/agents/*acceptance*", ".github/workflows/ci.yml", "tests/tooling/*acceptance*"]}
+    "test/team-acceptance": {"card": "$16f", "files": ["docs/agents/*acceptance*", ".github/workflows/ci.yml", "tests/tooling/*acceptance*"]},
+    "docs/f012-evidence-reconciliation": {"card": "$16j", "files": ["specs/012-extend-platform-support/tasks.md", "specs/012-extend-platform-support/evidence/t004-db-descriptors.md", "specs/012-extend-platform-support/evidence/t006-linux-recovery.md"]},
+    "feat/f012-native-locking": {"card": "$16j", "files": ["src/LexScholar.Infrastructure/DataDirectoryLock.fs", "tests/LexScholar.Server.Tests/ProcessLockTests.fs", "specs/012-extend-platform-support/evidence/t002-workspace-ownership.md"]},
+    "feat/f012-darwin-deletion": {"card": "$16j", "files": ["src/LexScholar.Infrastructure/DocumentStore.fs", "tests/LexScholar.Infrastructure.Tests/LibraryDeletionFileTests.fs", "specs/012-extend-platform-support/evidence/t005-linux-deletion-safety.md"]}
   }
 }
