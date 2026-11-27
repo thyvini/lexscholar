@@ -86,6 +86,28 @@ See
 [team acceptance evidence](team-acceptance-16f.md) for observed limitations;
 merged tooling does not itself prove end-to-end team operation.
 
+### Writer handoff
+
+The delegation tool returns a child session ID only after starting the child.
+Before starting one, Conductor records a private reservation naming the card,
+task, branch, persistent worktree, ownership and fencing decision; this reserves
+the writer slot and is **not** a watchdog assignment or a fabricated session.
+Start the child with a read-only readiness brief: it must not edit, run mutating
+commands, launch writers or begin implementation, and must stop and report
+ready. Record the returned actual session ID and create the complete watchdog
+assignment using the current revision. Only after that write succeeds may
+Conductor follow up in the **same** child session with the implementation brief.
+If the child does not stop ready, its ID is unavailable, the checkpoint fails,
+or follow-up to that session is unsupported, do not authorize any writer.
+Retain the reservation until the child is fenced under `operations.md`;
+an unknown child is not permission to start a replacement.
+
+For separate tool calls, create the private state directory and set mode 700
+before writing files; create reservation/assignment JSON there with the file
+tool and set mode 600. A standalone `umask` call does not affect later calls.
+Likewise, shell variables do not persist across calls: pass the full state path
+to every watchdog command, even where an older operations example uses `STATE`.
+
 ### Local verification (2026-11-26)
 
 In this worktree, OpenCode v2.4.2 `opencode debug agents` discovered all eight
