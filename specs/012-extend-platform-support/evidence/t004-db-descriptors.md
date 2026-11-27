@@ -1,4 +1,4 @@
-# T004 — failed SQLite initialization descriptors (partial)
+# T004 — failed SQLite initialization descriptors
 
 - Linux observer sensitivity: `LOG=/tmp/opencode/f012-t004-red.log scripts/check.sh T004` — 52 tests, 1 failed, 0 skipped when the observer was deliberately changed to return no handles. The intentionally open disposable database was not detected. The mutation was removed.
 - Linux GREEN: `LOG=/tmp/opencode/f012-t004-final.log scripts/check.sh T004` — warning-free Release build; 52 passed, 0 skipped.
@@ -6,4 +6,4 @@
 - Native macOS ARM64 [run 45935720999](https://github.com/thyvini/lexscholar/actions/runs/45935720999), isolated PR #206 head `25a0c162411b8230ec793975504fe37e9a496a85`, macOS 15.8.2 (24H232), .NET SDK 10.0.115, local APFS: the deliberately blinded observer failed the held-descriptor assertion (1 failed, 0 skipped); the restored candidate passed (1 passed, 0 skipped). This verifies this observer on that runner, not general macOS support.
 - Review: the inherited Linux exception swallowing was **must fix** because inspection failure must not appear as an empty list. Only disappeared descriptors are now ignored; other inspection failures propagate. `scripts/check.sh T004`: 52 passed, 0 skipped after this change.
 - Review: adding a separate sensitivity test for a live SQLite sidecar is **overkill** for T004, which requires sensitivity to a deliberately held database descriptor and checks for database/sidecar handles after failure; that is not a claim that the native probe separately demonstrated every sidecar.
-- Full-suite CI: pending.
+- Full-suite CI: [PR #207 head `0be227e`](https://github.com/thyvini/lexscholar/actions/runs/45936225332) passed. The merged release head `9b89742` [CI run](https://github.com/thyvini/lexscholar/actions/runs/45938481859) was in progress when recorded.

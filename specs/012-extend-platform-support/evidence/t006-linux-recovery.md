@@ -21,5 +21,5 @@ Environment: Linux x86-64, kernel `7.3.5-2-cachyos`, .NET SDK `10.0.114`; isolat
 ## Remaining gates
 
 - T006 stays unchecked; Darwin runs require the verified lock/deletion candidates and evidence on the resulting exact revision.
-- Full-suite CI and `gpt-review` must pass on the PR's current head before any merge; no merge is authorized by this record.
+- Full-suite CI and `gpt-review` passed on [PR #208](https://github.com/thyvini/lexscholar/pull/208) head `39531b3`; [CI run](https://github.com/thyvini/lexscholar/actions/runs/45936386506). The merged release head `9b89742` [CI run](https://github.com/thyvini/lexscholar/actions/runs/45938481859) was in progress when recorded.
 - Prior T005 candidate-workflow provider safety rejection remains recorded in its evidence. It was not retried here. No new provider safety rejection occurred during this work.
