@@ -110,9 +110,9 @@ let private databaseHandles databasePath =
                 let target = FileInfo(fd).ResolveLinkTarget(false)
                 if isNull target then None else Some target.FullName
             with
-            | :? IOException
-            | :? UnauthorizedAccessException
-            | :? ArgumentException -> None)
+            // A different thread can close an unrelated descriptor after enumeration.
+            | :? FileNotFoundException
+            | :? DirectoryNotFoundException -> None)
         |> Seq.filter (fun target -> target.StartsWith(databasePath, StringComparison.Ordinal))
         |> Seq.toList
     elif OperatingSystem.IsMacOS() then
