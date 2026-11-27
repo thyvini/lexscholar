@@ -171,6 +171,15 @@ Import (`ImportDocument.create`, `POST /api/documents`): stage at most MaxBytes 
 
 ## Recipes
 
+**Usage-limit notification fallback.** `scripts/watchdog.py` offers opt-in
+`quota-reset` and `quota-check`, projecting only the newest assigned assistant's
+OpenAI structured usage-limit error into `scripts/quota_mail.py`, an opt-in,
+send-only SMTP sender with owner-confirmed recipient. It checks the session is
+not reported active before sending. The private ledger deduplicates one
+explicit incident across sessions; a reset baselines recognized error IDs
+rather than inventing a provider reset window.
+See `docs/agents/operations.md` for limitations and private setup.
+
 **Conductor watchdog ($16e).** `scripts/watchdog.py` is a one-shot, read-only
 OpenCode session observer with private durable assignment state; `scripts/notify.py`
 is its opt-in controlled ntfy adapter. Owner setup, fencing, limitations and
