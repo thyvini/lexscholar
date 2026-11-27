@@ -1,0 +1,46 @@
+name: F012 native database observer (isolated)
+on:
+  pull_request:
+    branches: [test/f012-db-descriptors]
+permissions:
+  contents: read
+jobs:
+  native-database:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - name: Native observer sensitivity and candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
+          sw_vers
+          uname -m
+          dotnet --info
+          df "$RUNNER_TEMP"
+          mount
+          file=tests/LexScholar.Infrastructure.Tests/WorkspaceDbTests.fs
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("tests/LexScholar.Infrastructure.Tests/WorkspaceDbTests.fs")
+          text = p.read_text()
+          old = "        |> Array.toList\n    else\n        raise (PlatformNotSupportedException"
+          new = "        |> Array.filter (fun _ -> false)\n        |> Array.toList\n    else\n        raise (PlatformNotSupportedException"
+          assert text.count(old) == 1
+          p.write_text(text.replace(old, new))
+          PY
+          if dotnet test --project tests/LexScholar.Infrastructure.Tests/LexScholar.Infrastructure.Tests.fsproj -c Release --filter-trait Category=NativeDatabase > "$RUNNER_TEMP/red.log" 2>&1; then
+            cat "$RUNNER_TEMP/red.log"
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/red.log"
+          grep -F 'Assert.NotEmpty() Failure' "$RUNNER_TEMP/red.log"
+          git show "HEAD:$file" > "$file"
+          dotnet test --project tests/LexScholar.Infrastructure.Tests/LexScholar.Infrastructure.Tests.fsproj -c Release --filter-trait Category=NativeDatabase
