@@ -1,0 +1,43 @@
+name: F012 packaging portability probe (isolated)
+on:
+  pull_request:
+    branches: [release/0.5.3]
+    paths: [.github/workflows/f012-native-package-probe.yml]
+permissions:
+  contents: read
+jobs:
+  native-package-path:
+    runs-on: macos-15
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Observe native packaging path command
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
+          sw_vers
+          uname -a
+          bash --version
+          printf 'PATH=%s\n' "$PATH"
+          type -a realpath
+          git rev-parse HEAD
+          git rev-parse HEAD:scripts/package-workspace.sh
+          umask 077
+          fixture="$(mktemp -d "$RUNNER_TEMP/f012-package-path.XXXXXX")"
+          trap 'rm -rf "$fixture"' EXIT
+          cd "$fixture"
+          mkdir existing
+          failed=0
+          for target in "existing/archive.tar.gz" "missing parent/nested/archive.tar.gz"; do
+            printf 'TARGET=%s\n' "$target"
+            if archive="$(realpath -m "$target" 2>&1)"; then status=0; else status=$?; fi
+            printf 'resolved-realpath status=%s output=%s\n' "$status" "$archive"
+            if [ "$status" -ne 0 ]; then failed=1; fi
+            if output="$(/usr/bin/realpath -m "$target" 2>&1)"; then status=0; else status=$?; fi
+            printf 'system-realpath status=%s output=%s\n' "$status" "$output"
+          done
+          exit "$failed"
